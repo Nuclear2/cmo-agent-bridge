@@ -183,7 +183,7 @@ class _ValidatedMutationCommand:
     body_bytes: bytes
     invocation: ResolvedInvocation
     runtime_snapshot: RuntimeSnapshot
-    timeout: float
+    timeout: float | None
 
 
 class _EpochSequence:
@@ -297,6 +297,8 @@ def _recovery_validation_error(
 def _validate_command(
     command: object,
     catalog: ManifestCatalog,
+    *,
+    allow_unbounded_timeout: bool,
 ) -> _ValidatedMutationCommand:
     try:
         if type(command) is not ExchangeCommand:
@@ -308,12 +310,22 @@ def _validate_command(
             raise TypeError("body must be an exact RequestBody")
         if type(trusted.invocation) is not ResolvedInvocation:
             raise TypeError("invocation must be an exact ResolvedInvocation")
+        if type(trusted.unbounded_wait) is not bool:
+            raise TypeError("unbounded wait flag must be an exact bool")
         snapshot = revalidate_runtime_snapshot(trusted.runtime_snapshot)
-        timeout = _validated_number(
+        bounded_timeout = _validated_number(
             trusted.timeout,
             description="exchange timeout",
             allow_zero=True,
         )
+        if trusted.unbounded_wait:
+            if not allow_unbounded_timeout:
+                raise ValueError("an unbounded timeout requires a durable mutation worker")
+            if bounded_timeout != 0:
+                raise ValueError("an unbounded mutation command must use timeout zero")
+            timeout = None
+        else:
+            timeout = bounded_timeout
 
         body_tree = trusted.body.model_dump(
             mode="python",
@@ -497,6 +509,7 @@ class MutationExchange:
         response_poll_seconds: float,
         queue_response_cleanup: Callable[[Path], None],
         recovery_manager: RecoveryManager,
+        durable_worker: bool = False,
     ) -> None:
         if type(paths) is not FileBridgePaths:
             raise _invalid_argument("paths must be an exact FileBridgePaths")
@@ -523,6 +536,8 @@ class MutationExchange:
         )
         if not callable(queue_response_cleanup):
             raise _invalid_argument("response cleanup queue callback must be callable")
+        if type(durable_worker) is not bool:
+            raise _invalid_argument("durable worker flag must be an exact bool")
         if type(recovery_manager) is not RecoveryManager or not recovery_manager._is_bound_to(  # pyright: ignore[reportPrivateUsage]
             paths=paths,
             root_lock=root_lock,
@@ -546,6 +561,7 @@ class MutationExchange:
         self._response_poll_seconds = poll_seconds
         self._queue_response_cleanup = queue_response_cleanup
         self._recovery_manager = recovery_manager
+        self._durable_worker = durable_worker
         self._recovery_task: asyncio.Task[None] | None = None
         self._poisoned = False
         self._current_state: _MutationState | None = None
@@ -567,7 +583,11 @@ class MutationExchange:
                         "required_release_id": loaded.journal.header.required_release_id,
                     },
                 )
-            validated = _validate_command(command, self._catalog)
+            validated = _validate_command(
+                command,
+                self._catalog,
+                allow_unbounded_timeout=self._durable_worker,
+            )
             response_path = self._paths.response_path(validated.request_id)
             if response_path.exists():
                 raise _state_conflict(
@@ -615,6 +635,13 @@ class MutationExchange:
                 and not state.artifact_observed
                 and isinstance(error, asyncio.CancelledError)
             ):
+                if self._durable_worker and state.validated.timeout is None:
+                    # The queue owns this published mutation.  A worker
+                    # shutdown must only detach from it: the durable journal,
+                    # SQLite record and inbox delivery are the hand-off to the
+                    # next worker session.  Publishing cancel/idle here would
+                    # race a later CMO tick and break at-most-once delivery.
+                    raise
                 self._poisoned = True
                 published = state.published_journal
                 if published is None:
@@ -992,6 +1019,17 @@ class MutationExchange:
             runtime_snapshot=validated.runtime_snapshot,
             invocation=validated.invocation,
         )
+        ownership_check: Callable[[], bool] | None = None
+        if validated.timeout is None:
+            rendered_request = rendered
+
+            def owns_published_inbox() -> bool:
+                try:
+                    return self._paths.inbox.read_bytes() == rendered_request
+                except FileNotFoundError:
+                    return False
+
+            ownership_check = owns_published_inbox
         waiter = ResponseWaiter(
             response_path=state.response_path,
             expectation=expectation,
@@ -1001,6 +1039,7 @@ class MutationExchange:
                 self._paths.command_exe,
             ),
             poll_seconds=self._response_poll_seconds,
+            ownership_check=ownership_check,
         )
         artifact = await waiter.wait(validated.timeout)
         state.artifact_observed = True

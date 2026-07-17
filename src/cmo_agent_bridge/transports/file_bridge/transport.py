@@ -48,6 +48,7 @@ from cmo_agent_bridge.transports.file_bridge.inbox import InboxPublisher
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
 from cmo_agent_bridge.transports.file_bridge.models import (
     BridgeChannel,
+    DurableBridgeChannel,
     RecoveryReport as _RecoveryReport,
 )
 from cmo_agent_bridge.transports.file_bridge.mutation import MutationExchange
@@ -261,7 +262,11 @@ def _validate_command(
             raise TypeError("body must be an exact RequestBody")
         if type(trusted_command.invocation) is not ResolvedInvocation:
             raise TypeError("invocation must be an exact ResolvedInvocation")
+        if type(trusted_command.unbounded_wait) is not bool:
+            raise TypeError("unbounded wait flag must be an exact bool")
         snapshot = revalidate_runtime_snapshot(trusted_command.runtime_snapshot)
+        if trusted_command.unbounded_wait:
+            raise ValueError("an unbounded timeout is reserved for durable mutation workers")
         timeout = _validated_number(
             trusted_command.timeout,
             description="exchange timeout",
@@ -613,6 +618,27 @@ class FileBridgeTransport:
     def session(self) -> AbstractAsyncContextManager[BridgeChannel]:
         return _FileBridgeSession(self)
 
+    def worker_session(
+        self,
+        *,
+        recovery_owner: Callable[[ProcessInfo], uuid.UUID | None],
+    ) -> AbstractAsyncContextManager[DurableBridgeChannel]:
+        """Open the single durable-mutation worker lane.
+
+        Unlike an ordinary session, startup recovery keeps an owned published
+        mutation attached to its original inbox delivery until CMO responds.
+        The queue owner is resolved after the root lock is held and before
+        recovery can touch any persisted delivery.
+        """
+
+        if not callable(recovery_owner):
+            raise _invalid_argument("durable worker recovery owner must be callable")
+        return _FileBridgeSession(
+            self,
+            durable_worker=True,
+            recovery_owner=recovery_owner,
+        )
+
 
 class _CleanupPaths(list[Path]):
     def __init__(
@@ -666,6 +692,8 @@ class _FileBridgeChannel:
         process: ProcessInfo,
         *,
         _defer_mutation_exchange: bool = False,
+        _durable_worker: bool = False,
+        _owned_request_id: uuid.UUID | None = None,
     ) -> None:
         self._transport = transport
         self._process = process
@@ -673,6 +701,13 @@ class _FileBridgeChannel:
         self._closing = False
         self._closed = False
         self._poisoned = False
+        if type(_durable_worker) is not bool:
+            raise _invalid_argument("durable worker flag must be an exact bool")
+        self._durable_worker = _durable_worker
+        if _owned_request_id is not None and type(_owned_request_id) is not uuid.UUID:
+            raise _invalid_argument("channel owned request ID must be exact")
+        self._owned_request_id = _owned_request_id
+        self._recovery_report: _RecoveryReport | None = None
         self._cleanup_paths = _CleanupPaths(
             paths=transport.paths,
             root_lock=transport.root_lock,
@@ -698,6 +733,13 @@ class _FileBridgeChannel:
     @property
     def process_identity(self) -> ProcessInfo:
         return self._process
+
+    @property
+    def recovery_report(self) -> _RecoveryReport:
+        report = self._recovery_report
+        if report is None:
+            raise _state_conflict("file-bridge recovery has not completed")
+        return report
 
     def _artifact_for_cleanup(self, path: Path) -> ResponseArtifact | None:
         read_state = self._exchange_state
@@ -735,18 +777,23 @@ class _FileBridgeChannel:
     def _initialize_mutation_exchange(self) -> None:
         if "_mutation_exchange" in self.__dict__:
             raise _state_conflict("file-bridge mutation exchange was already initialized")
+        products: dict[str, object] = {
+            "paths": self._transport.paths,
+            "root_lock": self._transport.root_lock,
+            "process_inspector": self._transport.process_inspector,
+            "expected_process": self._process,
+            "catalog": self._transport.catalog,
+            "journals": self._transport.journals,
+            "ledger": self._transport.ledger,
+            "inbox": self._transport.inbox,
+            "response_poll_seconds": self._transport._response_poll_seconds,  # pyright: ignore[reportPrivateUsage]
+            "queue_response_cleanup": self._cleanup_paths.append,
+            "recovery_manager": self._recovery_manager,
+        }
+        if self._durable_worker:
+            products["durable_worker"] = True
         self._mutation_exchange = MutationExchange(
-            paths=self._transport.paths,
-            root_lock=self._transport.root_lock,
-            process_inspector=self._transport.process_inspector,
-            expected_process=self._process,
-            catalog=self._transport.catalog,
-            journals=self._transport.journals,
-            ledger=self._transport.ledger,
-            inbox=self._transport.inbox,
-            response_poll_seconds=self._transport._response_poll_seconds,  # pyright: ignore[reportPrivateUsage]
-            queue_response_cleanup=self._cleanup_paths.append,
-            recovery_manager=self._recovery_manager,
+            **products,  # pyright: ignore[reportArgumentType]
         )
 
     async def recover_pending(self) -> _RecoveryReport:
@@ -760,13 +807,26 @@ class _FileBridgeChannel:
             raise _state_conflict("startup recovery requires an active asyncio task")
         owner = cast(asyncio.Task[object], current)
         self._active_task = owner
-        baseline_cancellations = current.cancelling()
-        worker = asyncio.create_task(self._recovery_manager.recover_pending())
         try:
-            report, cancellation = await _await_startup_recovery_task(
-                worker,
-                baseline_cancellations=baseline_cancellations,
-            )
+            if self._durable_worker:
+                # Worker recovery may intentionally wait through an unlimited
+                # CMO pause.  Its owner must still be able to shut down: a
+                # cancellation detaches immediately and leaves the durable
+                # journal/inbox delivery untouched for the next worker.
+                owned_request_id = self._owned_request_id
+                report = (
+                    await self._recovery_manager.recover_pending()
+                    if owned_request_id is None
+                    else await self._recovery_manager.recover_owned_pending(owned_request_id)
+                )
+                cancellation: asyncio.CancelledError | None = None
+            else:
+                baseline_cancellations = current.cancelling()
+                worker = asyncio.create_task(self._recovery_manager.recover_pending())
+                report, cancellation = await _await_startup_recovery_task(
+                    worker,
+                    baseline_cancellations=baseline_cancellations,
+                )
             try:
                 if report.response_cleanup_required:
                     request_id = report.request_id
@@ -784,6 +844,7 @@ class _FileBridgeChannel:
                 raise
             if cancellation is not None:
                 raise cancellation
+            self._recovery_report = report
             return report
         finally:
             if self._active_task is owner:
@@ -1681,8 +1742,20 @@ class _FileBridgeChannel:
 
 
 class _FileBridgeSession:
-    def __init__(self, transport: FileBridgeTransport) -> None:
+    def __init__(
+        self,
+        transport: FileBridgeTransport,
+        *,
+        durable_worker: bool = False,
+        recovery_owner: Callable[[ProcessInfo], uuid.UUID | None] | None = None,
+    ) -> None:
         self._transport = transport
+        if type(durable_worker) is not bool:
+            raise _invalid_argument("durable worker flag must be an exact bool")
+        self._durable_worker = durable_worker
+        if recovery_owner is not None and not callable(recovery_owner):
+            raise _invalid_argument("session recovery owner must be callable")
+        self._recovery_owner = recovery_owner
         self._channel: _FileBridgeChannel | None = None
         self._entered = False
 
@@ -1697,10 +1770,18 @@ class _FileBridgeSession:
                 self._transport.process_inspector,
                 self._transport.paths.command_exe,
             )
+            recovery_owner = self._recovery_owner
+            owned_request_id = (
+                None if recovery_owner is None else recovery_owner(process)
+            )
+            if owned_request_id is not None and type(owned_request_id) is not uuid.UUID:
+                raise _invalid_argument("resolved durable request owner must be exact")
             channel = _FileBridgeChannel(
                 self._transport,
                 process,
                 _defer_mutation_exchange=True,
+                _durable_worker=self._durable_worker,
+                _owned_request_id=owned_request_id,
             )
             await channel.recover_pending()
             channel._initialize_mutation_exchange()  # pyright: ignore[reportPrivateUsage]

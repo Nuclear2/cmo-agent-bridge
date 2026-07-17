@@ -18,6 +18,9 @@ from cmo_agent_bridge.protocol.response_models import ResponseArtifact
 from cmo_agent_bridge.transports.file_bridge.process_guard import ProcessInfo
 
 
+_UNBOUNDED_INVALID_STABILITY_SECONDS = 1.0
+
+
 def _invalid_argument(message: str) -> BridgeError:
     return BridgeError(ErrorCode.INVALID_ARGUMENT, message)
 
@@ -89,6 +92,7 @@ class ResponseWaiter:
         expected_process: ProcessInfo,
         process_check: Callable[[], ProcessInfo],
         poll_seconds: float = 0.05,
+        ownership_check: Callable[[], bool] | None = None,
     ) -> None:
         if type(expectation) is not ResponseExpectation:
             raise _invalid_argument("expectation must be an exact ResponseExpectation")
@@ -101,31 +105,45 @@ class ResponseWaiter:
         validated_process = _validated_process(expected_process)
         if not callable(process_check):
             raise _invalid_argument("process check must be callable")
+        if ownership_check is not None and not callable(ownership_check):
+            raise _invalid_argument("ownership check must be callable")
 
         self._response_path = response_path
         self._expectation = expectation
         self._expected_process = validated_process
         self._process_check = process_check
+        self._ownership_check = ownership_check
         self._poll_seconds = _validated_number(
             poll_seconds,
             description="poll interval",
             allow_zero=False,
         )
 
-    async def wait(self, timeout_seconds: float) -> ResponseArtifact:
-        timeout = _validated_number(
-            timeout_seconds,
-            description="timeout",
-            allow_zero=True,
-        )
-        deadline = time.monotonic() + timeout
+    async def wait(self, timeout_seconds: float | None) -> ResponseArtifact:
+        timeout: float | None
+        if timeout_seconds is None:
+            timeout = None
+        else:
+            timeout = _validated_number(
+                timeout_seconds,
+                description="timeout",
+                allow_zero=True,
+            )
+        deadline = None if timeout is None else time.monotonic() + timeout
         first_poll = True
         last_json_error: RetryableResponseJsonError | None = None
+        invalid_fingerprint: tuple[str, int] | None = None
+        invalid_since: float | None = None
 
         while True:
-            if not first_poll and time.monotonic() >= deadline:
+            if (
+                deadline is not None
+                and not first_poll
+                and time.monotonic() >= deadline
+            ):
                 if last_json_error is not None:
                     raise last_json_error
+                assert timeout is not None
                 raise self._timeout_error(timeout)
             first_poll = False
 
@@ -133,7 +151,8 @@ class ResponseWaiter:
             try:
                 raw = self._response_path.read_bytes()
             except (FileNotFoundError, PermissionError):
-                pass
+                invalid_fingerprint = None
+                invalid_since = None
             except OSError as error:
                 details: dict[str, object] = {
                     "response_path": str(self._response_path),
@@ -152,6 +171,23 @@ class ResponseWaiter:
                     accepted = parse_inst_response(raw, self._expectation)
                 except RetryableResponseJsonError as error:
                     last_json_error = error
+                    if deadline is None:
+                        fingerprint = (hashlib.sha256(raw).hexdigest(), len(raw))
+                        observed_at = time.monotonic()
+                        if fingerprint != invalid_fingerprint:
+                            invalid_fingerprint = fingerprint
+                            invalid_since = observed_at
+                        elif (
+                            invalid_since is not None
+                            and observed_at - invalid_since
+                            >= _UNBOUNDED_INVALID_STABILITY_SECONDS
+                        ):
+                            raise self._stable_invalid_response_error(
+                                error,
+                                sha256=fingerprint[0],
+                                size_bytes=fingerprint[1],
+                                stable_seconds=observed_at - invalid_since,
+                            ) from error
                 else:
                     raw_sha256 = hashlib.sha256(raw).hexdigest()
                     raw_size = len(raw)
@@ -165,10 +201,21 @@ class ResponseWaiter:
                         accepted_response=accepted,
                     )
 
+            if deadline is None:
+                self._check_ownership()
+                # A durable worker intentionally survives an arbitrarily long
+                # CMO pause.  Process identity is still checked on every
+                # poll, above, and its exact inbox ownership is checked before
+                # sleeping, so a stopped/replaced CMO or overwritten request is
+                # never ignored.
+                await asyncio.sleep(self._poll_seconds)
+                continue
+
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 if last_json_error is not None:
                     raise last_json_error
+                assert timeout is not None
                 raise self._timeout_error(timeout)
             await asyncio.sleep(min(self._poll_seconds, remaining))
 
@@ -199,6 +246,64 @@ class ResponseWaiter:
                     "actual_process": _process_details(actual),
                 },
             )
+
+    def _check_ownership(self) -> None:
+        check = self._ownership_check
+        if check is None:
+            return
+        try:
+            owned = check()
+        except BridgeError:
+            raise
+        except Exception as error:
+            raise BridgeError(
+                ErrorCode.STATE_CONFLICT,
+                "CMO inbox ownership check failed",
+                {
+                    "request_id": str(self._expectation.request_id),
+                    "type": type(error).__name__,
+                },
+            ) from error
+        if type(owned) is not bool:
+            raise BridgeError(
+                ErrorCode.STATE_CONFLICT,
+                "CMO inbox ownership check returned an invalid result",
+                {
+                    "request_id": str(self._expectation.request_id),
+                    "type": type(owned).__name__,
+                },
+            )
+        if not owned:
+            raise BridgeError(
+                ErrorCode.INDETERMINATE_OUTCOME,
+                "published mutation no longer owns the CMO inbox",
+                {
+                    "request_id": str(self._expectation.request_id),
+                    "reason": "published_inbox_evidence_missing",
+                },
+            )
+
+    def _stable_invalid_response_error(
+        self,
+        cause: RetryableResponseJsonError,
+        *,
+        sha256: str,
+        size_bytes: int,
+        stable_seconds: float,
+    ) -> BridgeError:
+        return BridgeError(
+            ErrorCode.INDETERMINATE_OUTCOME,
+            "CMO response remained invalid during durable wait",
+            {
+                "request_id": str(self._expectation.request_id),
+                "response_path": str(self._response_path),
+                "reason": "stable_invalid_response",
+                "response_sha256": sha256,
+                "response_size_bytes": size_bytes,
+                "stable_seconds": stable_seconds,
+                "protocol_error": cause.message,
+            },
+        )
 
     def _timeout_error(self, timeout_seconds: float) -> BridgeError:
         return BridgeError(

@@ -131,8 +131,14 @@ class ExchangeCommand:
     invocation: "ResolvedInvocation"
     runtime_snapshot: RuntimeSnapshot
     timeout: float
+    # Reserved for the persisted mutation worker. The numeric timeout remains
+    # part of the ordinary command contract; this explicit flag prevents the
+    # unbounded lane from leaking ``None`` into every read/status caller.
+    unbounded_wait: bool = False
 
     def __post_init__(self) -> None:
+        if type(self.unbounded_wait) is not bool:
+            raise TypeError("unbounded wait flag must be an exact bool")
         snapshot = revalidate_runtime_snapshot(self.runtime_snapshot)
         validate_body_runtime_snapshot(self.body, snapshot)
 

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import AsyncGenerator, Mapping
+from contextlib import asynccontextmanager
 from typing import Annotated, Literal, Protocol, TypeVar, cast
+from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
@@ -10,6 +12,14 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.application.queue_models import (
+    CancelQueuedOperationResult,
+    QueueSummary,
+    QueueWaitResult,
+    QueuedOperationList,
+    QueuedOperationReceipt,
+    QueuedOperationStatus,
+)
 from cmo_agent_bridge.errors import BridgeError
 from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
 from cmo_agent_bridge.operations.models import (
@@ -21,23 +31,14 @@ from cmo_agent_bridge.operations.models import (
     CourseWaypoint,
     DoctrineSettingValue,
     DoctrineResult,
-    DoctrineSetResult,
     DoctrineWraResult,
-    EmconSetResult,
     EmconValue,
     FlightSize,
-    MissionCargoUpdateResult,
-    MissionAirRefuelingResult,
     MissionCategory,
-    MissionCreateResult,
     MissionDetails,
-    MissionFlightPlanCreateResult,
     MissionFlightPlanListResult,
     MissionResult,
     MissionStageValue,
-    MissionTargetAddResult,
-    MissionTargetRemoveResult,
-    MissionUpdateResult,
     MinimumAircraftRequired,
     NuclearUseValue,
     OrderedReferencePointGuidList,
@@ -50,22 +51,11 @@ from cmo_agent_bridge.operations.models import (
     ScoreResult,
     SidePostureResult,
     SideResult,
-    SpecialActionExecuteResult,
     SpecialActionListResult,
-    ScenarioTimeCompressionSetResult,
-    UnitAddResult,
-    UnitAttackContactResult,
-    UnitAssignMissionResult,
-    UnitCargoTransferResult,
-    UnitCargoUnloadResult,
     UnitCombatStatusResult,
-    UnitCommandResult,
     UnitInventoryResult,
     UnitLoadoutResult,
     UnitResult,
-    UnitSensorSetResult,
-    UnitSetResult,
-    UnitUnassignMissionResult,
     TankerUsage,
     WraSettingValue,
     WeaponControlUpdateValue,
@@ -82,8 +72,32 @@ class ApplicationPort(Protocol):
         confirmation_token: str | None = None,
     ) -> InvocationOutcome: ...
 
+    async def submit(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+    ) -> QueuedOperationReceipt: ...
+
+    async def queue_get(self, request_id: UUID) -> QueuedOperationStatus: ...
+
+    async def queue_wait(
+        self,
+        request_id: UUID,
+        timeout_seconds: float,
+    ) -> QueueWaitResult: ...
+
+    async def queue_list(self, limit: int | None = None) -> QueuedOperationList: ...
+
+    async def queue_cancel(self, request_id: UUID) -> CancelQueuedOperationResult: ...
+
+    async def queue_summary(self) -> QueueSummary: ...
+
 
 class McpApplicationPort(ApplicationPort, Protocol):
+    async def start_queue_worker(self) -> None: ...
+
+    async def stop_queue_worker(self) -> None: ...
+
     async def diagnose(self) -> McpBridgeDiagnostic: ...
 
     async def prepare(
@@ -175,6 +189,8 @@ async def _invoke(
     arguments: Mapping[str, JsonValue],
     result_model: type[ResultModelT],
 ) -> ResultModelT:
+    if result_model is QueuedOperationReceipt:
+        return cast(ResultModelT, await _submit(application, operation, arguments))
     outcome = await application.execute(operation, arguments)
     if not outcome.ok:
         error = outcome.error
@@ -196,16 +212,50 @@ async def _invoke(
         raise _protocol_tool_error(operation) from error
 
 
+async def _submit(
+    application: ApplicationPort,
+    operation: str,
+    arguments: Mapping[str, JsonValue],
+) -> QueuedOperationReceipt:
+    """Persist a CMO mutation and return before CMO executes it."""
+    try:
+        return await application.submit(operation, arguments)
+    except BridgeError as error:
+        raise _bridge_tool_error(error) from error
+
+
+def _queued_mutation_description(description: str) -> str:
+    return (
+        f"{description} This tool only submits the mutation to CMO's durable queue; it does "
+        "not return CMO's eventual result. Use cmo_request_get or cmo_request_wait with the "
+        "returned request_id to inspect that result. A wait timeout does not cancel the request."
+    )
+
+
 def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     """Create the typed CMO MCP surface."""
+
+    @asynccontextmanager
+    async def lifespan(_server: FastMCP[None]) -> AsyncGenerator[None]:
+        await application.start_queue_worker()
+        try:
+            yield None
+        finally:
+            # Stopping only detaches the host worker. A published CMO order
+            # remains durable and is reconciled when the server restarts.
+            await application.stop_queue_worker()
+
     server = FastMCP(
         "CMO Agent Bridge",
         instructions=(
             "Read and update the running Command: Modern Operations scenario through a local "
             "file-backed bridge. Use cmo_bridge_diagnose and cmo_bridge_prepare when the "
-            "release-bound runtime is not ready. Live CMO calls require the polling event."
+            "release-bound runtime is not ready. Live CMO calls require the polling event. "
+            "Ordinary CMO mutation tools submit durable requests; use cmo_request_get or "
+            "cmo_request_wait to retrieve the eventual result."
         ),
         log_level="ERROR",
+        lifespan=lifespan,
     )
 
     async def bridge_diagnose() -> McpBridgeDiagnostic:
@@ -267,6 +317,95 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         structured_output=True,
     )
 
+    async def request_get(request_id: UUID) -> QueuedOperationStatus:
+        try:
+            return await application.queue_get(request_id)
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        request_get,
+        name="cmo_request_get",
+        title="Get queued CMO request",
+        description=(
+            "Return the current state and, once terminal, the result or error for one durable "
+            "CMO mutation request."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def request_wait(
+        request_id: UUID,
+        timeout_seconds: Annotated[float, Field(ge=0)],
+    ) -> QueueWaitResult:
+        try:
+            return await application.queue_wait(request_id, timeout_seconds)
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        request_wait,
+        name="cmo_request_wait",
+        title="Wait for queued CMO request",
+        description=(
+            "Wait up to timeout_seconds for one durable CMO mutation. A timeout only returns "
+            "the current pending state; it never cancels the queued request."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def request_list(
+        limit: Annotated[int | None, Field(ge=1)] = None,
+    ) -> QueuedOperationList:
+        try:
+            return await application.queue_list(limit)
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        request_list,
+        name="cmo_request_list",
+        title="List queued CMO requests",
+        description="List durable CMO mutation requests in submission order.",
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def request_cancel(request_id: UUID) -> CancelQueuedOperationResult:
+        try:
+            return await application.queue_cancel(request_id)
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        request_cancel,
+        name="cmo_request_cancel",
+        title="Cancel queued CMO request",
+        description=(
+            "Cancel one request only while it is still queued. An already active or terminal "
+            "request remains unchanged."
+        ),
+        annotations=_mutation_annotations(),
+        structured_output=True,
+    )
+
+    async def queue_status() -> QueueSummary:
+        try:
+            return await application.queue_summary()
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        queue_status,
+        name="cmo_queue_status",
+        title="Summarize CMO mutation queue",
+        description="Return durable CMO mutation queue counts by state.",
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
     async def scenario_get() -> ScenarioResult:
         return await _invoke(application, "scenario.get", {}, ScenarioResult)
 
@@ -284,21 +423,20 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def scenario_time_compression_set(
         code: Annotated[int, Field(ge=0, le=5)],
-    ) -> ScenarioTimeCompressionSetResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "scenario.time_compression.set",
             {"code": code},
-            ScenarioTimeCompressionSetResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         scenario_time_compression_set,
         name="cmo_scenario_time_compression_set",
         title="Set CMO time compression",
-        description=(
-            "Set the running scenario's time-compression code and return the requested code plus "
-            "the actual multiplier readback: "
+        description=_queued_mutation_description(
+            "Set the running scenario's time-compression code: "
             "0=1x, 1=2x, 2=5x, 3=15x, 4=coarse one-second slices, and "
             "5=coarse five-second slices. Before consequential multi-step planning or mutation, "
             "preserve cmo_scenario_get's multiplier, map 1/2/5/15/30/150 back to code "
@@ -478,7 +616,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         sensor_guid: Annotated[str, Field(min_length=1)],
         active: bool,
         obey_emcon: bool | None = None,
-    ) -> UnitSensorSetResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.sensor.set",
@@ -488,14 +626,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "active": active,
                 "obey_emcon": obey_emcon,
             },
-            UnitSensorSetResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_sensor_set,
         name="cmo_unit_sensor_set",
         title="Set CMO unit sensor state",
-        description=(
+        description=_queued_mutation_description(
             "Activate or deactivate one existing sensor by GUID, optionally changing whether "
             "the unit obeys EMCON."
         ),
@@ -511,7 +649,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         quantity: Annotated[int | None, Field(ge=1)] = None,
         max_capacity: Annotated[int | None, Field(ge=1)] = None,
         allow_new: bool = False,
-    ) -> UnitInventoryResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.magazine.adjust",
@@ -524,14 +662,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "max_capacity": max_capacity,
                 "allow_new": allow_new,
             },
-            UnitInventoryResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_magazine_adjust,
         name="cmo_unit_magazine_adjust",
         title="Adjust CMO unit magazine",
-        description=(
+        description=_queued_mutation_description(
             "Directly add, remove, or fill a weapon record in a unit magazine. This is an "
             "umpire or scenario-author inventory edit, not normal replenishment."
         ),
@@ -546,7 +684,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         mode: Literal["add", "remove", "fill"],
         quantity: Annotated[int | None, Field(ge=1)] = None,
         add_as_cell: bool = True,
-    ) -> UnitInventoryResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.mount_reload.adjust",
@@ -558,14 +696,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "quantity": quantity,
                 "add_as_cell": add_as_cell,
             },
-            UnitInventoryResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_mount_reload_adjust,
         name="cmo_unit_mount_reload_adjust",
         title="Adjust CMO unit mount reloads",
-        description=(
+        description=_queued_mutation_description(
             "Directly add, remove, or fill reloads for one mount. This is an umpire or "
             "scenario-author inventory edit, not normal replenishment."
         ),
@@ -593,7 +731,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         avoid_cavitation: bool | None = None,
         obey_emcon: bool | None = None,
         course: list[CourseWaypoint] | None = None,
-    ) -> UnitSetResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.set",
@@ -622,14 +760,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                     else None
                 ),
             },
-            UnitSetResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_set,
         name="cmo_unit_set",
         title="Update CMO unit",
-        description=(
+        description=_queued_mutation_description(
             "Update a unit's name, movement or depth state, hold behavior, EMCON obedience, "
             "cavitation behavior, sprint-and-drift behavior, or plotted course by GUID."
         ),
@@ -641,7 +779,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         unit_guid: Annotated[str, Field(min_length=1)],
         mission_guid: Annotated[str, Field(min_length=1)],
         escort: bool = False,
-    ) -> UnitAssignMissionResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.assign_mission",
@@ -650,33 +788,37 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "mission_guid": mission_guid,
                 "escort": escort,
             },
-            UnitAssignMissionResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_assign_mission,
         name="cmo_unit_assign_mission",
         title="Assign CMO unit to mission",
-        description="Assign one unit to one mission by GUID, optionally as an escort.",
+        description=_queued_mutation_description(
+            "Assign one unit to one mission by GUID, optionally as an escort."
+        ),
         annotations=_mutation_annotations(),
         structured_output=True,
     )
 
     async def unit_unassign_mission(
         unit_guid: Annotated[str, Field(min_length=1)],
-    ) -> UnitUnassignMissionResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.unassign_mission",
             {"unit_guid": unit_guid},
-            UnitUnassignMissionResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_unassign_mission,
         name="cmo_unit_unassign_mission",
         title="Unassign CMO unit from mission",
-        description="Remove one unit's current mission assignment by GUID.",
+        description=_queued_mutation_description(
+            "Remove one unit's current mission assignment by GUID."
+        ),
         annotations=_mutation_annotations(),
         structured_output=True,
     )
@@ -687,7 +829,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         time_to_ready_minutes: Annotated[float | None, Field(ge=0)] = None,
         ignore_magazines: bool = False,
         exclude_optional_weapons: bool = False,
-    ) -> UnitLoadoutResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.loadout.set",
@@ -698,36 +840,33 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "ignore_magazines": ignore_magazines,
                 "exclude_optional_weapons": exclude_optional_weapons,
             },
-            UnitLoadoutResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_loadout_set,
         name="cmo_unit_loadout_set",
         title="Set CMO unit loadout",
-        description=(
-            "Change one unit's loadout and return the loadout state observed immediately "
-            "after the update."
-        ),
+        description=_queued_mutation_description("Change one unit's loadout."),
         annotations=_non_idempotent_mutation_annotations(),
         structured_output=True,
     )
 
     async def unit_launch(
         unit_guid: Annotated[str, Field(min_length=1)],
-    ) -> UnitCommandResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.launch",
             {"unit_guid": unit_guid},
-            UnitCommandResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_launch,
         name="cmo_unit_launch",
         title="Launch CMO unit",
-        description=(
+        description=_queued_mutation_description(
             "Submit a launch command for one unit. Success means the command was accepted, "
             "not completed; poll cmo_unit_combat_status_get for progress."
         ),
@@ -737,19 +876,19 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def unit_rtb(
         unit_guid: Annotated[str, Field(min_length=1)],
-    ) -> UnitCommandResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.rtb",
             {"unit_guid": unit_guid},
-            UnitCommandResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_rtb,
         name="cmo_unit_rtb",
         title="Order CMO unit to return to base",
-        description=(
+        description=_queued_mutation_description(
             "Submit a return-to-base command for one unit. Success means the command was "
             "accepted, not completed; poll cmo_unit_combat_status_get for progress."
         ),
@@ -764,7 +903,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             list[Annotated[str, Field(min_length=1)]] | None,
             Field(min_length=1),
         ] = None,
-    ) -> UnitCommandResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.refuel",
@@ -773,14 +912,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "tanker_guid": tanker_guid,
                 "tanker_mission_guids": cast(JsonValue, tanker_mission_guids),
             },
-            UnitCommandResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_refuel,
         name="cmo_unit_refuel",
         title="Order CMO unit to refuel",
-        description=(
+        description=_queued_mutation_description(
             "Submit a refuel command, optionally selecting a tanker or tanker missions. "
             "Success means the command was accepted, not completed; poll "
             "cmo_unit_combat_status_get for progress."
@@ -793,7 +932,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         from_unit_guid: Annotated[str, Field(min_length=1)],
         to_unit_guid: Annotated[str, Field(min_length=1)],
         items: Annotated[list[CargoTransferItem], Field(min_length=1)],
-    ) -> UnitCargoTransferResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.cargo.transfer",
@@ -802,14 +941,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "to_unit_guid": to_unit_guid,
                 "items": [item.model_dump(mode="json") for item in items],
             },
-            UnitCargoTransferResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_cargo_transfer,
         name="cmo_unit_cargo_transfer",
         title="Transfer CMO unit cargo",
-        description=(
+        description=_queued_mutation_description(
             "Transfer selected cargo records or database quantities between two eligible units. "
             "Repeated calls may move additional cargo."
         ),
@@ -819,19 +958,19 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def unit_cargo_unload(
         unit_guid: Annotated[str, Field(min_length=1)],
-    ) -> UnitCargoUnloadResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.cargo.unload",
             {"unit_guid": unit_guid},
-            UnitCargoUnloadResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_cargo_unload,
         name="cmo_unit_cargo_unload",
         title="Unload CMO unit cargo",
-        description=(
+        description=_queued_mutation_description(
             "Unload all eligible cargo from one unit at its current location. Repeated calls are "
             "not safe after an uncertain result."
         ),
@@ -847,7 +986,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         mount_dbid: Annotated[int | None, Field(ge=1)] = None,
         weapon_dbid: Annotated[int | None, Field(ge=1)] = None,
         quantity: Annotated[int | None, Field(ge=1)] = None,
-    ) -> UnitAttackContactResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.attack_contact",
@@ -860,14 +999,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "weapon_dbid": weapon_dbid,
                 "quantity": quantity,
             },
-            UnitAttackContactResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_attack_contact,
         name="cmo_unit_attack_contact",
         title="Order CMO unit to attack contact",
-        description=(
+        description=_queued_mutation_description(
             "Submit an auto, manual-target, or manual-weapon attack command. Success means the "
             "command was accepted, not completed; poll cmo_unit_combat_status_get for progress. "
             "Manual weapon allocation is non-idempotent and can allocate additional weapons if "
@@ -940,7 +1079,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_guid: Annotated[str, Field(min_length=1)],
         contact_guid: Annotated[str, Field(min_length=1)],
         posture: Literal["F", "N", "U", "H"],
-    ) -> ContactDetailResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "contact.posture.set",
@@ -949,16 +1088,15 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "contact_guid": contact_guid,
                 "posture": posture,
             },
-            ContactDetailResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         contact_posture_set,
         name="cmo_contact_posture_set",
         title="Set CMO contact posture",
-        description=(
-            "Set one observing side's posture toward one contact and return the observed contact "
-            "state."
+        description=_queued_mutation_description(
+            "Set one observing side's posture toward one contact."
         ),
         annotations=_mutation_annotations(),
         structured_output=True,
@@ -1085,7 +1223,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         relative_bearing_deg: Annotated[float | None, Field(ge=0, le=360)] = None,
         relative_distance_nm: Annotated[float | None, Field(ge=0)] = None,
         bearing_type: ReferencePointBearingType | None = None,
-    ) -> ReferencePointResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "reference_point.add",
@@ -1100,14 +1238,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "relative_distance_nm": relative_distance_nm,
                 "bearing_type": bearing_type,
             },
-            ReferencePointResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         reference_point_add,
         name="cmo_reference_point_add",
         title="Add CMO reference point",
-        description=(
+        description=_queued_mutation_description(
             "Add one absolute reference point, or a relative point anchored to a unit, contact, "
             "or another reference point. Relative field aliases can vary by CMO build, so verify "
             "the returned anchor. Repeated calls may create duplicates."
@@ -1128,7 +1266,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         relative_distance_nm: Annotated[float | None, Field(ge=0)] = None,
         bearing_type: ReferencePointBearingType | None = None,
         clear_relative: bool = False,
-    ) -> ReferencePointResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "reference_point.update",
@@ -1145,14 +1283,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "bearing_type": bearing_type,
                 "clear_relative": clear_relative,
             },
-            ReferencePointResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         reference_point_update,
         name="cmo_reference_point_update",
         title="Update CMO reference point",
-        description=(
+        description=_queued_mutation_description(
             "Update a reference point's name or absolute position, or set, adjust, or clear its "
             "relative anchor. Verify the returned anchor on the installed CMO build."
         ),
@@ -1237,7 +1375,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         longitude: Annotated[float | None, Field(ge=-180, le=180)] = None,
         altitude: float | None = None,
         loadout_dbid: Annotated[int | None, Field(ge=1)] = None,
-    ) -> UnitAddResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "unit.add",
@@ -1252,14 +1390,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "altitude": altitude,
                 "loadout_dbid": loadout_dbid,
             },
-            UnitAddResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         unit_add,
         name="cmo_unit_add",
         title="Add CMO unit",
-        description=(
+        description=_queued_mutation_description(
             "Add one unit from a database ID at coordinates or at a base. Repeated calls may "
             "create duplicates."
         ),
@@ -1273,7 +1411,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         details: MissionDetails,
         category: MissionCategory = "mission",
         parent_task_pool_guid: Annotated[str | None, Field(min_length=1)] = None,
-    ) -> MissionCreateResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "mission.create",
@@ -1284,14 +1422,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "parent_task_pool_guid": parent_task_pool_guid,
                 "details": details.model_dump(mode="json"),
             },
-            MissionCreateResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_create,
         name="cmo_mission_create",
         title="Create CMO mission",
-        description=(
+        description=_queued_mutation_description(
             "Create an ordinary mission, task pool, or package for patrol, support, strike, "
             "ferry, mining, mine-clearing, or cargo work. Packages require a parent task-pool "
             "GUID. Repeated calls may create duplicates."
@@ -1353,7 +1491,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         cargo_subtype: Literal["transfer", "delivery"] | None = None,
         move_all_cargo: bool | None = None,
         allow_ground_self_delivery: bool | None = None,
-    ) -> MissionUpdateResult:
+    ) -> QueuedOperationReceipt:
         updates: dict[str, JsonValue] = {}
         for field_name, value in (
             ("active", active),
@@ -1416,14 +1554,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             application,
             "mission.update",
             {"side_guid": side_guid, "mission_guid": mission_guid, **updates},
-            MissionUpdateResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_update,
         name="cmo_mission_update",
         title="Update CMO mission",
-        description=(
+        description=_queued_mutation_description(
             "Update activation, schedule, force grouping, movement profiles, patrol behavior, "
             "strike limits, mining options, cargo options, or ordered mission zones."
         ),
@@ -1444,19 +1582,13 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         minimum_tankers_airborne: Annotated[int | None, Field(ge=0)] = None,
         minimum_tankers_on_station: Annotated[int | None, Field(ge=0)] = None,
         max_receivers_in_queue_per_tanker: Annotated[int | None, Field(ge=0)] = None,
-        fuel_percent_to_start_looking: Annotated[
-            float | None, Field(ge=0, le=100)
-        ] = None,
-        tanker_max_distance_nm: (
-            Annotated[float, Field(ge=0)] | Literal["internal"] | None
-        ) = None,
+        fuel_percent_to_start_looking: Annotated[float | None, Field(ge=0, le=100)] = None,
+        tanker_max_distance_nm: (Annotated[float, Field(ge=0)] | Literal["internal"] | None) = None,
         tanker_one_time: bool | None = None,
         tanker_max_receivers: (
-            Annotated[int, Field(ge=0)]
-            | Annotated[str, Field(min_length=1)]
-            | None
+            Annotated[int, Field(ge=0)] | Annotated[str, Field(min_length=1)] | None
         ) = None,
-    ) -> MissionAirRefuelingResult:
+    ) -> QueuedOperationReceipt:
         updates: dict[str, JsonValue] = {}
         for field_name, value in (
             ("use_refuel_unrep", use_refuel_unrep),
@@ -1486,14 +1618,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             application,
             "mission.air_refueling.update",
             {"side_guid": side_guid, "mission_guid": mission_guid, **updates},
-            MissionAirRefuelingResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_air_refueling_update,
         name="cmo_mission_air_refueling_update",
         title="Update CMO mission air-refueling plan",
-        description=(
+        description=_queued_mutation_description(
             "Configure receiver refueling policy, assigned tanker missions, tanker readiness "
             "minimums, queue limits, search threshold, and support-mission tanker limits."
         ),
@@ -1531,7 +1663,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         time_on_target: str | None = None,
         takeoff_date: str | None = None,
         takeoff_time: str | None = None,
-    ) -> MissionFlightPlanCreateResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "mission.flight_plan.create",
@@ -1543,14 +1675,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "takeoff_date": takeoff_date,
                 "takeoff_time": takeoff_time,
             },
-            MissionFlightPlanCreateResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_flight_plan_create,
         name="cmo_mission_flight_plan_create",
         title="Create CMO mission flight plan",
-        description=(
+        description=_queued_mutation_description(
             "Generate mission flights from exactly one schedule: YYYY/MM/DD plus HH:MM:SS "
             "for either time-on-target or takeoff. Waypoint mutation is intentionally absent."
         ),
@@ -1562,7 +1694,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_guid: Annotated[str, Field(min_length=1)],
         mission_guid: Annotated[str, Field(min_length=1)],
         target_guid: Annotated[str, Field(min_length=1)],
-    ) -> MissionTargetAddResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "mission.target.add",
@@ -1571,14 +1703,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "mission_guid": mission_guid,
                 "target_guid": target_guid,
             },
-            MissionTargetAddResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_target_add,
         name="cmo_mission_target_add",
         title="Add CMO mission target",
-        description="Add one target GUID to a strike mission.",
+        description=_queued_mutation_description("Add one target GUID to a strike mission."),
         annotations=_mutation_annotations(),
         structured_output=True,
     )
@@ -1587,7 +1719,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_guid: Annotated[str, Field(min_length=1)],
         mission_guid: Annotated[str, Field(min_length=1)],
         target_guid: Annotated[str, Field(min_length=1)],
-    ) -> MissionTargetRemoveResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "mission.target.remove",
@@ -1596,14 +1728,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "mission_guid": mission_guid,
                 "target_guid": target_guid,
             },
-            MissionTargetRemoveResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_target_remove,
         name="cmo_mission_target_remove",
         title="Remove CMO mission target",
-        description="Remove one target GUID from a strike mission.",
+        description=_queued_mutation_description("Remove one target GUID from a strike mission."),
         annotations=_mutation_annotations(),
         structured_output=True,
     )
@@ -1617,7 +1749,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         object_type: Annotated[int | None, Field(ge=1, le=5)] = None,
         cargo_guid: Annotated[str | None, Field(min_length=1)] = None,
         quantity: Annotated[int | None, Field(ge=1)] = None,
-    ) -> MissionCargoUpdateResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "mission.cargo.update",
@@ -1631,14 +1763,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "cargo_guid": cargo_guid,
                 "quantity": quantity,
             },
-            MissionCargoUpdateResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         mission_cargo_update,
         name="cmo_mission_cargo_update",
         title="Update CMO mission cargo",
-        description=(
+        description=_queued_mutation_description(
             "Assign or unassign one cargo object or mount quantity on a cargo mission. Repeated "
             "calls are not safe after an uncertain result."
         ),
@@ -1677,7 +1809,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         use_aip: DoctrineSettingValue | None = None,
         recharge_on_attack: DoctrineSettingValue | None = None,
         recharge_on_patrol: DoctrineSettingValue | None = None,
-    ) -> DoctrineSetResult:
+    ) -> QueuedOperationReceipt:
         updates: dict[str, JsonValue] = {}
         for field_name, value in (
             ("weapon_control_air", weapon_control_air),
@@ -1719,14 +1851,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "mission_guid": mission_guid,
                 **updates,
             },
-            DoctrineSetResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         doctrine_set,
         name="cmo_doctrine_set",
         title="Update CMO doctrine",
-        description=(
+        description=_queued_mutation_description(
             "Update selected weapon-control, engagement, fuel, withdrawal, air-combat, sonar, "
             "or submarine doctrine fields for one side, unit, or mission."
         ),
@@ -1746,7 +1878,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         mission_guid: Annotated[str | None, Field(min_length=1)] = None,
         contact_guid: Annotated[str | None, Field(min_length=1)] = None,
         target_type: Annotated[str, Field(min_length=1)] | int | None = None,
-    ) -> DoctrineWraResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "doctrine.wra.set",
@@ -1763,14 +1895,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "firing_range": firing_range,
                 "self_defence_range": self_defence_range,
             },
-            DoctrineWraResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         doctrine_wra_set,
         name="cmo_doctrine_wra_set",
         title="Set CMO weapon release authority",
-        description=(
+        description=_queued_mutation_description(
             "Set salvo size, shooter count, firing range, and self-defence range for one weapon "
             "and one contact or target type at side, mission, or unit scope."
         ),
@@ -1785,7 +1917,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         radar: EmconValue | None = None,
         sonar: EmconValue | None = None,
         oecm: EmconValue | None = None,
-    ) -> EmconSetResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "emcon.set",
@@ -1797,14 +1929,16 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "sonar": sonar,
                 "oecm": oecm,
             },
-            EmconSetResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         emcon_set,
         name="cmo_emcon_set",
         title="Update CMO EMCON",
-        description="Set radar, sonar, or OECM emission control for a side, mission, group, or unit.",
+        description=_queued_mutation_description(
+            "Set radar, sonar, or OECM emission control for a side, mission, group, or unit."
+        ),
         annotations=_mutation_annotations(),
         structured_output=True,
     )
@@ -1835,19 +1969,19 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     async def special_action_execute(
         side_guid: Annotated[str, Field(min_length=1)],
         action_guid: Annotated[str, Field(min_length=1)],
-    ) -> SpecialActionExecuteResult:
+    ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
             "special_action.execute",
             {"side_guid": side_guid, "action_guid": action_guid},
-            SpecialActionExecuteResult,
+            QueuedOperationReceipt,
         )
 
     server.add_tool(
         special_action_execute,
         name="cmo_special_action_execute",
         title="Execute CMO special action",
-        description=(
+        description=_queued_mutation_description(
             "Execute one existing active scenario-authored special action by GUID. Repeated calls "
             "may repeat scenario effects."
         ),

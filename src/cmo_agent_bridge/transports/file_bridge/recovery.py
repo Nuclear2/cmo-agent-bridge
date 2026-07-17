@@ -71,6 +71,14 @@ def _state_conflict(message: str, details: dict[str, object] | None = None) -> B
     return BridgeError(ErrorCode.STATE_CONFLICT, message, details)
 
 
+def _process_details(value: ProcessInfo) -> dict[str, object]:
+    return {
+        "pid": value.pid,
+        "create_time": value.create_time,
+        "executable": str(value.executable),
+    }
+
+
 def _canonical_json_bytes(value: object) -> bytes:
     return json.dumps(
         value,
@@ -291,6 +299,22 @@ class RecoveryManager:
     async def recover_pending(self) -> RecoveryReport:
         """Converge the one durable mutation barrier before new work is published."""
 
+        return await self._recover_pending(durable_request_id=None)
+
+    async def recover_owned_pending(self, request_id: UUID) -> RecoveryReport:
+        """Recover one queue-owned request without cancelling it during a CMO pause."""
+
+        if type(request_id) is not UUID:
+            raise _invalid_argument("durable recovery request ID must be exact")
+        return await self._recover_pending(durable_request_id=request_id)
+
+    async def _recover_pending(
+        self,
+        *,
+        durable_request_id: UUID | None,
+    ) -> RecoveryReport:
+        """Shared startup recovery implementation for ordinary and queue-owned work."""
+
         self._root_lock.require_acquired()
         loaded = self._load_journal_observed()
         if loaded is None:
@@ -307,10 +331,11 @@ class RecoveryManager:
 
         journal = loaded.journal
         original = journal.original
+        owned_durable = durable_request_id == original.request_id
         if original.state is PendingPhase.PREPARED:
-            return await self._recover_prepared(loaded)
+            return await self._recover_prepared(loaded, durable=owned_durable)
         if original.state is PendingPhase.PUBLISHED:
-            return await self._recover_published(loaded)
+            return await self._recover_published(loaded, durable=owned_durable)
         if original.state is PendingPhase.CANCEL_PUBLISHED:
             cancel_intents = tuple(
                 intent for intent in original.delivery_intents if intent.delivery_kind == "cancel"
@@ -485,7 +510,12 @@ class RecoveryManager:
             and request.created_at_ms == original.created_at_ms
         )
 
-    async def _recover_prepared(self, loaded: LoadedPendingJournal) -> RecoveryReport:
+    async def _recover_prepared(
+        self,
+        loaded: LoadedPendingJournal,
+        *,
+        durable: bool = False,
+    ) -> RecoveryReport:
         journal = loaded.journal
         original = journal.original
         if original.state is not PendingPhase.PREPARED or len(original.delivery_intents) != 1:
@@ -548,6 +578,46 @@ class RecoveryManager:
                     request_state=HostRequestState.REJECTED,
                     response_cleanup_required=False,
                 )
+            if durable:
+                # This exact queue request crashed before publication. Reuse
+                # its persisted request/delivery IDs and bytes instead of
+                # rejecting an order that the durable queue still owns.
+                delivery = PreparedDelivery(
+                    request_id=intent.request_id,
+                    delivery_id=intent.delivery_id,
+                    delivery_kind=intent.delivery_kind,
+                    request_hash=intent.request_hash,
+                    body_json=intent.body_json.encode("utf-8", errors="strict"),
+                )
+                if (
+                    render_delivery_lua(delivery, intent.runtime_snapshot)
+                    != self._render_intent(intent)
+                ):
+                    raise _state_conflict("prepared durable delivery rendering drifted")
+                actual_process = require_single_instance(
+                    self._process_inspector,
+                    self._paths.command_exe,
+                )
+                if actual_process != self._expected_process:
+                    raise BridgeError(
+                        ErrorCode.SCENARIO_CHANGED,
+                        "CMO process identity changed before durable request republication",
+                        {
+                            "expected_process": _process_details(self._expected_process),
+                            "actual_process": _process_details(actual_process),
+                        },
+                    )
+                self._inbox.publish_delivery(
+                    delivery,
+                    runtime_snapshot=intent.runtime_snapshot,
+                )
+                published = self._promote_prepared(journal, request, intent)
+                reloaded = self._load_journal_observed()
+                if reloaded is None or not _same_journal(reloaded.journal, published):
+                    raise _state_conflict(
+                        "republished durable journal changed before response recovery"
+                    )
+                return await self._recover_published(reloaded, durable=True)
             self._converge_request_transition(request, rejected)
             if not self._response_file_absent(response_path):
                 raise _state_conflict("prepared response appeared after rejection transition")
@@ -568,7 +638,7 @@ class RecoveryManager:
         reloaded = self._load_journal_observed()
         if reloaded is None or not _same_journal(reloaded.journal, published):
             raise _state_conflict("promoted startup journal changed before cancellation")
-        return await self._recover_published(reloaded)
+        return await self._recover_published(reloaded, durable=durable)
 
     @staticmethod
     def _response_file_absent(path: Path) -> bool:
@@ -590,7 +660,12 @@ class RecoveryManager:
             raise failure
         return False
 
-    async def _recover_published(self, loaded: LoadedPendingJournal) -> RecoveryReport:
+    async def _recover_published(
+        self,
+        loaded: LoadedPendingJournal,
+        *,
+        durable: bool = False,
+    ) -> RecoveryReport:
         journal = loaded.journal
         request = self._converge_published_sqlite(journal)
         try:
@@ -607,31 +682,7 @@ class RecoveryManager:
                 expected_original=journal.original,
             )
         if artifact is not None:
-            accepted_at_ms = _EpochSequence().next(
-                minimum=max(journal.original.updated_at_ms, artifact.accepted_at_ms)
-            )
-            response_accepted = _journal_with_original(
-                journal,
-                response_artifact=artifact,
-                settlement=artifact.accepted_response.settlement,
-                revision=journal.original.revision + 1,
-                state=PendingPhase.RESPONSE_ACCEPTED,
-                updated_at_ms=accepted_at_ms,
-            )
-            self._save_journal_advance(
-                journal,
-                response_accepted,
-                label="startup original response acceptance",
-            )
-            self._continue_response_accepted(
-                response_accepted,
-                invocation=loaded.original.invocation,
-                epochs=_EpochSequence(),
-            )
-            return self._report_after_recovery(
-                journal.original.request_id,
-                expected_original=journal.original,
-            )
+            return self._accept_published_response(loaded, journal, artifact)
 
         intent = journal.original.delivery_intents[0]
         rendered_request = self._render_intent(intent)
@@ -648,7 +699,77 @@ class RecoveryManager:
                 expected_original=journal.original,
             )
 
+        if durable:
+            # Do not turn a hard CMO pause into a cancellation.  The request
+            # delivery remains in the inbox and the durable worker waits for
+            # that exact request/delivery response until CMO runs again.
+            waiter = ResponseWaiter(
+                response_path=self._paths.response_path(journal.original.request_id),
+                expectation=loaded.original.expectation,
+                expected_process=self._expected_process,
+                process_check=lambda: require_single_instance(
+                    self._process_inspector,
+                    self._paths.command_exe,
+                ),
+                poll_seconds=self._response_poll_seconds,
+                ownership_check=(
+                    lambda: self._read_inbox_observed() == rendered_request
+                ),
+            )
+            try:
+                artifact = await waiter.wait(None)
+            except BridgeError as error:
+                reason = error.details.get("reason")
+                if error.code is not ErrorCode.INDETERMINATE_OUTCOME or reason not in {
+                    "published_inbox_evidence_missing",
+                    "stable_invalid_response",
+                }:
+                    raise
+                self._quarantine_pending(
+                    journal,
+                    request,
+                    reason=str(reason),
+                    message=error.message,
+                )
+                return self._report_after_recovery(
+                    journal.original.request_id,
+                    expected_original=journal.original,
+                )
+            return self._accept_published_response(loaded, journal, artifact)
+
         await self.settle_published_cancellation(journal)
+        return self._report_after_recovery(
+            journal.original.request_id,
+            expected_original=journal.original,
+        )
+
+    def _accept_published_response(
+        self,
+        loaded: LoadedPendingJournal,
+        journal: PendingJournal,
+        artifact: ResponseArtifact,
+    ) -> RecoveryReport:
+        accepted_at_ms = _EpochSequence().next(
+            minimum=max(journal.original.updated_at_ms, artifact.accepted_at_ms)
+        )
+        response_accepted = _journal_with_original(
+            journal,
+            response_artifact=artifact,
+            settlement=artifact.accepted_response.settlement,
+            revision=journal.original.revision + 1,
+            state=PendingPhase.RESPONSE_ACCEPTED,
+            updated_at_ms=accepted_at_ms,
+        )
+        self._save_journal_advance(
+            journal,
+            response_accepted,
+            label="startup original response acceptance",
+        )
+        self._continue_response_accepted(
+            response_accepted,
+            invocation=loaded.original.invocation,
+            epochs=_EpochSequence(),
+        )
         return self._report_after_recovery(
             journal.original.request_id,
             expected_original=journal.original,

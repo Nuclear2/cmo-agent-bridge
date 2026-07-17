@@ -69,17 +69,24 @@ stale while CMO is running at high compression:
 
 1. Read `cmo_scenario_get`; preserve the exact `time_compression` multiplier, map it back to a
    setter code using [tool-catalog.md](tool-catalog.md), and note scenario time.
-2. Set `cmo_scenario_time_compression_set(code=0)` and verify the observed multiplier is `1`.
+2. Submit `cmo_scenario_time_compression_set(code=0)`, retain its request ID, wait for completion,
+   and verify the eventual observed multiplier is `1`.
 3. Refresh all decision-relevant reads. Do not plan from the pre-slowdown snapshot.
-4. Issue and verify the bounded order set at 1x.
-5. Restore the preserved compression only after successful readback. On timeout, scenario change,
-   or uncertain mutation outcome, leave CMO at 1x while recovering.
+4. Submit independent orders in FIFO order. Wait before any step that needs an earlier returned
+   GUID or result, then verify the affected CMO state at 1x.
+5. Restore the preserved compression only after successful queue completion and readback. A
+   `cmo_request_wait` timeout does not cancel the request; query the same request instead of
+   resubmitting it. On rejection, quarantine, scenario change, or an unresolved result, do not
+   submit a dependent restore.
 
 Use this guard for mission construction or restructuring, coordinated assignments, strike packages,
 target and weapon planning, doctrine/WRA/EMCON batches, and other consequential commitments. Do not
 toggle compression for an isolated read or a trivial bounded order unless the decision horizon
-requires it. Keep scenario time advancing: the bridge's Regular Time trigger services requests
-without a Special Action while CMO runs at 1x.
+requires it. After `cmo_bridge_status` establishes the current process/runtime/scenario binding,
+mutation submission remains available while CMO is paused: requests stay in the durable FIFO queue
+and execute when the Regular Time trigger resumes. `cmo_request_get`, `cmo_request_list`,
+`cmo_queue_status`, and cancellation of still-queued work remain available during the pause.
+Synchronous reads still require polling.
 
 ## Build the operating picture
 
@@ -118,8 +125,12 @@ multi-step work that needs the exact runtime identity.
   sensors, and weapons. Coarse fuel and weapon state strings are not sufficient.
 - Prefer mission and doctrine control for sustained behavior. Use direct movement, sensor, launch,
   RTB, refuel, or attack orders for bounded tactical corrections.
-- Treat accepted commands as asynchronous. Let scenario time advance, then reread the affected
-  state.
+- A mutation call returns a queue receipt. Use `cmo_request_get` or `cmo_request_wait` to obtain its
+  eventual CMO result; a wait timeout never cancels it, and only a still-`queued` request can be
+  cancelled.
+- Treat a completed launch, RTB, refuel, attack, cargo, or Special Action request as an accepted
+  order whose simulated effect is still asynchronous. Let scenario time advance, then reread the
+  affected state.
 
 For an aircraft loadout change during fair play, use the database-default readying behavior. Do
 not set an artificially short `time_to_ready_minutes` or set `ignore_magazines=true`; those are
@@ -135,8 +146,9 @@ author or umpire interventions.
 4. Create missing reference points in intended order. Use absolute points for fixed geography and
    relative fixed/rotating points for geometry that must follow an eligible anchor. Keep patrol
    and prosecution areas separate.
-5. Check for an exact existing mission name before calling `cmo_mission_create`. A newly created
-   bridge mission is inactive; retain its returned GUID.
+5. Check for an exact existing mission name before calling `cmo_mission_create`. Wait for the
+   request to complete, validate the result, and retain its returned GUID. A newly created bridge
+   mission is inactive.
 6. While inactive, configure schedules, ordered zones, force grouping, minimum forces,
    on-station requirements, route profiles, patrol or strike behavior, and targets.
 7. Read effective doctrine and WRA. Apply deliberate mission-level overrides and EMCON only where
@@ -203,8 +215,8 @@ age, uncertainty, own noise, sensor geometry, and the datum created by weapons o
   maximum-receiver limits where applicable.
 - Read the mission again and distinguish requested policy from effective CMO readback.
 - Use `cmo_unit_refuel` to request refueling, optionally selecting one tanker or a set of tanker
-  missions.
-- Treat the result as order acceptance. Verify whether the receiver actually rendezvoused,
+  missions, then obtain the final queue result.
+- Treat a completed queue result as order acceptance. Verify whether the receiver actually rendezvoused,
   refueled, continued, diverted, or returned.
 - Mission policy does not prove tanker availability or successful transfer. Observe actual tanker
   launches, queueing, bingo state, losses, receiver fuel, and continuation.
@@ -245,7 +257,8 @@ the claimed result.
 - Use `bearing_type="fixed"` for a true-bearing offset and `"rotating"` when geometry should turn
   with the anchor heading. Keep all points in one area anchored consistently unless the design
   intentionally mixes frames.
-- Supply the returned RP GUIDs in order to the inactive mission and verify the mission geometry.
+- Wait for every point creation needed by later geometry, then supply the returned RP GUIDs in
+  order to the inactive mission and verify the mission geometry.
 - Advance time and reread the RPs and mission after anchor movement. Test anchor loss and
   save/reload before relying on the area through a long operation.
 - Use `cmo_reference_point_update` to re-anchor or adjust the offsets; use `clear_relative=true`
@@ -253,8 +266,8 @@ the claimed result.
 
 ### Task pools and packages
 
-- Create the pool with `cmo_mission_create(category="task_pool", ...)`.
-- Create each child with `category="package"` and the exact `parent_task_pool_guid`. Keep every
+- Create the pool with `cmo_mission_create(category="task_pool", ...)` and wait for its GUID.
+- Create each child with `category="package"` and that exact `parent_task_pool_guid`. Keep every
   child inactive while assembling geometry, targets, timing, doctrine, support, and assignments.
 - Read the pool and children back; verify each package's parent and the pool's package GUID list.
 - Assign units only through the current ordinary assignment contract. The bridge does not expose
@@ -267,7 +280,7 @@ the claimed result.
 
 - Set the inactive mission's geometry, targets, force size, assignments, doctrine, and support
   before generating flights.
-- Call `cmo_mission_flight_plan_create` with exactly one schedule form:
+- Call `cmo_mission_flight_plan_create` with exactly one schedule form, then wait for completion:
   `date_on_target` plus `time_on_target`, or `takeoff_date` plus `takeoff_time`. Dates use
   `YYYY/MM/DD`; times use `HH:MM:SS`.
 - Call `cmo_mission_flight_plan_list` and inspect the mission timing, every returned flight GUID,
@@ -299,9 +312,9 @@ waypoint mutation. State those boundaries explicitly when they affect feasibilit
 1. List actions only for the commanded side.
 2. Read name, description, active state, and repeatability before execution.
 3. Execute an existing active action only when the user requests it or it is an explicit,
-   understood scenario step.
-4. Treat execution as accepted, then inspect scenario, missions, units, contacts, and score for
-   effects.
+   understood scenario step. Resolve its queue receipt.
+4. Treat a completed request as accepted, then inspect scenario, missions, units, contacts, and
+   score for effects.
 
 Do not create or edit special actions in `LIVE_PLAYER`.
 
@@ -311,8 +324,9 @@ Do not create or edit special actions in `LIVE_PLAYER`.
 2. Read contacts, missions, assigned units, combat status, inventories, sensors, allocations, and
    decision indicators relevant to the next action.
 3. Compare observations with assumptions, adversary courses, objective, MOPs, and MOEs.
-4. Issue one bounded set of orders.
-5. Restore or raise compression long enough for asynchronous actions to develop, then re-enter the
+4. Submit one bounded set of orders, resolve required dependencies, and retain all request IDs.
+5. Restore or raise compression long enough for queued commands and asynchronous effects to
+   develop, then re-enter the
    1x planning guard before the next consequential assessment.
 6. Reread fuel, damage, readiness, weapons, sensors, allocations, mission coverage, contact
    uncertainty, BDA, and score.
@@ -327,14 +341,15 @@ authority, expected gain, and a recovery path.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
-- `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: the bridge cannot distinguish a
+- `BRIDGE_UNRESPONSIVE` or a status-handshake/read `REQUEST_TIMEOUT`: the bridge cannot distinguish a
   paused scenario from an inactive or unloaded polling event. If paused, resume at 1x until the
-  tool returns, or repeat `Alt+1` 15-second time steps as needed. If time is already advancing,
-  repair the repeatable Regular Time polling event. While the call is waiting, a pending request
-  will be serviced automatically when polling resumes; after the bounded attempts are exhausted,
-  follow recovery state rather than assuming that the delayed mutation will still run.
+  read returns, or repeat `Alt+1` 15-second time steps as needed. If time is already advancing,
+  repair the repeatable Regular Time polling event.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
-- Timeout after a non-idempotent mutation: search for the created object or resulting state before
-  any retry.
+- Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the
+  durable request remains queued or active and resumes when polling does.
+- `rejected` or `quarantined`: inspect the queue error and current bridge binding. Never carry the
+  request into a different CMO process or scenario.
+- MCP/client restart: query the original request ID; shutdown does not cancel active work.
 - Other structured errors: report the code and actionable message without inventing state.

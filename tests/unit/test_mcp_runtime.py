@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
+from uuid import UUID
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -10,14 +12,27 @@ from pydantic import JsonValue
 
 import cmo_agent_bridge.mcp_runtime as runtime_module
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.application.queue_models import (
+    CancelQueuedOperationResult,
+    QueueSummary,
+    QueueWaitResult,
+    QueuedOperationList,
+    QueuedOperationReceipt,
+    QueuedOperationStatus,
+)
 from cmo_agent_bridge.application.service import BridgeApplication
 from cmo_agent_bridge.bootstrap import ApplicationRuntime, PreparedBridge
 from cmo_agent_bridge.config import BridgeConfig
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
 from cmo_agent_bridge.mcp_runtime import McpRuntimeManager
 from cmo_agent_bridge.mcp_server import create_mcp_server
+from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot
+from cmo_agent_bridge.state.operation_queue import OperationQueueState
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
+
+
+_QUEUE_REQUEST_ID = UUID("00000000-0000-0000-0000-000000000456")
 
 
 def _game_root(tmp_path: Path) -> Path:
@@ -33,7 +48,7 @@ class _ScoreApplication:
     async def execute(
         self,
         operation: str,
-        arguments: object,
+        arguments: Mapping[str, JsonValue],
         *,
         confirmation_token: str | None = None,
     ) -> InvocationOutcome:
@@ -46,6 +61,140 @@ class _ScoreApplication:
             result=result,
             error=None,
         )
+
+
+class _BlockingApplication:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+        *,
+        confirmation_token: str | None = None,
+    ) -> InvocationOutcome:
+        del operation, arguments, confirmation_token
+        self.started.set()
+        await self.release.wait()
+        return InvocationOutcome(
+            protocol="cmo-agent-bridge/1",
+            request_id=None,
+            ok=True,
+            result={"released": True},
+            error=None,
+        )
+
+
+class _FakeQueueService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, object]] = []
+        self.status = QueuedOperationStatus(
+            request_id=_QUEUE_REQUEST_ID,
+            operation="mission.create",
+            sequence=3,
+            state=OperationQueueState.QUEUED,
+            submitted_at_ms=10,
+        )
+
+    def submit(
+        self,
+        *,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+    ) -> QueuedOperationReceipt:
+        self.calls.append(("submit", (operation, dict(arguments))))
+        return QueuedOperationReceipt(
+            request_id=_QUEUE_REQUEST_ID,
+            operation=operation,
+            sequence=3,
+            state=OperationQueueState.QUEUED,
+            submitted_at_ms=10,
+        )
+
+    def get(self, *, request_id: UUID) -> QueuedOperationStatus:
+        self.calls.append(("get", request_id))
+        return self.status
+
+    async def wait(
+        self,
+        *,
+        request_id: UUID,
+        timeout_seconds: float,
+    ) -> QueueWaitResult:
+        self.calls.append(("wait", (request_id, timeout_seconds)))
+        return QueueWaitResult(operation=self.status, timed_out=True)
+
+    def list(self, *, limit: int | None = None) -> QueuedOperationList:
+        self.calls.append(("list", limit))
+        return QueuedOperationList(items=(self.status,))
+
+    def cancel(self, *, request_id: UUID) -> CancelQueuedOperationResult:
+        self.calls.append(("cancel", request_id))
+        return CancelQueuedOperationResult(operation=self.status, cancelled=False)
+
+    def summary(self) -> QueueSummary:
+        self.calls.append(("summary", None))
+        return QueueSummary(
+            queued=1,
+            active=0,
+            completed=0,
+            rejected=0,
+            quarantined=0,
+            cancelled=0,
+        )
+
+
+class _FakeQueueWorker:
+    def __init__(self) -> None:
+        self.start_count = 0
+        self.wake_count = 0
+        self.stop_count = 0
+        self.running = False
+
+    def start(self) -> None:
+        self.start_count += 1
+        self.running = True
+
+    def wake(self) -> None:
+        self.wake_count += 1
+
+    async def stop(self) -> None:
+        self.stop_count += 1
+        self.running = False
+
+
+class _SlowStopQueueWorker(_FakeQueueWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.stop_started = asyncio.Event()
+        self.release_stop = asyncio.Event()
+
+    async def stop(self) -> None:
+        self.stop_count += 1
+        self.stop_started.set()
+        await self.release_stop.wait()
+        self.running = False
+
+
+def _fake_runtime(
+    *,
+    application: object,
+    queue_service: _FakeQueueService,
+    queue_worker: _FakeQueueWorker,
+    paths: FileBridgePaths,
+    snapshot: RuntimeSnapshot,
+) -> ApplicationRuntime:
+    return ApplicationRuntime(
+        application=cast(BridgeApplication, application),
+        host_quarantine=cast(Any, None),
+        queue_service=cast(Any, queue_service),
+        queue_worker=cast(Any, queue_worker),
+        config=BridgeConfig(game_root=paths.game_root),
+        paths=paths,
+        runtime_snapshot=snapshot,
+    )
 
 
 def _structured(value: object) -> dict[str, JsonValue]:
@@ -116,6 +265,8 @@ async def test_prepare_hot_activates_the_same_mcp_server(
         return ApplicationRuntime(
             application=cast(BridgeApplication, _ScoreApplication()),
             host_quarantine=cast(Any, None),
+            queue_service=cast(Any, None),
+            queue_worker=cast(Any, None),
             config=prepared.config,
             paths=paths,
             runtime_snapshot=snapshot,
@@ -171,6 +322,8 @@ async def test_concurrent_prepare_is_single_flight(
         return ApplicationRuntime(
             application=cast(BridgeApplication, _ScoreApplication()),
             host_quarantine=cast(Any, None),
+            queue_service=cast(Any, None),
+            queue_worker=cast(Any, None),
             config=prepared.config,
             paths=paths,
             runtime_snapshot=snapshot,
@@ -187,3 +340,237 @@ async def test_concurrent_prepare_is_single_flight(
 
     assert first == second
     assert calls == {"prepare": 1, "build": 1}
+
+
+@pytest.mark.asyncio
+async def test_queue_surface_delegates_and_wakes_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    queue = _FakeQueueService()
+    worker = _FakeQueueWorker()
+    runtime = _fake_runtime(
+        application=_ScoreApplication(),
+        queue_service=queue,
+        queue_worker=worker,
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(game_root=game_root, local_app_data=local_app_data)
+    await manager.start_queue_worker()
+
+    receipt = await manager.submit("mission.create", {"side": "Blue"})
+    status = await manager.queue_get(_QUEUE_REQUEST_ID)
+    waited = await manager.queue_wait(_QUEUE_REQUEST_ID, 0.5)
+    listed = await manager.queue_list(10)
+    cancelled = await manager.queue_cancel(_QUEUE_REQUEST_ID)
+    summary = await manager.queue_summary()
+
+    assert receipt.request_id == _QUEUE_REQUEST_ID
+    assert status == queue.status
+    assert waited.timed_out is True
+    assert listed.items == (queue.status,)
+    assert cancelled.cancelled is False
+    assert summary.queued == 1
+    assert queue.calls == [
+        ("submit", ("mission.create", {"side": "Blue"})),
+        ("get", _QUEUE_REQUEST_ID),
+        ("wait", (_QUEUE_REQUEST_ID, 0.5)),
+        ("list", 10),
+        ("cancel", _QUEUE_REQUEST_ID),
+        ("summary", None),
+    ]
+    assert worker.start_count == 6
+    assert worker.wake_count == 2
+
+
+@pytest.mark.asyncio
+async def test_queue_lifecycle_is_lazy_and_stops_built_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    queue = _FakeQueueService()
+    worker = _FakeQueueWorker()
+    runtime = _fake_runtime(
+        application=_ScoreApplication(),
+        queue_service=queue,
+        queue_worker=worker,
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+    build_count = 0
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        nonlocal build_count
+        build_count += 1
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(game_root=game_root, local_app_data=local_app_data)
+
+    await manager.start_queue_worker()
+    assert build_count == 0
+    assert worker.start_count == 0
+
+    summary = await manager.queue_summary()
+    await manager.stop_queue_worker()
+
+    assert summary.queued == 1
+    assert build_count == 1
+    assert worker.start_count == 1
+    assert worker.stop_count == 1
+
+
+@pytest.mark.asyncio
+async def test_start_waits_for_slow_stop_before_restarting_queue_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    worker = _SlowStopQueueWorker()
+    runtime = _fake_runtime(
+        application=_ScoreApplication(),
+        queue_service=_FakeQueueService(),
+        queue_worker=worker,
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(game_root=game_root, local_app_data=local_app_data)
+    await manager.start_queue_worker()
+    await manager.queue_summary()
+    assert worker.start_count == 1
+
+    stopping = asyncio.create_task(manager.stop_queue_worker())
+    await asyncio.wait_for(worker.stop_started.wait(), timeout=0.25)
+    restarting = asyncio.create_task(manager.start_queue_worker())
+    await asyncio.sleep(0)
+    restart_waited_for_stop = not restarting.done()
+
+    worker.release_stop.set()
+    await asyncio.wait_for(asyncio.gather(stopping, restarting), timeout=0.25)
+
+    assert restart_waited_for_stop
+    assert worker.stop_count == 1
+    assert worker.start_count == 2
+    assert worker.running is True
+
+
+@pytest.mark.asyncio
+async def test_pending_cmo_exchange_does_not_hold_runtime_manager_lock(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    application = _BlockingApplication()
+    queue = _FakeQueueService()
+    worker = _FakeQueueWorker()
+    runtime = _fake_runtime(
+        application=application,
+        queue_service=queue,
+        queue_worker=worker,
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(game_root=game_root, local_app_data=local_app_data)
+
+    exchange = asyncio.create_task(manager.execute("scenario.get", {}))
+    await application.started.wait()
+    try:
+        summary = await asyncio.wait_for(manager.queue_summary(), timeout=0.25)
+    finally:
+        application.release.set()
+    outcome = await exchange
+
+    assert summary.queued == 1
+    assert outcome.ok is True
+
+
+@pytest.mark.parametrize("action", ["submit", "cancel"])
+@pytest.mark.asyncio
+async def test_shutdown_racing_queue_change_cannot_restart_inactive_worker(
+    action: Literal["submit", "cancel"],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    queue = _FakeQueueService()
+    worker = _FakeQueueWorker()
+    runtime = _fake_runtime(
+        application=_ScoreApplication(),
+        queue_service=queue,
+        queue_worker=worker,
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(game_root=game_root, local_app_data=local_app_data)
+    await manager.start_queue_worker()
+    await manager.queue_summary()
+
+    reached_after_ensure = asyncio.Event()
+    release_queue_change = asyncio.Event()
+    original_ensure = McpRuntimeManager._ensure_runtime  # pyright: ignore[reportPrivateUsage]
+
+    async def gated_ensure(selected: McpRuntimeManager) -> ApplicationRuntime:
+        selected_runtime = await original_ensure(selected)
+        reached_after_ensure.set()
+        await release_queue_change.wait()
+        return selected_runtime
+
+    monkeypatch.setattr(McpRuntimeManager, "_ensure_runtime", gated_ensure)
+
+    async def change_queue() -> None:
+        if action == "submit":
+            await manager.submit("mission.create", {"side": "Blue"})
+        else:
+            await manager.queue_cancel(_QUEUE_REQUEST_ID)
+
+    queue_change = asyncio.create_task(change_queue())
+
+    await asyncio.wait_for(reached_after_ensure.wait(), timeout=0.25)
+    await asyncio.wait_for(manager.stop_queue_worker(), timeout=0.25)
+    starts_after_stop = worker.start_count
+    wakes_after_stop = worker.wake_count
+    release_queue_change.set()
+    await asyncio.wait_for(queue_change, timeout=0.25)
+
+    assert worker.running is False
+    assert worker.stop_count == 1
+    assert worker.start_count == starts_after_stop
+    assert worker.wake_count == wakes_after_stop

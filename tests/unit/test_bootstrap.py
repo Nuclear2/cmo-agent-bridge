@@ -1,9 +1,12 @@
+import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from cmo_agent_bridge.application.service import BridgeApplication
+from cmo_agent_bridge.application.queue_service import QueueService
+from cmo_agent_bridge.application.queue_worker import QueueWorker
 from cmo_agent_bridge.bootstrap import (
     POLL_ACTION_SCRIPT,
     TrustedLocalPolicy,
@@ -42,9 +45,16 @@ def test_prepare_deploys_release_bound_runtime_and_builds_application(tmp_path: 
 
     runtime = build_application_runtime(local_app_data=local_app_data)
     assert type(runtime.application) is BridgeApplication
+    assert type(runtime.queue_service) is QueueService
+    assert type(runtime.queue_worker) is QueueWorker
     assert runtime.paths == prepared.paths
     assert runtime.runtime_snapshot == prepared.runtime_snapshot
     assert runtime.paths.sqlite_file.is_file()
+    with sqlite3.connect(runtime.paths.sqlite_file) as connection:
+        queue_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'operation_queue'"
+        ).fetchone()
+    assert queue_table == ("operation_queue",)
 
 
 def test_build_application_rejects_a_drifted_dispatcher(tmp_path: Path) -> None:
@@ -58,6 +68,25 @@ def test_build_application_rejects_a_drifted_dispatcher(tmp_path: Path) -> None:
         build_application_runtime(local_app_data=local_app_data)
 
     assert caught.value.code is ErrorCode.BRIDGE_NOT_PREPARED
+
+
+def test_prepare_never_overwrites_inbox_while_pending_journal_exists(
+    tmp_path: Path,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    prepared = prepare_bridge(game_root=game_root, local_app_data=local_app_data)
+    owned_inbox = b"published durable request\n"
+    prepared.paths.inbox.write_bytes(owned_inbox)
+    prepared.paths.pending_file.parent.mkdir(parents=True, exist_ok=True)
+    prepared.paths.pending_file.write_bytes(b"pending")
+
+    with pytest.raises(BridgeError) as caught:
+        prepare_bridge(game_root=game_root, local_app_data=local_app_data)
+
+    assert caught.value.code is ErrorCode.STATE_CONFLICT
+    assert prepared.paths.inbox.read_bytes() == owned_inbox
 
 
 @pytest.mark.parametrize(

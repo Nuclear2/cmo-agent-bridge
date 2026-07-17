@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractAsyncContextManager
 from enum import StrEnum
-from typing import Protocol
+from typing import Callable, Protocol
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, model_validator
@@ -85,8 +85,25 @@ class BridgeChannel(Protocol):
     async def recover_pending(self) -> RecoveryReport: ...
 
 
+class DurableBridgeChannel(BridgeChannel, Protocol):
+    """Worker-only channel that exposes the startup recovery outcome."""
+
+    @property
+    def recovery_report(self) -> RecoveryReport: ...
+
+
 class BridgeTransport(Protocol):
     @property
     def root_key(self) -> Sha256: ...
 
     def session(self) -> AbstractAsyncContextManager[BridgeChannel]: ...
+
+
+class DurableBridgeTransport(BridgeTransport, Protocol):
+    """Transport extension used only by the persisted mutation worker."""
+
+    def worker_session(
+        self,
+        *,
+        recovery_owner: Callable[[ProcessInfo], UUID | None],
+    ) -> AbstractAsyncContextManager[DurableBridgeChannel]: ...

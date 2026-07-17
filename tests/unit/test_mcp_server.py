@@ -3,12 +3,22 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import cast
+from uuid import UUID
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.application.queue_models import (
+    CancelQueuedOperationResult,
+    QueueSummary,
+    QueueWaitResult,
+    QueuedOperationList,
+    QueuedOperationReceipt,
+    QueuedOperationState,
+    QueuedOperationStatus,
+)
 from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
 from cmo_agent_bridge.mcp_server import create_mcp_server
 
@@ -30,6 +40,16 @@ class _FakeApplication:
     def __init__(self, outcomes: Mapping[str, InvocationOutcome]) -> None:
         self._outcomes = dict(outcomes)
         self.calls: list[_Call] = []
+        self.submissions: list[_Call] = []
+        self._submitted: dict[UUID, QueuedOperationStatus] = {}
+        self.worker_start_count = 0
+        self.worker_stop_count = 0
+
+    async def start_queue_worker(self) -> None:
+        self.worker_start_count += 1
+
+    async def stop_queue_worker(self) -> None:
+        self.worker_stop_count += 1
 
     async def execute(
         self,
@@ -40,6 +60,57 @@ class _FakeApplication:
     ) -> InvocationOutcome:
         self.calls.append(_Call(operation, dict(arguments), confirmation_token))
         return self._outcomes[operation]
+
+    async def submit(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+    ) -> QueuedOperationReceipt:
+        call = _Call(operation, dict(arguments), None)
+        self.calls.append(call)
+        self.submissions.append(call)
+        sequence = len(self._submitted) + 1
+        request_id = UUID(int=sequence)
+        status = QueuedOperationStatus(
+            request_id=request_id,
+            operation=operation,
+            sequence=sequence,
+            state=QueuedOperationState.QUEUED,
+            submitted_at_ms=0,
+        )
+        self._submitted[request_id] = status
+        return QueuedOperationReceipt(
+            request_id=request_id,
+            operation=operation,
+            sequence=sequence,
+            state=QueuedOperationState.QUEUED,
+            submitted_at_ms=0,
+        )
+
+    async def queue_get(self, request_id: UUID) -> QueuedOperationStatus:
+        return self._submitted[request_id]
+
+    async def queue_wait(self, request_id: UUID, timeout_seconds: float) -> QueueWaitResult:
+        del timeout_seconds
+        return QueueWaitResult(operation=await self.queue_get(request_id), timed_out=True)
+
+    async def queue_list(self, limit: int | None = None) -> QueuedOperationList:
+        items = tuple(self._submitted.values())
+        return QueuedOperationList(items=items if limit is None else items[:limit])
+
+    async def queue_cancel(self, request_id: UUID) -> CancelQueuedOperationResult:
+        status = self._submitted[request_id]
+        return CancelQueuedOperationResult(operation=status, cancelled=False)
+
+    async def queue_summary(self) -> QueueSummary:
+        return QueueSummary(
+            queued=len(self._submitted),
+            active=0,
+            completed=0,
+            rejected=0,
+            quarantined=0,
+            cancelled=0,
+        )
 
     async def diagnose(self) -> McpBridgeDiagnostic:
         return McpBridgeDiagnostic(
@@ -732,6 +803,27 @@ def _structured_result(value: object) -> dict[str, JsonValue]:
     return cast(dict[str, JsonValue], structured)
 
 
+def _assert_queued_result(value: object, operation: str) -> None:
+    result = _structured_result(value)
+    assert result["operation"] == operation
+    assert result["state"] == "queued"
+    assert isinstance(result["request_id"], str)
+
+
+@pytest.mark.asyncio
+async def test_server_lifespan_starts_and_stops_durable_queue_worker() -> None:
+    application = _FakeApplication({})
+    server = create_mcp_server(application)
+    lifespan = server.settings.lifespan
+    assert lifespan is not None
+
+    async with lifespan(server):
+        assert application.worker_start_count == 1
+        assert application.worker_stop_count == 0
+
+    assert application.worker_stop_count == 1
+
+
 @pytest.mark.asyncio
 async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     server = create_mcp_server(_FakeApplication({}))
@@ -743,6 +835,11 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_bridge_diagnose",
         "cmo_bridge_prepare",
         "cmo_bridge_status",
+        "cmo_request_get",
+        "cmo_request_wait",
+        "cmo_request_list",
+        "cmo_request_cancel",
+        "cmo_queue_status",
         "cmo_scenario_get",
         "cmo_scenario_time_compression_set",
         "cmo_side_list",
@@ -813,6 +910,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     }
     mutation_tools = {
         "cmo_bridge_prepare",
+        "cmo_request_cancel",
         "cmo_scenario_time_compression_set",
         "cmo_unit_sensor_set",
         "cmo_unit_magazine_adjust",
@@ -963,6 +1061,43 @@ async def test_final_campaign_contract_is_reflected_in_mcp_input_schemas() -> No
 
 
 @pytest.mark.asyncio
+async def test_mutations_submit_and_request_tools_observe_without_cancelling() -> None:
+    application = _FakeApplication({})
+    server = create_mcp_server(application)
+
+    receipt_response = await server.call_tool("cmo_unit_launch", {"unit_guid": "UNIT-1"})
+    receipt = _structured_result(receipt_response)
+    request_id = cast(str, receipt["request_id"])
+
+    get_response = await server.call_tool("cmo_request_get", {"request_id": request_id})
+    wait_response = await server.call_tool(
+        "cmo_request_wait",
+        {"request_id": request_id, "timeout_seconds": 0},
+    )
+    list_response = await server.call_tool("cmo_request_list", {"limit": 1})
+    cancel_response = await server.call_tool("cmo_request_cancel", {"request_id": request_id})
+    summary_response = await server.call_tool("cmo_queue_status", {})
+
+    assert _structured_result(get_response)["operation"] == "unit.launch"
+    wait = _structured_result(wait_response)
+    assert wait["timed_out"] is True
+    assert cast(dict[str, JsonValue], wait["operation"])["state"] == "queued"
+    assert len(cast(list[JsonValue], _structured_result(list_response)["items"])) == 1
+    assert _structured_result(cancel_response)["cancelled"] is False
+    assert _structured_result(summary_response)["queued"] == 1
+    assert application.calls == [_Call("unit.launch", {"unit_guid": "UNIT-1"}, None)]
+    assert application.submissions == application.calls
+
+    tools_by_name = {tool.name: tool for tool in await server.list_tools()}
+    wait_description = tools_by_name["cmo_request_wait"].description
+    assert wait_description is not None
+    assert "never cancels" in wait_description
+    launch_description = tools_by_name["cmo_unit_launch"].description
+    assert launch_description is not None
+    assert "only submits the mutation" in launch_description
+
+
+@pytest.mark.asyncio
 async def test_campaign_extension_tools_map_to_operations_and_structured_results() -> None:
     time_compression = _time_compression_result()
     side_posture = _side_posture_result()
@@ -1103,25 +1238,29 @@ async def test_campaign_extension_tools_map_to_operations_and_structured_results
         ),
     ]
 
-    expected_results = [
-        time_compression,
+    expected_results: list[dict[str, JsonValue] | str] = [
+        "scenario.time_compression.set",
         side_posture,
         contact,
-        contact,
+        "contact.posture.set",
         allocations,
         inventory,
-        sensor,
-        inventory,
-        inventory,
-        cargo_transfer,
-        cargo_unload,
-        mission_cargo,
+        "unit.sensor.set",
+        "unit.magazine.adjust",
+        "unit.mount_reload.adjust",
+        "unit.cargo.transfer",
+        "unit.cargo.unload",
+        "mission.cargo.update",
         wra,
-        wra,
+        "doctrine.wra.set",
         special_actions,
-        special_action,
+        "special_action.execute",
     ]
-    assert [_structured_result(response) for response in responses] == expected_results
+    for response, expected in zip(responses, expected_results, strict=True):
+        if isinstance(expected, str):
+            _assert_queued_result(response, expected)
+        else:
+            assert _structured_result(response) == expected
     assert application.calls == [
         _Call("scenario.time_compression.set", {"code": 2}, None),
         _Call(
@@ -1358,9 +1497,9 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
         },
     )
 
-    assert _structured_result(unit_response) == unit_set
-    assert _structured_result(mission_response) == mission_update
-    assert _structured_result(doctrine_response) == doctrine_set
+    _assert_queued_result(unit_response, "unit.set")
+    _assert_queued_result(mission_response, "mission.update")
+    _assert_queued_result(doctrine_response, "doctrine.set")
     assert application.calls == [
         _Call(
             "unit.set",
@@ -1763,28 +1902,28 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     assert _structured_result(unit_get_response) == unit
     assert _structured_result(unit_combat_status_response) == combat_status
     assert _structured_result(unit_loadout_get_response) == loadout
-    assert _structured_result(unit_set_response) == unit_set
-    assert _structured_result(unit_assign_mission_response) == unit_assignment
-    assert _structured_result(unit_loadout_set_response) == loadout
-    assert _structured_result(unit_launch_response) == launch
-    assert _structured_result(unit_rtb_response) == rtb
-    assert _structured_result(unit_refuel_response) == refuel
-    assert _structured_result(unit_attack_contact_response) == attack
+    _assert_queued_result(unit_set_response, "unit.set")
+    _assert_queued_result(unit_assign_mission_response, "unit.assign_mission")
+    _assert_queued_result(unit_loadout_set_response, "unit.loadout.set")
+    _assert_queued_result(unit_launch_response, "unit.launch")
+    _assert_queued_result(unit_rtb_response, "unit.rtb")
+    _assert_queued_result(unit_refuel_response, "unit.refuel")
+    _assert_queued_result(unit_attack_contact_response, "unit.attack_contact")
     assert _structured_result(contact_response) == contacts
     assert _structured_result(mission_list_response) == missions
     assert _structured_result(mission_get_response) == mission
     assert _structured_result(reference_point_list_response) == reference_points
-    assert _structured_result(reference_point_add_response) == reference_point
-    assert _structured_result(reference_point_update_response) == reference_point
+    _assert_queued_result(reference_point_add_response, "reference_point.add")
+    _assert_queued_result(reference_point_update_response, "reference_point.update")
     assert _structured_result(doctrine_get_response) == doctrine
-    assert _structured_result(unit_add_response) == unit_add
-    assert _structured_result(unit_unassign_mission_response) == unit_unassignment
-    assert _structured_result(mission_create_response) == mission_create
-    assert _structured_result(mission_update_response) == mission_update
-    assert _structured_result(mission_target_add_response) == target_add
-    assert _structured_result(mission_target_remove_response) == target_remove
-    assert _structured_result(doctrine_set_response) == doctrine_set
-    assert _structured_result(emcon_set_response) == emcon_set
+    _assert_queued_result(unit_add_response, "unit.add")
+    _assert_queued_result(unit_unassign_mission_response, "unit.unassign_mission")
+    _assert_queued_result(mission_create_response, "mission.create")
+    _assert_queued_result(mission_update_response, "mission.update")
+    _assert_queued_result(mission_target_add_response, "mission.target.add")
+    _assert_queued_result(mission_target_remove_response, "mission.target.remove")
+    _assert_queued_result(doctrine_set_response, "doctrine.set")
+    _assert_queued_result(emcon_set_response, "emcon.set")
     assert _structured_result(score_response) == score
     assert application.calls == [
         _Call(

@@ -49,8 +49,9 @@ Use the lightest process that safely fits the request.
 ### Direct execution
 
 Use this for a bounded, explicit order such as moving a patrol zone, assigning named aircraft, or
-changing one mission setting. Confirm identity, prerequisites, and current state; execute; read
-back. Do not create multiple courses of action merely to restate the user's order.
+changing one mission setting. Confirm identity, prerequisites, and current state; submit the
+mutation; resolve its queue receipt; read back. Do not create multiple courses of action merely to
+restate the user's order.
 
 ### Abbreviated estimate
 
@@ -173,7 +174,8 @@ Use reference points to turn the concept into ordered geometry. Name missions so
 function remain legible, for example `P1-AAW-North`, `P1-AEW-Rear`, and `P2-Strike-Airbase`.
 
 Reuse a suitable existing mission when its purpose, geometry, assignments, and settings can be
-safely adapted. Create only missing missions, and create each new mission inactive. Then:
+safely adapted. Create only missing missions, and create each new mission inactive. Wait for the
+creation request to complete and retain its GUID before dependent work. Then:
 
 1. configure zones, tracks, targets, schedules, flight or group sizes, on-station requirements,
    route profiles, and mission-specific options;
@@ -197,10 +199,12 @@ manual implementation, approximation, or blocker.
 ### 7. Execute in bounded decision windows
 
 Before each consequential decision window, preserve the current time-compression multiplier and
-map it to a setter code with [tool-catalog.md](tool-catalog.md), set
-`cmo_scenario_time_compression_set(code=0)`, verify multiplier `1`, and refresh the relevant state.
-Keep CMO at 1x through planning, mutation, and readback. Restore the mapped code after verification;
-on failure, stay at 1x while recovering. Do not pause normal bridge polling.
+map it to a setter code with [tool-catalog.md](tool-catalog.md). Submit
+`cmo_scenario_time_compression_set(code=0)`, wait for completion, verify multiplier `1`, and refresh
+the relevant state. Keep CMO at 1x through synchronous reads and queue execution. Restore the mapped
+code after all required requests complete and readback succeeds. If the user pauses during planning,
+independent mutations may remain in the durable FIFO queue until time resumes; do not submit a
+dependent action before its prerequisite result exists.
 
 Scale real-world battle rhythms into three rolling CMO windows: current execution, the next
 prepared phase, and a follow-on branch or sequel. Do not build a fixed 24-hour cycle when the
@@ -211,7 +215,7 @@ For each window:
 1. read the contacts, missions, assigned units, combat status, inventories, sensors, and existing
    allocations relevant to the next decision;
 2. compare observed indicators with the decision-support matrix;
-3. issue one bounded set of orders;
+3. submit one bounded set of orders, retaining request IDs and resolving dependencies;
 4. restore or raise compression long enough for asynchronous actions to develop;
 5. return to 1x, refresh the state, and begin the next decision window.
 
@@ -429,7 +433,7 @@ Build the operational concept first, then map each required control to one of th
 
 | State | Planning treatment |
 |---|---|
-| `CURRENT` | Assign the named MCP tool, inputs, readback, and retry rule |
+| `CURRENT` | Assign the named MCP tool, inputs, queue-result dependency, and readback rule |
 | `EXPERIMENTAL` | Define the desired result and fallback; execute only with a registered typed tool and exact-build probe |
 | `UNAVAILABLE` | Redesign, use an honest approximation, request manual authoring, or declare the blocker |
 
@@ -445,11 +449,11 @@ For a task-pool, package, TOT, or tanker-dependent operation:
 2. assign desired package elements and support relationships;
 3. calculate readiness, route time, fuel, weapons, tanker demand, recovery capacity, and reserve;
 4. identify dependency gates and latest substitution or abort times;
-5. create anchored reference points where geometry must move, then create the task pool and child
-   packages with exact parent readback;
+5. create anchored reference points where geometry must move and wait for their GUIDs, then create
+   the task pool, wait for its GUID, and create child packages with exact parent readback;
 6. configure each receiver mission's AAR policy and each tanker support mission's limits;
-7. generate flights from exactly one target-time or takeoff-time schedule and inspect all returned
-   flights and courses;
+7. generate flights from exactly one target-time or takeoff-time schedule, resolve the request, and
+   inspect all returned flights and courses;
 8. keep all package missions inactive until the synchronized architecture is ready;
 9. state which dependencies remain manual decision gates because the bridge does not expose
    operation-planner phase/dependency fields, automatic multi-mission queues, or waypoint
@@ -464,12 +468,16 @@ tanker policy, launch behavior, and save/reload in the running build.
 Represent unexposed synchronization with inactive missions, schedules, decision-support matrices,
 conservative time advancement, author-created event gates where authorized, and verified
 readback. Anchored mission geometry should move without periodic coordinate rewriting, but it must
-still be checked after anchor movement or loss. Sustained command requires CMO to be running, the
-polling event to be active, and scenario time to advance. There is no current deterministic
-single-step tool.
+still be checked after anchor movement or loss. After a successful `cmo_bridge_status` establishes
+the session binding, independent mutations can be durably queued while CMO is paused and will run
+FIFO when polling resumes. Synchronous reads and execution still require the polling event and
+advancing scenario time. There is no deterministic pause/start/single-step tool.
 
-If a dependency fails, stop issuing dependent orders, preserve the last verified state, and
-choose explicitly among substitution, delay, abort, manual author intervention, or replanning.
+If a dependency remains queued/active, wait or inspect the same request ID; a wait timeout does not
+cancel it. If it is rejected or quarantined, stop dependent orders, preserve the last verified
+state, and choose explicitly among substitution, delay, abort, manual author intervention, or
+replanning. Client shutdown does not cancel active work, and a process/scenario binding mismatch
+must never be bypassed to carry an order forward.
 
 ## Doctrine basis
 

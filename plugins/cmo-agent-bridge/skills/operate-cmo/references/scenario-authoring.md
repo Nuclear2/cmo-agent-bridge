@@ -43,20 +43,31 @@ begin a fresh `LIVE_PLAYER` information cycle.
 
 Keep an authoring ledger:
 
-| Step | Object type | Intended name/GUID | Operation or Lua primitive | Status | Readback | Revert |
+| Step | Object type | Intended name/GUID | Operation or Lua primitive | Request ID/status | Readback | Revert |
 |---|---|---|---|---|---|---|
 
 Use stable, unique names. Search before every create. Record returned GUIDs immediately.
+
+Before the first mutation, require a successful `cmo_bridge_status` for the loaded scenario. Most
+authoring mutations return a durable queue receipt. Record its `request_id`, use
+`cmo_request_get`/`cmo_request_wait` for the eventual result, and never treat a wait timeout as
+cancellation. Independent changes may be submitted FIFO while CMO is paused, but a step that needs
+an earlier object GUID or result must wait for that request to complete. Local queue inspection and
+cancellation of a still-`queued` request remain available during the pause; active work survives
+MCP/client restart. A process/runtime/scenario binding mismatch must reject or quarantine old work,
+not carry it into the new authoring target. Unit/mission delete preview and confirm retain their
+separate synchronous confirmation contract; keep CMO polling through both calls so the short-lived
+token does not expire while paused.
 
 ## Use the authoring sequence
 
 Follow this order so later objects never depend on an unresolved earlier layer.
 
 Before each consequential authoring batch, preserve the scenario's current compression multiplier,
-map it to a setter code with [tool-catalog.md](tool-catalog.md), set code `0`, verify multiplier `1`,
-and refresh the objects that batch will touch. Restore the mapped code only after readback succeeds;
-leave CMO at 1x after a timeout or uncertain result. Keep scenario time advancing so the Regular
-Time polling event continues to service bridge requests.
+map it to a setter code with [tool-catalog.md](tool-catalog.md), submit code `0`, wait for completion,
+verify multiplier `1`, and refresh the objects that batch will touch. Restore the mapped code only
+after all dependent requests and readback succeed. If the user pauses while composing a batch,
+enqueue only independent work and resume time to execute it before synchronous verification.
 
 ### 1. Scenario settings and authoring baseline
 
@@ -95,6 +106,9 @@ the user explicitly requests script-based scenario logic, apply the code-executi
 useful for player-perspective testing, but does not by itself prove which sides the author intends
 to make playable.
 
+Wait for each new side's returned GUID before submitting options or directed-posture changes that
+depend on it. The reverse posture may be queued independently only after both side GUIDs are known.
+
 Do not use side-option or posture writes to alter a live-player problem. A one-way posture result
 does not prove the reverse relationship changed.
 
@@ -104,7 +118,7 @@ does not prove the reverse relationship changed.
    readiness, initial emissions, and intended mission role.
 2. Add units with `cmo_unit_add` only in author or umpire mode. Supply either a base or coordinates
    as required by the tool contract.
-3. Read every created unit immediately and retain its GUID.
+3. Wait for each required creation result, retain its GUID, then read the created unit.
 4. Set supported movement, course, hold, sprint-and-drift, cavitation, and sensor properties with
    current tools.
 5. Set aircraft loadouts. Author mode may deliberately specify ready time or ignore magazines,
@@ -124,7 +138,8 @@ ground-truth order of battle.
 
 1. Define named geographic products: patrol boxes, prosecution areas, support tracks, axes,
    phase lines, target areas, mine areas, recovery areas, and protected zones.
-2. Create and update ordinary fixed reference points with current tools. For moving geometry,
+2. Create and update ordinary fixed reference points with current tools. Wait for created point
+   GUIDs before using them in dependent mission geometry. For moving geometry,
    create relative points anchored to a unit, contact, or reference point with distance, bearing,
    and fixed or rotating bearing type.
 3. Read the points back and verify side ownership, coordinates, anchor GUID, offset, and bearing
@@ -142,7 +157,8 @@ Relative mission geometry is current. Independent zone objects exposed by `ScenE
 
 1. Translate the scenario concept into player-usable patrol, support, strike, ferry, mining,
    mine-clearing, and cargo missions.
-2. Create each ordinary mission inactive with `cmo_mission_create`.
+2. Create each ordinary mission inactive with `cmo_mission_create`; wait for its returned GUID
+   before submitting updates, targets, assignments, flight plans, or activation.
 3. Configure ordered zones, targets, schedules, force sizes, profiles, and class-specific options
    with `cmo_mission_update` and target or cargo tools.
 4. Assign only units intended to be preassigned at scenario start.
@@ -154,8 +170,8 @@ Relative mission geometry is current. Independent zone objects exposed by `ScenE
 
 For advanced air planning:
 
-- Create a real task pool with `cmo_mission_create(category="task_pool", ...)`, then create child
-  packages with `category="package"` and the exact `parent_task_pool_guid`.
+- Create a real task pool with `cmo_mission_create(category="task_pool", ...)`, wait for its GUID,
+  then create child packages with `category="package"` and that exact `parent_task_pool_guid`.
 - Generate flights with `cmo_mission_flight_plan_create` using exactly one takeoff or target-time
   schedule, then inspect every returned flight and waypoint through
   `cmo_mission_flight_plan_list`.
@@ -185,8 +201,10 @@ classification, fuel, weapons, or reaction time.
 Build in this dependency order:
 
 1. Use `cmo_event_component_set` to add triggers, conditions, and actions. Set `kind`, `mode`,
-   subtype, a unique description, and the official subtype-specific fields in `parameters`.
-2. Create the event with `cmo_event_set(mode="add", ...)`. Leave it inactive while assembling;
+   subtype, a unique description, and the official subtype-specific fields in `parameters`. Resolve
+   creation requests before their component identifiers are needed.
+2. Create the event with `cmo_event_set(mode="add", ...)` and wait for its identifier. Leave it
+   inactive while assembling;
    the tool defaults new events to inactive, hidden, non-repeatable, and 100 percent probability
    unless specified otherwise.
 3. Attach components with `cmo_event_component_link` in trigger, condition, then action order.
@@ -212,12 +230,12 @@ activate only within the trusted `SCENARIO_AUTHOR` or `UMPIRE` scope. Never use 
 1. Define the player decision, availability conditions, visible description, repeatability,
    resulting Lua or event action, score effect, and post-execution state. Save a scenario copy and
    review every Lua source line before submitting it.
-2. Create it with `cmo_special_action_create`; new actions are inactive and non-repeatable unless
-   explicitly requested.
+2. Create it with `cmo_special_action_create`; wait for the result before inspection or update. New
+   actions are inactive and non-repeatable unless explicitly requested.
 3. Inspect it with `cmo_special_action_list`, then revise or remove it with
    `cmo_special_action_update`.
 4. Activate it only after the name, player description, repeatability, and exact normalized Lua
-   source match the reviewed design.
+   source match the reviewed design; resolve that update request before execution.
 5. Execute newly authored or changed Lua only as an explicit `SCENARIO_AUTHOR` or `UMPIRE` test,
    then inspect all resulting scenario, mission, unit, contact, event, and score state. The
    create/update plus execute composition is local CMO-process code execution.
@@ -234,7 +252,8 @@ activate only within the trusted `SCENARIO_AUTHOR` or `UMPIRE` scope. Never use 
 3. Prefer event `Points` actions for rule-driven scoring. Use direct score setting only for
    initialization, reset, migration, or a deliberate adjudication.
 4. Use current `cmo_score_get` to read a side's score.
-5. Use `cmo_score_set` for an absolute score assignment and preserve its required reason.
+5. Use `cmo_score_set` for an absolute score assignment, preserve its required reason, resolve the
+   queue request, and read the score back.
 6. Create Points or EndScenario actions with `cmo_event_component_set(kind="action", mode="add",
    ...)`, attach them with `cmo_event_component_link`, and verify them before activating the event.
 7. Scoring-log editing remains unavailable; use score/event readback and observed effects as
@@ -251,9 +270,10 @@ Run three distinct passes:
 2. **Player information pass:** reload a clean save, switch to the intended side, and verify that
    briefing, contacts, uncertainty, special actions, and available controls are sufficient without
    author knowledge.
-3. **Stress and recovery pass:** test manual pause/resume, high and low time compression,
-   save/reload, polling interruption, mission completion, failed dependencies, destroyed anchors,
-   exhausted tankers, alternate outcomes, and scenario termination.
+3. **Stress and recovery pass:** test manual pause/resume with queued mutations, MCP restart and
+   request recovery, cancellation before activation, high and low time compression, save/reload,
+   polling interruption, binding mismatch protection, mission completion, failed dependencies,
+   destroyed anchors, exhausted tankers, alternate outcomes, and scenario termination.
 
 Do not call a player playtest fair if the same agent retains author-only enemy information in its
 decision context. Use a fresh task or explicitly label the pass umpire-assisted.

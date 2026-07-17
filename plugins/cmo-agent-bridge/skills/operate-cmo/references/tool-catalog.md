@@ -7,6 +7,7 @@ registered tool schema is authoritative for exact argument types.
 
 - [Status labels](#status-labels)
 - [Selection and result conventions](#selection-and-result-conventions)
+- [Durable queue tools](#durable-queue-tools)
 - [Current read and control tools](#current-read-and-control-tools)
 - [Current mutation tools](#current-mutation-tools)
 - [Current scenario-authoring tools](#current-scenario-authoring-tools)
@@ -36,13 +37,42 @@ Never infer `CURRENT` from an official Lua function. Never call a proposed tool 
   name.
 - Contact GUIDs belong to the observing side and are not interchangeable with actual unit GUIDs.
 - Follow `next_cursor` until null when a complete list matters. Reuse the same `page_size`.
-- Treat every mutation result as a bounded projection of CMO state. Perform the corresponding
-  `get` or `list` after a multi-step change.
-- Launch, RTB, refuel, attack, cargo, and special-action results mean the command was accepted, not
-  that its effect completed.
+- Ordinary mutation tools return `QueuedOperationReceipt` with `request_id`, operation, FIFO
+  sequence, `queued` state, and submission time. They do not return CMO's eventual result.
+- Use `cmo_request_get` or `cmo_request_wait` to obtain the terminal queue status and result. Treat
+  every completed mutation result as a bounded projection of CMO state, then perform the
+  corresponding CMO `get` or `list` after a consequential change.
+- A `cmo_request_wait` timeout ends only that local wait; it does not cancel or change the durable
+  request. Never resubmit solely because a wait timed out.
+- Launch, RTB, refuel, attack, cargo, and special-action queue completion means CMO accepted the
+  command, not that its simulated effect completed.
 - Tool registration is determined when the agent task starts. Enabling a plugin does not add tools
   to an already-open task, but `cmo_bridge_prepare` can make the already registered ordinary tools
   ready in the same task.
+
+## Durable queue tools
+
+These tools operate on local SQLite queue state and remain usable while CMO is paused after the
+session binding has been established.
+
+| Tool | Primary inputs | Use and boundary |
+|---|---|---|
+| `cmo_request_get` | request UUID | Read `queued`, `active`, `completed`, `rejected`, `quarantined`, or `cancelled` state plus terminal result/error |
+| `cmo_request_wait` | request UUID, non-negative timeout seconds | Wait locally for a terminal state; `timed_out=true` never cancels the request |
+| `cmo_request_list` | optional positive limit | List durable requests in FIFO submission order |
+| `cmo_request_cancel` | request UUID | Cancel only a request still in `queued`; an `active` or terminal request remains unchanged |
+| `cmo_queue_status` | none | Return counts by queue state |
+
+The queue executes one active mutation at a time. Submit independent work in the intended FIFO
+order. If a later tool needs a GUID or other value from an earlier result, wait for the earlier
+request to complete before submitting it. An active request remains pending without a mutation
+execution timeout while CMO is paused. MCP/client shutdown detaches the worker rather than
+cancelling it; restart and query the original request. Process, runtime, or scenario binding
+mismatches produce rejection or quarantine instead of cross-scenario execution.
+
+Reads, `cmo_bridge_status`, `cmo_bridge_prepare`, and destructive delete preview/confirm use their
+existing synchronous contracts rather than this queue. CMO-backed reads and status still require
+the polling event and retain their bounded timeout behavior.
 
 ## Current read and control tools
 
@@ -51,9 +81,9 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | Tool | Primary inputs | Use and boundary |
 |---|---|---|
 | `cmo_bridge_diagnose` | none | Inspect saved game root and release-runtime readiness without contacting CMO |
-| `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage |
+| `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage; success establishes the session binding required for queued mutations |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, actual compression multiplier, and projected score state |
-| `cmo_scenario_time_compression_set` | code `0..5` | Set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; result echoes the requested code and actual multiplier |
+| `cmo_scenario_time_compression_set` | code `0..5` | Queued mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; its eventual result echoes the requested code and actual multiplier |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
@@ -78,11 +108,11 @@ Read adversaries through `cmo_contact_*`. In author or umpire mode, omniscient r
 only within the requested scope.
 
 For consequential multi-step work, preserve the multiplier from `cmo_scenario_get` and map it back
-to a setter code with `1->0`, `2->1`, `5->2`, `15->3`, `30->4`, or `150->5`. Set code `0`, require
-`observed_time_compression=1`, refresh decision-relevant state, execute and verify at 1x, then
-restore the mapped code. Leave CMO at 1x after a timeout or uncertain outcome. Regular Time
-polling continues at 1x, so this workflow requires neither simulation pause control nor a Special
-Action pump.
+to a setter code with `1->0`, `2->1`, `5->2`, `15->3`, `30->4`, or `150->5`. Submit code `0`, wait
+for completion, require `observed_time_compression=1`, refresh decision-relevant state, execute and
+verify at 1x, then submit and verify the mapped restore code. Do not restore while a prerequisite
+request is unresolved. Regular Time polling continues at 1x, so this workflow requires neither
+simulation pause control nor a Special Action pump.
 
 ## Current mutation tools
 
@@ -90,9 +120,11 @@ Action pump.
 
 | Tool | Primary inputs | Use and important semantics |
 |---|---|---|
-| `cmo_bridge_prepare` | optional game root; explicit saved-root replacement flag | Deploy the release-bound Lua runtime and hot-activate ordinary tools in the same MCP session; does not mount the CMO scenario event |
+| `cmo_bridge_prepare` | optional game root; explicit saved-root replacement flag | Deploy the release-bound Lua runtime and hot-activate ordinary tools in the same MCP session; refuses queued/active work or a pending journal and does not mount the CMO scenario event |
 
 ### Player-valid and author-valid
+
+Every tool in this subsection is a durable queued mutation and returns `QueuedOperationReceipt`.
 
 | Tool | Primary inputs | Use and important semantics |
 |---|---|---|
@@ -124,6 +156,8 @@ Action pump.
 
 ### Existing author or umpire controls
 
+Every tool in this subsection is also a durable queued mutation.
+
 | Tool | Primary inputs | Restriction |
 |---|---|---|
 | `cmo_unit_add` | side, DBID, name, and exactly one base or coordinate location form | Creates scenario objects; never use during fair player command |
@@ -134,6 +168,11 @@ Action pump.
 
 All tools in this section are `CURRENT / AUTHOR`. Use them only after an explicit switch to
 `SCENARIO_AUTHOR` or `UMPIRE`; their availability never authorizes omniscient live-player use.
+
+`cmo_scenario_weather_get`, `cmo_event_list`, and `cmo_event_get` are synchronous reads. The
+ordinary setters, creates, updates, links, score mutation, and Special Action definitions are
+durable queued mutations. Unit/mission delete preview and confirm retain their synchronous,
+short-lived confirmation-token workflow.
 
 | Tool | Primary inputs | Use and boundary |
 |---|---|---|
@@ -189,7 +228,7 @@ are now callable.
 | Capability | Status | Boundary |
 |---|---|---|
 | Operation-planner phases, priority graph, H/L-hour, and start/completion dependencies | `EXPERIMENTAL` | Record the desired phase graph in the plan; do not fabricate phase or dependency readback |
-| Automatic multi-mission assignment, `AllowMultiMission`, and assignment queues | `EXPERIMENTAL` | A unit can be assigned through the current single-mission tool, but the bridge cannot manage a deterministic dynamic queue |
+| Automatic multi-mission assignment, `AllowMultiMission`, and assignment queues | `EXPERIMENTAL` | The durable command FIFO does not implement CMO unit-to-mission assignment queues; a unit can use only the current single-mission assignment tool |
 | Generated-flight waypoint insert/update/delete and timing refresh | `EXPERIMENTAL` | Current tools create and inspect flight plans; do not claim route mutation |
 | Exclusion, no-nav, standard, and custom-environment zone objects | `EXPERIMENTAL` | Mission areas made from reference points are current; independent zone objects are not |
 | Remaining scenario metadata such as briefing, database selection, complexity/difficulty, and every environment field | `MANUAL LUA` or editor | Current authoring tools cover title, timeline, and the four global weather values only |
@@ -251,7 +290,7 @@ author mode.
 `CURRENT` means the typed tool is registered and callable. It does not remove the need to verify
 CMO's effective behavior after a consequential write:
 
-1. create or update with minimal values;
+1. create or update with minimal values, then resolve the queue receipt;
 2. read back every projected field and normalize accepted aliases;
 3. exercise invalid inputs and verify bounded failure;
 4. test normal play and editor contexts where relevant;

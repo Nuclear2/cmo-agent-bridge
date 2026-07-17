@@ -126,7 +126,7 @@ def test_database_and_store_construction_performs_zero_sqlite_io(
     assert not database.path.exists()
 
 
-def test_migration_two_has_exact_tables_columns_indexes_and_history(
+def test_migration_three_has_exact_tables_columns_indexes_and_history(
     state_database: StateDatabase,
 ) -> None:
     state_database.initialize()
@@ -150,15 +150,19 @@ def test_migration_two_has_exact_tables_columns_indexes_and_history(
             "deliveries",
             "sessions",
             "confirmations",
+            "operation_queue",
+            "sqlite_sequence",
         }
         assert indexes == {
             "requests_root_state_idx",
             "requests_terminal_idx",
             "deliveries_request_idx",
+            "operation_queue_state_sequence_idx",
+            "operation_queue_root_state_sequence_idx",
         }
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,)]
+        ).fetchall() == [(1,), (2,), (3,)]
         delivery_columns = [
             row[1] for row in connection.execute("PRAGMA table_info(deliveries)").fetchall()
         ]
@@ -1049,7 +1053,7 @@ def test_prune_small_epoch_is_still_a_lazy_initializing_operation(
     with sqlite3.connect(state_database.path) as connection:
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,)]
+        ).fetchall() == [(1,), (2,), (3,)]
 
 
 def test_schema_drift_fails_closed_on_next_actual_operation(

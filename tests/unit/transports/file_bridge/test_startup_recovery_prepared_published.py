@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 import sys
@@ -241,6 +242,54 @@ async def test_startup_prepared_idle_without_response_fails_before_publish_and_d
 
 
 @pytest.mark.asyncio
+async def test_owned_durable_prepared_request_is_republished_with_same_identity(
+    harness: contract.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r0, _r1 = _journals(harness)
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def wait_forever(
+        _waiter: ResponseWaiter,
+        timeout_seconds: float | None,
+    ) -> Any:
+        assert timeout_seconds is None
+        started.set()
+        await never.wait()
+        raise AssertionError("durable recovery unexpectedly resumed")
+
+    monkeypatch.setattr(ResponseWaiter, "wait", wait_forever)
+
+    async with harness.lock:
+        _persist(harness, r0)
+        _seed_prepared_sqlite(harness, r0)
+        _write_inbox(harness, render_idle_lua())
+
+        task = asyncio.create_task(
+            _manager(harness).recover_owned_pending(r0.original.request_id)
+        )
+        await asyncio.wait_for(started.wait(), timeout=1)
+
+        loaded = harness.journals.load()
+        request = harness.ledger.get_request(r0.original.request_id)
+        delivery = harness.ledger.get_delivery(r0.original.delivery_intents[0].delivery_id)
+        assert harness.paths.inbox.read_bytes() == _render_request(r0)
+        assert loaded is not None
+        assert loaded.journal.original.state is PendingPhase.PUBLISHED
+        assert loaded.journal.original.request_id == r0.original.request_id
+        assert loaded.journal.original.delivery_intents[0].delivery_id == (
+            r0.original.delivery_intents[0].delivery_id
+        )
+        assert request is not None and request.state is HostRequestState.PUBLISHED
+        assert delivery is not None and delivery.published_at_ms is not None
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
 async def test_startup_prepared_matching_request_promotes_published_before_cancel(
     harness: contract.Harness,
     monkeypatch: pytest.MonkeyPatch,
@@ -411,6 +460,42 @@ async def test_startup_published_sqlite_lag_converges_before_cancel_intent_and_p
     )
     _assert_before(trace, "ledger.delivery.cancel.inserted", "inbox.cancel")
     assert "inbox.request" not in trace
+
+
+@pytest.mark.asyncio
+async def test_owned_durable_published_request_quarantines_when_inbox_ownership_is_lost(
+    harness: contract.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    r0, r1 = _journals(harness)
+    rendered = _render_request(r1)
+    manager = _manager(harness)
+    observations = iter((rendered, None))
+
+    def observe_inbox() -> bytes | None:
+        return next(observations)
+
+    monkeypatch.setattr(manager, "_read_inbox_observed", observe_inbox)
+
+    async with harness.lock:
+        _persist(harness, r0, r1)
+        _seed_published_sqlite(harness, r0, r1)
+        _write_inbox(harness, rendered)
+
+        report = await manager.recover_owned_pending(r1.original.request_id)
+
+        loaded = harness.journals.load()
+        request = harness.ledger.get_request(r1.original.request_id)
+        assert _disposition(report) == "quarantined"
+        assert loaded is not None
+        assert loaded.journal.original.state is PendingPhase.QUARANTINED
+        assert request is not None
+        assert request.state is HostRequestState.QUARANTINED
+        assert request.error_json is not None
+        assert "published_inbox_evidence_missing" in request.error_json
+
+    with pytest.raises(StopIteration):
+        next(observations)
 
 
 @pytest.mark.parametrize("inbox_case", ["foreign", "idle", "missing"])

@@ -2,6 +2,35 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.2.0] - 2026-07-18 (Preview)
+
+这一版把普通 CMO 写操作改为本地持久异步队列。Agent 可以在 CMO 暂停时先提交命令，待想定
+时间恢复后按顺序执行；MCP 重启也不会丢失已进入执行阶段的请求。
+
+### Added
+
+- 新增基于 SQLite 的 durable FIFO mutation queue，并加入 `cmo_request_get`、
+  `cmo_request_wait`、`cmo_request_list`、`cmo_request_cancel` 和 `cmo_queue_status`；MCP surface
+  增至 75 个有类型工具。
+- 写请求保存当前 CMO process、runtime 和 scenario binding。重启后会核对 ledger、inbox 与结果并
+  恢复；binding 不匹配时拒绝或隔离旧请求，不会跨进程或跨想定执行。
+- `prepare` 在改写 Lua runtime 前会拒绝非空的 queued/active 工作或尚未收敛的 pending journal，
+  避免升级覆盖正在执行的请求。
+
+### Changed
+
+- 普通 mutation 工具现在立即返回 `QueuedOperationReceipt`。调用方必须用回执中的 `request_id`
+  查询或等待最终 CMO 结果；依赖创建结果 GUID 的下一步必须等前一步完成后再提交。
+- CMO 暂停或轮询暂时停止时，active mutation 不再按旧的调用超时撤回，而是无限保持 pending，
+  时间恢复后继续。关闭 MCP/client 只会让 worker 脱离，不会取消已经 active 的请求。
+- `cmo_request_wait` 的 `timeout_seconds` 只限制本次等待，不改变请求状态。只有仍为 `queued` 的请求
+  可以取消；已经 `active` 的请求不能承诺中止。
+- 纯 CLI `submit` 只持久化 mutation；`request-wait` 在前台启动 worker 并在完成或本次等待超时后
+  停止。正常 MCP server 仍持续托管 worker。
+- 读取、bridge status、host prepare 和破坏性删除的 preview/confirm 仍保持同步契约；同步读取在
+  CMO 暂停或轮询停止时仍可能按原有超时返回。
+- 项目版本升级到 `0.2.0`。
+
 ## [0.1.4] - 2026-07-17 (Preview)
 
 这一版补齐当前玩家阵营识别，并明确暂停期间请求等待、恢复轮询后继续执行的工作流。
@@ -112,6 +141,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.2.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.2

@@ -4,6 +4,7 @@
 
 | 版本 | 安全更新 |
 |---|---|
+| 0.2.x | 支持 |
 | 0.1.x | 支持 |
 | 更早版本 | 不支持 |
 
@@ -43,7 +44,9 @@ CMO Agent Bridge 是一个**受信任的同机工具**：
 - 只允许可信作者在 `SCENARIO_AUTHOR`/`UMPIRE` 中创建、修改或测试 Lua-bearing artifact；
   `LIVE_PLAYER` 只能执行想定原本提供的合法玩家 Special Action，不得查看或替换脚本；
 - `LIVE_PLAYER` 下不要授予或使用全知敌方信息；这属于推演完整性问题，即使不是系统安全漏洞；
-- 遇到 timeout 或不确定写入时不要盲目重试，应先读取结果或处理 quarantine；
+- 保留每个 mutation 回执的 `request_id`；`cmo_request_wait` 超时后查询同一请求，不要重复提交；
+- 只取消仍为 `queued` 的请求。`active` 请求在 MCP/client 退出后仍会恢复；遇到 process/scenario
+  binding 不匹配时处理明确的 rejection/quarantine，不要绕过保护跨想定执行；
 - 不要提交 CMO 安装文件、商业想定、数据库、日志或包含个人路径的状态文件。
 
 Matrix Games、Slitherine、WarfareSims 和 CMO 不为本项目提供安全保证或支持。

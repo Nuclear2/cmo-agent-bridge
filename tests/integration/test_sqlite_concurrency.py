@@ -26,7 +26,7 @@ def test_two_simultaneous_initializers_converge_on_one_migration(tmp_path: Path)
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version, COUNT(*) FROM schema_migrations GROUP BY version"
-        ).fetchall() == [(1, 1), (2, 1)]
+        ).fetchall() == [(1, 1), (2, 1), (3, 1)]
         assert connection.execute("PRAGMA integrity_check").fetchone() == ("ok",)
 
 
@@ -48,7 +48,7 @@ def test_two_simultaneous_initializers_upgrade_exact_v1_once(tmp_path: Path) -> 
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version,COUNT(*) FROM schema_migrations GROUP BY version ORDER BY version"
-        ).fetchall() == [(1, 1), (2, 1)]
+        ).fetchall() == [(1, 1), (2, 1), (3, 1)]
         assert connection.execute(
             "SELECT applied_at_ms FROM schema_migrations WHERE version=1"
         ).fetchone() == (123,)

@@ -141,6 +141,7 @@ def _waiter(
     process_check: Callable[[], ProcessInfo] | None = None,
     *,
     poll_seconds: float = 0.05,
+    ownership_check: Callable[[], bool] | None = None,
 ) -> ResponseWaiter:
     return ResponseWaiter(
         response_path=response_path,
@@ -148,6 +149,7 @@ def _waiter(
         expected_process=expected_process,
         process_check=(lambda: expected_process) if process_check is None else process_check,
         poll_seconds=poll_seconds,
+        ownership_check=ownership_check,
     )
 
 
@@ -167,8 +169,10 @@ def test_public_signatures_require_explicit_expected_process() -> None:
         "expected_process",
         "process_check",
         "poll_seconds",
+        "ownership_check",
     ]
     assert constructor.parameters["poll_seconds"].default == 0.05
+    assert constructor.parameters["ownership_check"].default is None
     assert all(
         parameter.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD
         for parameter in constructor.parameters.values()
@@ -177,6 +181,7 @@ def test_public_signatures_require_explicit_expected_process() -> None:
     wait = inspect.signature(ResponseWaiter.wait)
     assert list(wait.parameters) == ["self", "timeout_seconds"]
     assert wait.parameters["timeout_seconds"].default is inspect.Parameter.empty
+    assert wait.parameters["timeout_seconds"].annotation == "float | None"
     assert inspect.iscoroutinefunction(ResponseWaiter.wait)
 
 
@@ -395,6 +400,36 @@ async def test_zero_timeout_missing_response_times_out_after_one_immediate_poll(
         "timeout_seconds": 0.0,
     }
     assert checks == 1
+
+
+@pytest.mark.asyncio
+async def test_unbounded_wait_polls_until_response_and_rechecks_process(
+    response_path: Path,
+    valid_inst_bytes: bytes,
+    expectation: ResponseExpectation,
+    expected_process: ProcessInfo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    checks = 0
+
+    def process_check() -> ProcessInfo:
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            response_path.write_bytes(valid_inst_bytes)
+        return expected_process
+
+    monkeypatch.setattr(response_waiter_module.time, "time_ns", lambda: 1_000_000)
+    artifact = await _waiter(
+        response_path,
+        expectation,
+        expected_process,
+        process_check,
+        poll_seconds=0.001,
+    ).wait(None)
+
+    assert checks == 2
+    assert artifact.accepted_response.envelope.request_id == REQUEST_ID
 
 
 @pytest.mark.asyncio
@@ -736,6 +771,135 @@ async def test_permanent_json_decode_failure_raises_last_parser_error_at_deadlin
     assert caught.value is parser_errors[-1]
     assert len(reads) == 3
     assert clock.sleeps == [1, 1, 1]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_wait_fails_when_invalid_response_bytes_remain_stable(
+    response_path: Path,
+    expectation: ResponseExpectation,
+    expected_process: ProcessInfo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    _install_clock(monkeypatch, clock)
+    malformed = b'{"Comments":"not json"}'
+    reads = _install_read_observations(
+        monkeypatch,
+        response_path,
+        [malformed, malformed, malformed],
+    )
+    parser_errors = _record_parser_errors(monkeypatch)
+    ownership_checks = 0
+
+    def owns_inbox() -> bool:
+        nonlocal ownership_checks
+        ownership_checks += 1
+        return True
+
+    with pytest.raises(BridgeError) as caught:
+        await _waiter(
+            response_path,
+            expectation,
+            expected_process,
+            poll_seconds=0.5,
+            ownership_check=owns_inbox,
+        ).wait(None)
+
+    assert caught.value.code is ErrorCode.INDETERMINATE_OUTCOME
+    assert caught.value.message == "CMO response remained invalid during durable wait"
+    assert caught.value.details == {
+        "request_id": str(REQUEST_ID),
+        "response_path": str(response_path),
+        "reason": "stable_invalid_response",
+        "response_sha256": hashlib.sha256(malformed).hexdigest(),
+        "response_size_bytes": len(malformed),
+        "stable_seconds": 1.0,
+        "protocol_error": "invalid Comments envelope JSON",
+    }
+    assert caught.value.__cause__ is parser_errors[-1]
+    assert len(parser_errors) == 3
+    assert len(reads) == 3
+    assert ownership_checks == 2
+    assert clock.sleeps == [0.5, 0.5]
+
+
+@pytest.mark.asyncio
+async def test_unbounded_wait_fails_when_published_inbox_ownership_is_lost(
+    response_path: Path,
+    expectation: ResponseExpectation,
+    expected_process: ProcessInfo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock()
+    _install_clock(monkeypatch, clock)
+    reads = _install_read_observations(
+        monkeypatch,
+        response_path,
+        [FileNotFoundError(response_path)],
+    )
+    process_checks = 0
+    ownership_checks = 0
+
+    def process_check() -> ProcessInfo:
+        nonlocal process_checks
+        process_checks += 1
+        return expected_process
+
+    def owns_inbox() -> bool:
+        nonlocal ownership_checks
+        ownership_checks += 1
+        return False
+
+    with pytest.raises(BridgeError) as caught:
+        await _waiter(
+            response_path,
+            expectation,
+            expected_process,
+            process_check,
+            ownership_check=owns_inbox,
+        ).wait(None)
+
+    assert caught.value.code is ErrorCode.INDETERMINATE_OUTCOME
+    assert caught.value.message == "published mutation no longer owns the CMO inbox"
+    assert caught.value.details == {
+        "request_id": str(REQUEST_ID),
+        "reason": "published_inbox_evidence_missing",
+    }
+    assert len(reads) == 1
+    assert process_checks == 1
+    assert ownership_checks == 1
+    assert clock.sleeps == []
+
+
+@pytest.mark.asyncio
+async def test_unbounded_wait_accepts_valid_response_before_rechecking_inbox_ownership(
+    response_path: Path,
+    valid_inst_bytes: bytes,
+    expectation: ResponseExpectation,
+    expected_process: ProcessInfo,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _FakeClock(epoch_ns=123_000_000)
+    _install_clock(monkeypatch, clock)
+    reads = _install_read_observations(monkeypatch, response_path, [valid_inst_bytes])
+    ownership_checks = 0
+
+    def lost_ownership() -> bool:
+        nonlocal ownership_checks
+        ownership_checks += 1
+        return False
+
+    artifact = await _waiter(
+        response_path,
+        expectation,
+        expected_process,
+        ownership_check=lost_ownership,
+    ).wait(None)
+
+    assert artifact.accepted_response.ok is True
+    assert len(reads) == 1
+    assert ownership_checks == 0
+    assert clock.sleeps == []
 
 
 @pytest.mark.parametrize(

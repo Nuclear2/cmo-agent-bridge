@@ -66,6 +66,8 @@ from cmo_agent_bridge.transports.file_bridge.lock import RootLock
 from cmo_agent_bridge.transports.file_bridge.models import (
     BridgeChannel,
     BridgeTransport,
+    DurableBridgeChannel,
+    DurableBridgeTransport,
     RecoveryReport,
 )
 from cmo_agent_bridge.transports.file_bridge.mutation import MutationExchange
@@ -627,16 +629,18 @@ def test_mutation_exchange_and_transport_protocol_signatures_are_exact() -> None
         "response_poll_seconds",
         "queue_response_cleanup",
         "recovery_manager",
+        "durable_worker",
     ]
     assert all(
         parameter.kind is inspect.Parameter.KEYWORD_ONLY
         for name, parameter in constructor.parameters.items()
         if name != "self"
     )
+    assert constructor.parameters["durable_worker"].default is False
     assert all(
         parameter.default is inspect.Parameter.empty
         for name, parameter in constructor.parameters.items()
-        if name != "self"
+        if name not in {"self", "durable_worker"}
     )
     constructor_hints = get_type_hints(MutationExchange.__init__)
     assert constructor_hints == {
@@ -651,6 +655,7 @@ def test_mutation_exchange_and_transport_protocol_signatures_are_exact() -> None
         "response_poll_seconds": float,
         "queue_response_cleanup": Callable[[Path], None],
         "recovery_manager": RecoveryManager,
+        "durable_worker": bool,
         "return": type(None),
     }
     run = inspect.signature(MutationExchange.run)
@@ -674,9 +679,16 @@ def test_mutation_exchange_and_transport_protocol_signatures_are_exact() -> None
     assert list(channel_recovery.parameters) == ["self"]
     assert inspect.iscoroutinefunction(BridgeChannel.recover_pending)
     assert get_type_hints(BridgeChannel.recover_pending) == {"return": RecoveryReport}
+    channel_report = inspect.getattr_static(DurableBridgeChannel, "recovery_report")
+    assert isinstance(channel_report, property)
+    assert get_type_hints(channel_report.fget) == {"return": RecoveryReport}
     transport_session = inspect.signature(BridgeTransport.session)
     assert list(transport_session.parameters) == ["self"]
     assert not inspect.iscoroutinefunction(BridgeTransport.session)
+    worker_session = inspect.signature(DurableBridgeTransport.worker_session)
+    assert list(worker_session.parameters) == ["self", "recovery_owner"]
+    assert worker_session.parameters["recovery_owner"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert not inspect.iscoroutinefunction(DurableBridgeTransport.worker_session)
     concrete = inspect.signature(FileBridgeTransport.__init__)
     assert list(concrete.parameters) == [
         "self",
@@ -705,12 +717,18 @@ def test_mutation_exchange_and_transport_protocol_signatures_are_exact() -> None
         "return": type(None),
     }
     assert list(inspect.signature(FileBridgeTransport.session).parameters) == ["self"]
+    assert list(inspect.signature(FileBridgeTransport.worker_session).parameters) == [
+        "self",
+        "recovery_owner",
+    ]
     for module in (bridge_models_module, mutation_module, transport_module):
         assert isinstance(module, ModuleType)
     assert bridge_models_module.RecoveryReport is RecoveryReport
     assert not hasattr(mutation_module, "RecoveryReport")
     assert not hasattr(transport_module, "RecoveryReport")
     assert hasattr(BridgeChannel, "recover_pending")
+    assert not hasattr(BridgeChannel, "recovery_report")
+    assert hasattr(DurableBridgeChannel, "recovery_report")
     for value in (BridgeTransport, MutationExchange, FileBridgeTransport):
         assert not hasattr(value, "recover_pending")
 

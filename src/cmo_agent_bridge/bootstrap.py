@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,8 @@ from cmo_agent_bridge.application.confirmation import ConfirmationTokenStore
 from cmo_agent_bridge.application.host_quarantine import (
     HostQuarantineResolutionService,
 )
+from cmo_agent_bridge.application.queue_service import QueueService
+from cmo_agent_bridge.application.queue_worker import QueueWorker
 from cmo_agent_bridge.application.ports import (
     LocalOperationArguments,
     LocalOperationName,
@@ -41,6 +44,10 @@ from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot, render_dispatcher
 from cmo_agent_bridge.state.session_store import SessionStore
+from cmo_agent_bridge.state.operation_queue import (
+    OperationQueueState,
+    OperationQueueStore,
+)
 from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.atomic_io import atomic_replace_bytes
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
@@ -66,6 +73,8 @@ class PreparedBridge:
 class ApplicationRuntime:
     application: BridgeApplication
     host_quarantine: HostQuarantineResolutionService
+    queue_service: QueueService
+    queue_worker: QueueWorker
     config: BridgeConfig
     paths: FileBridgePaths
     runtime_snapshot: RuntimeSnapshot
@@ -199,6 +208,21 @@ def prepare_bridge(
     local_app_data: Path | None = None,
     replace_saved_game_root: bool = False,
 ) -> PreparedBridge:
+    return asyncio.run(
+        _prepare_bridge_locked(
+            game_root=game_root,
+            local_app_data=local_app_data,
+            replace_saved_game_root=replace_saved_game_root,
+        )
+    )
+
+
+async def _prepare_bridge_locked(
+    *,
+    game_root: Path,
+    local_app_data: Path | None,
+    replace_saved_game_root: bool,
+) -> PreparedBridge:
     store, config, paths = _loaded_config(
         game_root=game_root,
         local_app_data=local_app_data,
@@ -206,28 +230,52 @@ def prepare_bridge(
     snapshot = create_runtime_snapshot()
     dispatcher_path = _dispatcher_path(paths, snapshot)
     poll_path = paths.lua_root / "poll.lua"
+    root_lock = RootLock(paths.lock_file, timeout_seconds=config.request_timeout_seconds)
+    saved = config
 
-    dispatcher_path.parent.mkdir(parents=True, exist_ok=True)
-    paths.inbox.parent.mkdir(parents=True, exist_ok=True)
-    atomic_replace_bytes(
-        dispatcher_path,
-        render_dispatcher(snapshot),
-        retry_seconds=config.replace_retry_seconds,
-    )
-    atomic_replace_bytes(
-        paths.inbox,
-        render_idle_lua(),
-        retry_seconds=config.replace_retry_seconds,
-    )
-    atomic_replace_bytes(
-        poll_path,
-        _POLL_FILE,
-        retry_seconds=config.replace_retry_seconds,
-    )
-    saved = store.save(
-        config,
-        replace_saved_game_root=replace_saved_game_root,
-    )
+    async with root_lock:
+        database = StateDatabase(paths.sqlite_file)
+        database.initialize()
+        queue_store = OperationQueueStore(database)
+        nonterminal = queue_store.list(
+            root_key=paths.root_key,
+            states=frozenset({OperationQueueState.QUEUED, OperationQueueState.ACTIVE}),
+        )
+        if paths.pending_file.exists() or nonterminal:
+            raise BridgeError(
+                ErrorCode.STATE_CONFLICT,
+                "bridge preparation is blocked by unfinished CMO work",
+                {
+                    "pending_journal": paths.pending_file.exists(),
+                    "nonterminal_queue_requests": len(nonterminal),
+                    "next_step": (
+                        "let the current bridge finish, or cancel still-queued requests; "
+                        "resolve any active/quarantined request before upgrading or preparing"
+                    ),
+                },
+            )
+
+        dispatcher_path.parent.mkdir(parents=True, exist_ok=True)
+        paths.inbox.parent.mkdir(parents=True, exist_ok=True)
+        atomic_replace_bytes(
+            dispatcher_path,
+            render_dispatcher(snapshot),
+            retry_seconds=config.replace_retry_seconds,
+        )
+        atomic_replace_bytes(
+            paths.inbox,
+            render_idle_lua(),
+            retry_seconds=config.replace_retry_seconds,
+        )
+        atomic_replace_bytes(
+            poll_path,
+            _POLL_FILE,
+            retry_seconds=config.replace_retry_seconds,
+        )
+        saved = store.save(
+            config,
+            replace_saved_game_root=replace_saved_game_root,
+        )
     return PreparedBridge(
         config=saved,
         paths=paths,
@@ -283,9 +331,10 @@ def build_application_runtime(
         cancel_ack_timeout_seconds=config.cancel_ack_timeout_seconds,
     )
     wall_clock = SystemWallClock()
+    session_store = SessionStore(database)
     sessions = SessionService(
         scope=SessionScope(root_key=paths.root_key, command_exe=paths.command_exe),
-        session_store=SessionStore(database),
+        session_store=session_store,
         registry=OPERATION_REGISTRY,
         runtime_snapshot=snapshot,
         wall_clock=wall_clock,
@@ -307,6 +356,22 @@ def build_application_runtime(
         compatibility_probe=UnavailableCompatibilityProbe(),
         request_timeout_seconds=config.request_timeout_seconds,
     )
+    queue_store = OperationQueueStore(database)
+    queue_service = QueueService(
+        root_key=paths.root_key,
+        registry=OPERATION_REGISTRY,
+        runtime_snapshot=snapshot,
+        session_store=session_store,
+        queue_store=queue_store,
+        allow_mutations=config.allow_mutations,
+    )
+    queue_worker = QueueWorker(
+        root_key=paths.root_key,
+        registry=OPERATION_REGISTRY,
+        queue_store=queue_store,
+        transport=transport,
+        ledger=transport.ledger,
+    )
     return ApplicationRuntime(
         application=application,
         host_quarantine=HostQuarantineResolutionService(
@@ -315,6 +380,8 @@ def build_application_runtime(
             confirmations=confirmations,
             wall_clock=wall_clock,
         ),
+        queue_service=queue_service,
+        queue_worker=queue_worker,
         config=config,
         paths=paths,
         runtime_snapshot=snapshot,

@@ -4,10 +4,19 @@ import asyncio
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.application.queue_models import (
+    CancelQueuedOperationResult,
+    QueueSummary,
+    QueueWaitResult,
+    QueuedOperationList,
+    QueuedOperationReceipt,
+    QueuedOperationStatus,
+)
 from cmo_agent_bridge.bootstrap import (
     POLL_ACTION_SCRIPT,
     ApplicationRuntime,
@@ -130,9 +139,7 @@ def diagnose_bridge(
         )
 
     paths = FileBridgePaths.build(config.game_root, store.local_app_data)
-    dispatcher_path = (
-        paths.lua_root / "versions" / snapshot.runtime_tag / "dispatcher.lua"
-    )
+    dispatcher_path = paths.lua_root / "versions" / snapshot.runtime_tag / "dispatcher.lua"
     poll_path = paths.lua_root / "poll.lua"
     try:
         dispatcher_ready = (
@@ -249,6 +256,19 @@ class McpRuntimeManager:
         self._local_app_data = local_app_data
         self._runtime: ApplicationRuntime | None = None
         self._lock = asyncio.Lock()
+        self._queue_lifecycle_started = False
+
+    async def _ensure_runtime(self) -> ApplicationRuntime:
+        async with self._lock:
+            if self._runtime is None:
+                self._runtime = build_application_runtime(
+                    game_root=self._game_root,
+                    local_app_data=self._local_app_data,
+                )
+            runtime = self._runtime
+            if self._queue_lifecycle_started:
+                runtime.queue_worker.start()
+            return runtime
 
     async def execute(
         self,
@@ -257,20 +277,73 @@ class McpRuntimeManager:
         *,
         confirmation_token: str | None = None,
     ) -> InvocationOutcome:
+        try:
+            runtime = await self._ensure_runtime()
+            return await runtime.application.execute(
+                operation,
+                arguments,
+                confirmation_token=confirmation_token,
+            )
+        except BridgeError as error:
+            return _failure_outcome(error)
+
+    async def submit(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+    ) -> QueuedOperationReceipt:
+        runtime = await self._ensure_runtime()
         async with self._lock:
-            try:
-                if self._runtime is None:
-                    self._runtime = build_application_runtime(
-                        game_root=self._game_root,
-                        local_app_data=self._local_app_data,
-                    )
-                return await self._runtime.application.execute(
-                    operation,
-                    arguments,
-                    confirmation_token=confirmation_token,
-                )
-            except BridgeError as error:
-                return _failure_outcome(error)
+            receipt = runtime.queue_service.submit(operation=operation, arguments=arguments)
+            if self._queue_lifecycle_started:
+                runtime.queue_worker.wake()
+            return receipt
+
+    async def queue_get(self, request_id: UUID) -> QueuedOperationStatus:
+        runtime = await self._ensure_runtime()
+        return runtime.queue_service.get(request_id=request_id)
+
+    async def queue_wait(
+        self,
+        request_id: UUID,
+        timeout_seconds: float,
+    ) -> QueueWaitResult:
+        runtime = await self._ensure_runtime()
+        return await runtime.queue_service.wait(
+            request_id=request_id,
+            timeout_seconds=timeout_seconds,
+        )
+
+    async def queue_list(self, limit: int | None = None) -> QueuedOperationList:
+        runtime = await self._ensure_runtime()
+        return runtime.queue_service.list(limit=limit)
+
+    async def queue_cancel(self, request_id: UUID) -> CancelQueuedOperationResult:
+        runtime = await self._ensure_runtime()
+        async with self._lock:
+            result = runtime.queue_service.cancel(request_id=request_id)
+            if self._queue_lifecycle_started:
+                runtime.queue_worker.wake()
+            return result
+
+    async def queue_summary(self) -> QueueSummary:
+        runtime = await self._ensure_runtime()
+        return runtime.queue_service.summary()
+
+    async def start_queue_worker(self) -> None:
+        async with self._lock:
+            self._queue_lifecycle_started = True
+            if self._runtime is not None:
+                self._runtime.queue_worker.start()
+
+    async def stop_queue_worker(self) -> None:
+        async with self._lock:
+            self._queue_lifecycle_started = False
+            if self._runtime is not None:
+                # Keep lifecycle transitions serialized until the old task is
+                # fully detached. A concurrent start can then reliably create
+                # a fresh worker instead of racing the old task's cleanup.
+                await self._runtime.queue_worker.stop()
 
     async def diagnose(self) -> McpBridgeDiagnostic:
         async with self._lock:
@@ -308,7 +381,8 @@ class McpRuntimeManager:
                     )
                 return _runtime_result(self._runtime)
 
-            prepared = prepare_bridge(
+            prepared = await asyncio.to_thread(
+                prepare_bridge,
                 game_root=selected_root,
                 local_app_data=self._local_app_data,
                 replace_saved_game_root=replace_saved_game_root,
@@ -319,6 +393,8 @@ class McpRuntimeManager:
             )
             self._runtime = candidate
             self._game_root = candidate.paths.game_root
+            if self._queue_lifecycle_started:
+                candidate.queue_worker.start()
             return _prepare_result(prepared)
 
     def _select_prepare_root(self, value: str | None) -> Path:

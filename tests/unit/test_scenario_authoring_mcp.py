@@ -4,6 +4,7 @@ import json
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from uuid import UUID
 
 import pytest
 from mcp.server.fastmcp import FastMCP
@@ -11,6 +12,10 @@ from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import JsonValue
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.application.queue_models import (
+    QueuedOperationReceipt,
+    QueuedOperationState,
+)
 from cmo_agent_bridge.scenario_authoring_mcp import register_scenario_authoring_tools
 
 
@@ -48,6 +53,8 @@ class _FakeApplication:
     def __init__(self, outcomes: Sequence[InvocationOutcome]) -> None:
         self._outcomes = deque(outcomes)
         self.calls: list[_Call] = []
+        self.submissions: list[_Call] = []
+        self._submitted_count = 0
 
     async def execute(
         self,
@@ -60,6 +67,25 @@ class _FakeApplication:
         if not self._outcomes:
             raise AssertionError(f"no queued outcome for {operation}")
         return self._outcomes.popleft()
+
+    async def submit(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+    ) -> QueuedOperationReceipt:
+        call = _Call(operation, dict(arguments), None)
+        self.calls.append(call)
+        self.submissions.append(call)
+        if self._outcomes:
+            self._outcomes.popleft()
+        self._submitted_count += 1
+        return QueuedOperationReceipt(
+            request_id=UUID(int=self._submitted_count),
+            operation=operation,
+            sequence=self._submitted_count,
+            state=QueuedOperationState.QUEUED,
+            submitted_at_ms=0,
+        )
 
 
 def _success(result: JsonValue) -> InvocationOutcome:
@@ -176,9 +202,7 @@ async def test_all_authoring_tools_map_arguments_to_the_application_port() -> No
             _success(scenario),
             _success(side),
             _success(side),
-            _success(
-                {"side_a_guid": "SIDE-1", "side_b_guid": "SIDE-2", "posture": "H"}
-            ),
+            _success({"side_a_guid": "SIDE-1", "side_b_guid": "SIDE-2", "posture": "H"}),
             _success({"side": "Blue", "score": 250}),
             *[_success(authoring) for _ in range(7)],
             _success(_preview_result("unit.delete", "UNIT-1", "unit", "UNIT-TOKEN")),
@@ -189,9 +213,7 @@ async def test_all_authoring_tools_map_arguments_to_the_application_port() -> No
                     "object_kind": "unit",
                 }
             ),
-            _success(
-                _preview_result("mission.delete", "MISSION-1", "mission", "MISSION-TOKEN")
-            ),
+            _success(_preview_result("mission.delete", "MISSION-1", "mission", "MISSION-TOKEN")),
             _success(
                 {
                     "deleted_guid": "MISSION-1",
@@ -443,6 +465,20 @@ async def test_all_authoring_tools_map_arguments_to_the_application_port() -> No
             "MISSION-TOKEN",
         ),
     ]
+    assert [call.arguments["function"] for call in application.submissions] == [
+        "ScenEdit_SetWeather",
+        "SetScenarioTitle",
+        "ScenEdit_SetTime",
+        "ScenEdit_AddSide",
+        "ScenEdit_SetSideOptions",
+        "ScenEdit_SetSidePosture",
+        "ScenEdit_SetScore",
+        "ScenEdit_SetEvent",
+        "ScenEdit_SetAction",
+        "ScenEdit_SetEventAction",
+        "ScenEdit_AddSpecialAction",
+        "ScenEdit_SetSpecialAction",
+    ]
 
 
 @pytest.mark.asyncio
@@ -459,9 +495,7 @@ async def test_event_kind_selects_the_official_component_and_link_functions(
     component_function: str,
     link_function: str,
 ) -> None:
-    application = _FakeApplication(
-        [_success(_authoring_result()), _success(_authoring_result())]
-    )
+    application = _FakeApplication([_success(_authoring_result()), _success(_authoring_result())])
     server = _server(application)
 
     await server.call_tool(

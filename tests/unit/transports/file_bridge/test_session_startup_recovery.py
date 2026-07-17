@@ -5,6 +5,7 @@ from pathlib import Path
 import sys
 from types import TracebackType
 from typing import Any, cast
+from uuid import UUID
 
 import pytest
 
@@ -182,6 +183,46 @@ async def test_quarantined_startup_report_does_not_poison_reads_and_public_recov
         await concrete.recover_pending()
     assert closed.value.code is ErrorCode.STATE_CONFLICT
     assert reports == [_quarantined_report(), _quarantined_report()]
+
+
+@pytest.mark.asyncio
+async def test_worker_session_startup_recovery_cancellation_detaches_immediately(
+    harness: base.Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    transport = base._transport(harness)  # pyright: ignore[reportPrivateUsage]
+    started = asyncio.Event()
+    never = asyncio.Event()
+
+    async def wait_for_cmo(
+        manager: RecoveryManager,
+        request_id: UUID,
+    ) -> RecoveryReport:
+        assert manager._expected_process == harness.process  # pyright: ignore[reportPrivateUsage]
+        assert request_id == base.REQUEST_ID
+        started.set()
+        await never.wait()
+        raise AssertionError("durable recovery unexpectedly resumed")
+
+    monkeypatch.setattr(RecoveryManager, "recover_owned_pending", wait_for_cmo)
+    session = transport.worker_session(
+        recovery_owner=lambda process: base.REQUEST_ID,
+    )
+    entering = asyncio.create_task(session.__aenter__())
+    await _require_event_before_task(
+        started,
+        cast(asyncio.Task[object], entering),
+        label="worker session did not start durable recovery",
+    )
+    assert entering.cancel("stop paused worker") is True
+    with pytest.raises(asyncio.CancelledError) as caught:
+        await entering
+    assert caught.value.args == ("stop paused worker",)
+
+    # __aenter__ releases the root lock on its own cancellation path; a new
+    # queue worker can therefore take over the unchanged durable request.
+    async with harness.root_lock:
+        harness.root_lock.require_acquired()
 
 
 @pytest.mark.asyncio

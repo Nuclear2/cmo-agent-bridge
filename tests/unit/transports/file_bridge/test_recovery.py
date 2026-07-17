@@ -6,7 +6,7 @@ import inspect
 import json
 import sys
 from collections.abc import Awaitable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Never, TypeVar, cast
@@ -41,6 +41,7 @@ from cmo_agent_bridge.transports.file_bridge.inbox import InboxPublisher
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 from cmo_agent_bridge.transports.file_bridge.process_guard import ProcessInfo
+from cmo_agent_bridge.transports.file_bridge.recovery import RecoveryManager
 from cmo_agent_bridge.transports.file_bridge.response_waiter import ResponseWaiter
 from cmo_agent_bridge.transports.file_bridge.transport import (
     FileBridgeTransport,
@@ -893,6 +894,80 @@ async def test_direct_published_cancellation_without_ack_quarantines_before_rera
             await _quietly_finish(exchange_task)
         await _bounded(asyncio.sleep(0), label="direct task audit checkpoint")
         _assert_no_new_live_tasks(baseline_tasks)
+
+
+@pytest.mark.asyncio
+async def test_durable_worker_published_cancellation_only_detaches(
+    harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Stopping a queue worker preserves its owned inbox delivery for recovery."""
+
+    transport = _transport(harness)
+    command = replace(_command(harness), timeout=0.0, unbounded_wait=True)
+    transport.paths.inbox.parent.mkdir(parents=True, exist_ok=True)
+    waiter_started = asyncio.Event()
+    never = asyncio.Event()
+    cancellations: list[asyncio.CancelledError] = []
+    idle_calls = 0
+
+    async def wait_forever(
+        _waiter: ResponseWaiter,
+        timeout_seconds: float | None,
+    ) -> ResponseArtifact:
+        assert timeout_seconds is None
+        waiter_started.set()
+        try:
+            await never.wait()
+        except asyncio.CancelledError as error:
+            cancellations.append(error)
+            raise
+        raise AssertionError("durable waiter unexpectedly resumed")
+
+    def counted_idle(_publisher: InboxPublisher) -> None:
+        nonlocal idle_calls
+        idle_calls += 1
+
+    monkeypatch.setattr(ResponseWaiter, "wait", wait_forever)
+    monkeypatch.setattr(InboxPublisher, "publish_idle", counted_idle)
+    monkeypatch.setattr(RecoveryManager, "settle_published_cancellation", _forbidden)
+
+    async with transport.worker_session(
+        recovery_owner=lambda process: None,
+    ) as channel:
+        concrete = cast(_FileBridgeChannel, channel)
+        assert channel.recovery_report.disposition.value == "no_pending"
+        task = asyncio.create_task(channel.exchange(command))
+        await _require_event_before_task(
+            waiter_started,
+            task,
+            "durable mutation did not reach its response waiter",
+        )
+        assert task.cancel("stop durable worker") is True
+        with pytest.raises(asyncio.CancelledError) as caught:
+            await task
+
+        assert cancellations == [caught.value]
+        loaded = transport.journals.load()
+        request = transport.ledger.get_request(command.request_id)
+        assert loaded is not None
+        assert loaded.journal.original.state is PendingPhase.PUBLISHED
+        assert request is not None and request.state is HostRequestState.PUBLISHED
+        assert idle_calls == 0
+        assert concrete._poisoned is False  # pyright: ignore[reportPrivateUsage]
+        mutation = concrete._mutation_exchange  # pyright: ignore[reportPrivateUsage]
+        assert mutation._requires_fresh_session() is False  # pyright: ignore[reportPrivateUsage]
+        intent = loaded.journal.original.delivery_intents[0]
+        assert transport.paths.inbox.read_bytes() == render_delivery_lua(
+            PreparedDelivery(
+                request_id=intent.request_id,
+                delivery_id=intent.delivery_id,
+                delivery_kind=intent.delivery_kind,
+                request_hash=intent.request_hash,
+                body_json=intent.body_json.encode("utf-8"),
+            ),
+            harness.snapshot,
+        )
 
 
 @pytest.mark.asyncio

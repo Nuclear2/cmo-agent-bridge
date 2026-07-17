@@ -18,7 +18,12 @@ in the registered tool set.
   `not_prepared`, call `cmo_bridge_prepare`; omit `game_root` when the reported saved root is the
   intended installation, otherwise pass a user-confirmed root. The same MCP session becomes ready
   without a client restart. Then call `cmo_bridge_status`; guide the user through the polling event
-  only if status times out.
+  only if status times out. A successful status call establishes the process/runtime/scenario
+  binding required before the first queued mutation.
+- Before any upgrade or prepare over an existing installation, read the idle-bridge gate in
+  [references/setup.md](references/setup.md): require `queued=0`, `active=0`, and no pending journal.
+  If prepare returns `STATE_CONFLICT`, do not delete recovery files or switch releases again; use
+  the reported counts with the current/old release to settle the unfinished work first.
 - If all CMO tools are absent, stop the operational or authoring workflow and read
   [references/setup.md](references/setup.md). When a local shell is available, perform the
   documented `uv`/`uvx` checks and pinned release probe yourself. Ask the user only for missing
@@ -157,32 +162,63 @@ Never create, alter, enable, or test a Lua-bearing authoring artifact in `LIVE_P
 execute a pre-existing scenario-authored special action when it is a legitimate visible game
 control; that does not authorize inspecting or replacing its script.
 
+## Use the durable mutation queue
+
+Ordinary CMO mutation tools return a `QueuedOperationReceipt`, not the eventual CMO result. Keep
+its `request_id` and use:
+
+- `cmo_request_get` to inspect one request and obtain its terminal result or error;
+- `cmo_request_wait` to wait for a bounded local interval; `timed_out=true` ends only that wait and
+  never cancels or changes the request;
+- `cmo_request_list` and `cmo_queue_status` to inspect the local queue;
+- `cmo_request_cancel` only while a request remains `queued`. Never claim that an `active` request
+  was aborted.
+
+The queue is durable and FIFO. Submit independent mutations in their intended order. When a later
+step needs an earlier result, such as a mission GUID returned by `cmo_mission_create`, wait until
+the earlier request is `completed`, validate its result, and only then submit the dependent step.
+Distinguish queue completion from the later simulated effect: a completed launch, attack, refuel,
+RTB, cargo, or Special Action request can still mean that CMO accepted an order whose effects must
+be observed over scenario time.
+
+CMO may remain paused after a mutation is submitted. The request stays pending without a bridge
+execution timeout and is serviced when the Regular Time event runs again. `cmo_request_get`,
+`cmo_request_list`, `cmo_queue_status`, and cancellation of still-queued work remain available while
+paused. Closing the Agent client or MCP server detaches the worker but does not cancel an active
+request; restart and query the same
+`request_id`. If the CMO process, runtime, or scenario binding no longer matches, expect rejection
+or quarantine rather than execution in a different scenario.
+
+Reads, `cmo_bridge_status`, and other synchronous CMO calls do not use this queue. They still need
+the polling event and advancing scenario time and retain their bounded timeout behavior. Host-only
+diagnose/prepare and destructive delete preview/confirm also retain their documented synchronous
+contracts.
+
 ## Protect consequential decision windows
 
-Keep scenario time advancing so the one-second Regular Time polling event can service bridge
-requests. Do not pause CMO for routine agent work. Before a multi-step assessment, mission build,
+Before a multi-step assessment, mission build,
 force assignment, strike plan, doctrine/WRA/EMCON change, scenario-authoring batch, or other work
 where high time compression could invalidate the plan:
 
 1. Call `cmo_scenario_get` and preserve its exact `time_compression` multiplier. Convert it back to
    a setter code with `1->0`, `2->1`, `5->2`, `15->3`, `30->4`, or `150->5`.
-2. Call `cmo_scenario_time_compression_set` with `code=0` and require `accepted=true` plus
-   `observed_time_compression=1`.
+2. Submit `cmo_scenario_time_compression_set(code=0)`, wait for that request to complete, and
+   require `accepted=true` plus `observed_time_compression=1` in its eventual result.
 3. Refresh the decision-relevant scenario, contact, mission, and unit state after the slowdown.
-4. Perform the bounded changes and read them back while CMO remains at 1x.
-5. After successful verification, restore the mapped code unless the user asks to remain at
-   1x. If any request fails or the result is uncertain, remain at 1x and report the blocker.
+4. Submit independent bounded changes in FIFO order. Wait at every result dependency, then read the
+   affected CMO state back while the scenario is at 1x.
+5. After successful verification, submit the mapped restore code and verify its eventual result
+   unless the user asks to remain at 1x. If a request is rejected, quarantined, or otherwise
+   unresolved, do not queue a dependent restore; report the request ID and blocker.
 
 Do not cycle compression around isolated reads or trivial bounded orders when delay cannot affect
-the outcome. A fully paused retail CMO instance does not schedule the Regular Time Lua action. If
-the user wants to minimize time movement, tell them before the call to press `Alt+1` after the
-request is queued and repeat the 15-second time step if CMO pauses again before the tool returns.
-The reliable path is to resume at 1x until the tool returns. A queued request remains pending while
-the call waits and completes normally when polling resumes. Status/read delivery may make one
-bounded retry, so the default 30-second per-attempt timeout can produce about 60 seconds of total
-waiting. If the wait is exhausted, the bridge withdraws or quarantines the request to prevent an
-unexpected late mutation; never retry it blindly. An exhausted wait can also mean an inactive
-polling event, so do not claim which cause applies without user or UI confirmation.
+the outcome. A fully paused retail CMO instance does not schedule the Regular Time Lua action, but
+mutation submission itself does not require immediate polling after a valid session binding exists.
+The user may pause during a planning or authoring batch, let the Agent enqueue independent changes,
+and resume at 1x to execute them. Use `cmo_request_wait` only when a result dependency or final
+verification requires it; its timeout never cancels the request. For synchronous reads or status,
+resume at 1x or use repeated `Alt+1` 15-second time steps, and repair the polling event if those
+calls still time out while scenario time is advancing.
 
 ## Preserve these universal invariants
 
@@ -190,8 +226,9 @@ polling event, so do not claim which cause applies without user or UI confirmati
    identities before mutation. Use GUIDs whenever the tool accepts them.
 2. Keep contact GUIDs distinct from actual unit GUIDs. Use an actual unit GUID only when the
    observing side exposes it and the tool contract requires it.
-3. Build new missions inactive. Configure geometry, targets, force size, doctrine, WRA, EMCON,
-   support, assignments, and dependencies; read them back; activate only after the gate is met.
+3. Build new missions inactive. Wait for creation to complete and retain the returned GUID before
+   submitting dependent geometry, targets, doctrine, support, or assignments. Read the assembled
+   mission back; activate only after the gate is met.
 4. Read actual combat status, loadout, inventory, fuel, damage, readiness, sensor state, and
    existing weapon allocations before committing a force.
 5. Treat launch, RTB, refuel, attack, special-action execution, cargo movement, and other
@@ -200,12 +237,14 @@ polling event, so do not claim which cause applies without user or UI confirmati
 6. Send only fields that should change. Preserve ordered zones and courses. An empty ordered list
    is an explicit clear when the tool contract permits it.
 7. Follow every list tool's `next_cursor` until null when completeness matters.
-8. Do not retry a create, attack, loadout, launch, RTB, refuel, cargo, inventory, or special-action
-   mutation blindly after a timeout. Discover the resulting state first.
+8. Do not resubmit a mutation because `cmo_request_wait` timed out. Query the same request ID until
+   it is terminal. After a synchronous read timeout, recover polling and read again without
+   duplicating any already submitted mutation.
 9. Preserve exact returned values and distinguish requested values from CMO readback. A mutation
    result is a bounded projection, not a complete wrapper.
-10. Stop dependent actions when the bridge, polling event, loaded scenario, or advancing scenario
-    time is unavailable. Preserve the last verified state and give a precise recovery action.
+10. Stop dependent actions when the bridge binding, polling event, or loaded scenario is uncertain.
+    A paused scenario may hold already submitted or independent queued work, but never invent a
+    missing result or carry a request into a changed process/scenario binding.
 
 ## Handle capability gaps honestly
 
@@ -223,6 +262,7 @@ When a request needs a non-current capability:
 
 ## Report the outcome
 
-State the operating mode, commanded or edited side, meaningful assumptions, actions actually
-accepted by CMO, final readback, unresolved asynchronous effects, non-current dependencies, and
-any information contamination. Preserve scenario, file, side, and GUID values exactly.
+State the operating mode, commanded or edited side, meaningful assumptions, submitted request IDs,
+terminal queue results, actions actually accepted by CMO, final readback, unresolved queued or
+simulated effects, non-current dependencies, and any information contamination. Preserve scenario,
+file, side, and GUID values exactly.

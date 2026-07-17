@@ -45,8 +45,10 @@ uv run --locked pytest -m "not cmo_live"
 - 使用专用、类型化的 operation；不要添加任意 Lua escape hatch；
 - 参数只表达允许改变的字段，避免隐式覆盖 CMO wrapper 的其他状态；
 - 读工具支持必要的分页、GUID 选择和稳定投影；
-- 写工具返回“已接受”与“已生效”的区别，并提供对应 readback；
-- timeout 后可能已执行的操作必须进入不确定状态，不能自动重复；
+- 普通写工具返回 durable queue receipt；调用方通过 request ID 取得最终 CMO 结果，并继续区分
+  “命令已接受”与“模拟效果已生效”；
+- `cmo_request_wait` 超时只能结束本次等待，不能取消、重排或重复提交 durable request；
+- 只允许取消尚未 active 的 queued request；重启恢复必须核对 process/runtime/scenario binding；
 - 想定作者工具在 skill 和工具说明中标为 `SCENARIO_AUTHOR`/`UMPIRE`；
 - 更新生成的 operation manifest、schema corpus、tool catalog、测试和变更记录。
 
@@ -62,7 +64,7 @@ CMO Lua 文档的示例不是完整契约。新能力至少验证：
 6. 保存、重载和再次读取；
 7. 重名对象、分页和 GUID 选择；
 8. 高时间倍率下的文件交换；
-9. 依赖消失和 timeout 后的恢复路径。
+9. 依赖消失、CMO 暂停、worker 重启和 binding 变化时的队列恢复路径。
 
 测试记录必须注明 CMO build。不要向仓库提交商业想定、数据库、游戏二进制或不具备再分发权的素材。
 

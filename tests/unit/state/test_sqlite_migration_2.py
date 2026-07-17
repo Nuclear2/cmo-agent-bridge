@@ -127,7 +127,7 @@ def test_repeated_v2_initialization_is_idempotent(tmp_path: Path) -> None:
     with sqlite3.connect(path) as connection:
         assert connection.execute(
             "SELECT version,COUNT(*) FROM schema_migrations GROUP BY version ORDER BY version"
-        ).fetchall() == [(1, 1), (2, 1)]
+        ).fetchall() == [(1, 1), (2, 1), (3, 1)]
 
 
 def test_malformed_v1_is_rejected_without_creating_confirmation_table(tmp_path: Path) -> None:

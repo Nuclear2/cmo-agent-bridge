@@ -133,6 +133,36 @@ CREATE TABLE confirmations (
 """,
 )
 
+MIGRATION_3_STATEMENTS = (
+    """
+CREATE TABLE operation_queue (
+    queue_sequence INTEGER PRIMARY KEY AUTOINCREMENT CHECK (queue_sequence > 0),
+    request_id TEXT NOT NULL UNIQUE CHECK (length(request_id) = 36),
+    root_key TEXT NOT NULL CHECK (length(root_key) = 64),
+    operation TEXT NOT NULL,
+    arguments_json BLOB NOT NULL CHECK (typeof(arguments_json) = 'blob' AND length(arguments_json) > 0),
+    body_json BLOB NOT NULL CHECK (typeof(body_json) = 'blob' AND length(body_json) > 0),
+    runtime_snapshot_json BLOB NOT NULL CHECK (typeof(runtime_snapshot_json) = 'blob' AND length(runtime_snapshot_json) > 0),
+    result_schema_id TEXT NOT NULL CHECK (length(result_schema_id) = 64),
+    recovery_schema_id TEXT CHECK (recovery_schema_id IS NULL OR length(recovery_schema_id) = 64),
+    expected_lineage_id TEXT,
+    expected_activation_id TEXT,
+    expected_process_pid INTEGER NOT NULL CHECK (expected_process_pid > 0),
+    expected_process_create_time REAL NOT NULL CHECK (expected_process_create_time > 0),
+    state TEXT NOT NULL CHECK (
+        state IN ('queued','active','completed','rejected','cancelled','quarantined')
+    ),
+    result_json BLOB,
+    error_json BLOB,
+    created_at_ms INTEGER NOT NULL CHECK (created_at_ms >= 0),
+    updated_at_ms INTEGER NOT NULL CHECK (updated_at_ms >= created_at_ms),
+    terminal_at_ms INTEGER CHECK (terminal_at_ms IS NULL OR terminal_at_ms >= updated_at_ms)
+)
+""",
+    "CREATE INDEX operation_queue_state_sequence_idx ON operation_queue(state, queue_sequence)",
+    "CREATE INDEX operation_queue_root_state_sequence_idx ON operation_queue(root_key, state, queue_sequence)",
+)
+
 
 def _normalized_schema_sql(value: object) -> str:
     if type(value) is not str:
@@ -153,6 +183,17 @@ _EXPECTED_MIGRATION_1_SCHEMA_SQL = {
 _EXPECTED_MIGRATION_2_SCHEMA_SQL = {
     **_EXPECTED_MIGRATION_1_SCHEMA_SQL,
     ("table", "confirmations"): _normalized_schema_sql(MIGRATION_2_STATEMENTS[0]),
+}
+
+_EXPECTED_MIGRATION_3_SCHEMA_SQL = {
+    **_EXPECTED_MIGRATION_2_SCHEMA_SQL,
+    ("table", "operation_queue"): _normalized_schema_sql(MIGRATION_3_STATEMENTS[0]),
+    ("index", "operation_queue_state_sequence_idx"): _normalized_schema_sql(
+        MIGRATION_3_STATEMENTS[1]
+    ),
+    ("index", "operation_queue_root_state_sequence_idx"): _normalized_schema_sql(
+        MIGRATION_3_STATEMENTS[2]
+    ),
 }
 
 _EXPECTED_COLUMNS = {
@@ -229,6 +270,27 @@ _EXPECTED_COLUMNS = {
         ("expires_at_ms", "INTEGER", 1, 0),
         ("used_at_ms", "INTEGER", 0, 0),
     ),
+    "operation_queue": (
+        ("queue_sequence", "INTEGER", 0, 1),
+        ("request_id", "TEXT", 1, 0),
+        ("root_key", "TEXT", 1, 0),
+        ("operation", "TEXT", 1, 0),
+        ("arguments_json", "BLOB", 1, 0),
+        ("body_json", "BLOB", 1, 0),
+        ("runtime_snapshot_json", "BLOB", 1, 0),
+        ("result_schema_id", "TEXT", 1, 0),
+        ("recovery_schema_id", "TEXT", 0, 0),
+        ("expected_lineage_id", "TEXT", 0, 0),
+        ("expected_activation_id", "TEXT", 0, 0),
+        ("expected_process_pid", "INTEGER", 1, 0),
+        ("expected_process_create_time", "REAL", 1, 0),
+        ("state", "TEXT", 1, 0),
+        ("result_json", "BLOB", 0, 0),
+        ("error_json", "BLOB", 0, 0),
+        ("created_at_ms", "INTEGER", 1, 0),
+        ("updated_at_ms", "INTEGER", 1, 0),
+        ("terminal_at_ms", "INTEGER", 0, 0),
+    ),
 }
 
 _EXPECTED_FOREIGN_KEYS = {
@@ -239,6 +301,7 @@ _EXPECTED_FOREIGN_KEYS = {
     ),
     "sessions": (),
     "confirmations": (),
+    "operation_queue": (),
 }
 
 _EXPECTED_INDEX_PROPERTIES = {
@@ -250,12 +313,18 @@ _EXPECTED_INDEX_PROPERTIES = {
     "deliveries": {"deliveries_request_idx": (0, "c", 0)},
     "sessions": {},
     "confirmations": {},
+    "operation_queue": {
+        "operation_queue_state_sequence_idx": (0, "c", 0),
+        "operation_queue_root_state_sequence_idx": (0, "c", 0),
+    },
 }
 
 _EXPECTED_INDEX_COLUMNS = {
     "requests_root_state_idx": ("root_key", "state", "updated_at_ms"),
     "requests_terminal_idx": ("terminal_at_ms",),
     "deliveries_request_idx": ("request_id", "intended_at_ms"),
+    "operation_queue_state_sequence_idx": ("state", "queue_sequence"),
+    "operation_queue_root_state_sequence_idx": ("root_key", "state", "queue_sequence"),
 }
 
 
@@ -263,9 +332,14 @@ _EXPECTED_MIGRATION_1_TABLES = frozenset(
     {"schema_migrations", "requests", "deliveries", "sessions"}
 )
 _EXPECTED_MIGRATION_2_TABLES = _EXPECTED_MIGRATION_1_TABLES | {"confirmations"}
+_EXPECTED_MIGRATION_3_TABLES = _EXPECTED_MIGRATION_2_TABLES | {"operation_queue"}
 _EXPECTED_INDEXES = frozenset(
     {"requests_root_state_idx", "requests_terminal_idx", "deliveries_request_idx"}
 )
+_EXPECTED_MIGRATION_3_INDEXES = _EXPECTED_INDEXES | {
+    "operation_queue_state_sequence_idx",
+    "operation_queue_root_state_sequence_idx",
+}
 
 
 def _state_conflict(message: str) -> BridgeError:
@@ -374,6 +448,13 @@ class StateDatabase:
                     "INSERT INTO schema_migrations(version, applied_at_ms) VALUES(2, ?)",
                     (applied_at_ms,),
                 )
+                for statement in MIGRATION_3_STATEMENTS:
+                    connection.execute(statement)
+                self._verify_migration_3_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at_ms) VALUES(3, ?)",
+                    (applied_at_ms,),
+                )
             elif tables == _EXPECTED_MIGRATION_1_TABLES and indexes == _EXPECTED_INDEXES:
                 self._verify_migration_1_schema(connection)
                 self._verify_migration_history(connection, (1,))
@@ -384,11 +465,28 @@ class StateDatabase:
                     "INSERT INTO schema_migrations(version, applied_at_ms) VALUES(2, ?)",
                     (int(time.time() * 1000),),
                 )
+                for statement in MIGRATION_3_STATEMENTS:
+                    connection.execute(statement)
+                self._verify_migration_3_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at_ms) VALUES(3, ?)",
+                    (int(time.time() * 1000),),
+                )
             elif tables == _EXPECTED_MIGRATION_2_TABLES and indexes == _EXPECTED_INDEXES:
                 self._verify_migration_2_schema(connection)
                 self._verify_migration_history(connection, (1, 2))
+                for statement in MIGRATION_3_STATEMENTS:
+                    connection.execute(statement)
+                self._verify_migration_3_schema(connection)
+                connection.execute(
+                    "INSERT INTO schema_migrations(version, applied_at_ms) VALUES(3, ?)",
+                    (int(time.time() * 1000),),
+                )
+            elif tables == _EXPECTED_MIGRATION_3_TABLES and indexes == _EXPECTED_MIGRATION_3_INDEXES:
+                self._verify_migration_3_schema(connection)
+                self._verify_migration_history(connection, (1, 2, 3))
             else:
-                raise _state_conflict("SQLite state schema is not an exact migration 1 or 2")
+                raise _state_conflict("SQLite state schema is not an exact migration 1, 2, or 3")
             connection.commit()
         except BaseException:
             connection.rollback()
@@ -435,6 +533,15 @@ class StateDatabase:
             expected_sql=_EXPECTED_MIGRATION_2_SCHEMA_SQL,
             expected_tables=_EXPECTED_MIGRATION_2_TABLES,
             migration=2,
+        )
+
+    @staticmethod
+    def _verify_migration_3_schema(connection: sqlite3.Connection) -> None:
+        StateDatabase._verify_schema(
+            connection,
+            expected_sql=_EXPECTED_MIGRATION_3_SCHEMA_SQL,
+            expected_tables=_EXPECTED_MIGRATION_3_TABLES,
+            migration=3,
         )
 
     @staticmethod
@@ -491,6 +598,8 @@ class StateDatabase:
                     )
 
             for index, expected_columns in _EXPECTED_INDEX_COLUMNS.items():
+                if ("index", index) not in expected_sql:
+                    continue
                 rows = connection.execute(f"PRAGMA index_info({index})").fetchall()
                 columns = tuple(row["name"] for row in rows)
                 if columns != expected_columns or any(
