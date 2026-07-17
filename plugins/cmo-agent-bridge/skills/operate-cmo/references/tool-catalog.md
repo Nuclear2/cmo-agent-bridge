@@ -40,8 +40,9 @@ Never infer `CURRENT` from an official Lua function. Never call a proposed tool 
   `get` or `list` after a multi-step change.
 - Launch, RTB, refuel, attack, cargo, and special-action results mean the command was accepted, not
   that its effect completed.
-- Tool availability is determined when the agent task starts. Enabling a plugin does not add tools
-  to an already-open task.
+- Tool registration is determined when the agent task starts. Enabling a plugin does not add tools
+  to an already-open task, but `cmo_bridge_prepare` can make the already registered ordinary tools
+  ready in the same task.
 
 ## Current read and control tools
 
@@ -49,6 +50,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 
 | Tool | Primary inputs | Use and boundary |
 |---|---|---|
+| `cmo_bridge_diagnose` | none | Inspect saved game root and release-runtime readiness without contacting CMO |
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, actual compression multiplier, and projected score state |
 | `cmo_scenario_time_compression_set` | code `0..5` | Set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; result echoes the requested code and actual multiplier |
@@ -83,6 +85,12 @@ polling continues at 1x, so this workflow requires neither simulation pause cont
 Action pump.
 
 ## Current mutation tools
+
+### Host setup
+
+| Tool | Primary inputs | Use and important semantics |
+|---|---|---|
+| `cmo_bridge_prepare` | optional game root; explicit saved-root replacement flag | Deploy the release-bound Lua runtime and hot-activate ordinary tools in the same MCP session; does not mount the CMO scenario event |
 
 ### Player-valid and author-valid
 

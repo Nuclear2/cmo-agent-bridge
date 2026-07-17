@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '0.1.1',
+    [string]$Version = '0.1.2',
 
     [Parameter()]
     [string]$BundlePath,
@@ -93,7 +93,7 @@ function Assert-PluginBundle {
     }
 
     $manifestPath = Join-Path $PluginDirectory '.codex-plugin\plugin.json'
-    $codexMcpPath = Join-Path $PluginDirectory '.codex-mcp.json'
+    $codexMcpPath = Join-Path $PluginDirectory '.mcp.json'
     $skillPath = Join-Path $PluginDirectory 'skills\operate-cmo\SKILL.md'
     foreach ($requiredPath in @($manifestPath, $codexMcpPath, $skillPath)) {
         if (-not (Test-Path -LiteralPath $requiredPath -PathType Leaf)) {
@@ -116,7 +116,10 @@ function Assert-PluginBundle {
     }
 
     $codexMcp = Get-JsonFile $codexMcpPath
-    if (-not (Test-ObjectProperty -InputObject $codexMcp -Name $PluginName)) {
+    if (-not (Test-ObjectProperty -InputObject $codexMcp -Name 'mcpServers')) {
+        throw "Codex MCP configuration has no 'mcpServers' object."
+    }
+    if (-not (Test-ObjectProperty -InputObject $codexMcp.mcpServers -Name $PluginName)) {
         throw "Codex MCP configuration does not define '$PluginName'."
     }
 

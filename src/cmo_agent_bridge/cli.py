@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 from enum import StrEnum
 from pathlib import Path
 from typing import cast
@@ -17,6 +16,7 @@ from cmo_agent_bridge.bootstrap import (
     prepare_bridge,
 )
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.mcp_runtime import McpRuntimeManager
 from cmo_agent_bridge.mcp_server import run_stdio
 
 
@@ -233,21 +233,8 @@ def serve(
         help="Override the saved CMO installation root.",
     ),
 ) -> None:
-    """Serve the live-verified CMO tools over stdio MCP."""
-    try:
-        runtime = build_application_runtime(game_root=game_root)
-    except BridgeError as error:
-        print(
-            json.dumps(
-                _error_payload(error),
-                ensure_ascii=False,
-                separators=(",", ":"),
-                default=str,
-            ),
-            file=sys.stderr,
-        )
-        raise typer.Exit(2) from error
-    run_stdio(runtime.application)
+    """Serve CMO tools over stdio MCP, including host-side setup recovery."""
+    run_stdio(McpRuntimeManager(game_root=game_root))
 
 
 if __name__ == "__main__":

@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.1.1` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.1.2` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.2/cmo_agent_bridge-0.1.2-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -72,13 +72,14 @@ cmo-bridge serve
 
 - 只有 ChatGPT / Codex Desktop：使用 [Codex Desktop 本地安装脚本](frameworks/codex.md#只有-chatgpt--codex-desktop)；
   不需要 Codex CLI，但仍需要 `uv` / `uvx`。
-- 有 Codex CLI：注册固定到 `v0.1.1` 的 marketplace，再用 `codex plugin add` 或 `/plugins` 安装。
-- Claude Code：安装固定到 `v0.1.1` 的 marketplace plugin；plugin 同时携带 MCP 与完整 Skill。
+- 有 Codex CLI：注册固定到 `v0.1.2` 的 marketplace，再用 `codex plugin add` 或 `/plugins` 安装。
+- Claude Code：安装固定到 `v0.1.2` 的 marketplace plugin；plugin 同时携带 MCP 与完整 Skill。
 - [OpenCode](frameworks/opencode.md)、[Cursor](frameworks/cursor.md)、[Qoder](frameworks/qoder.md) 和
   [通用 MCP](frameworks/generic-mcp.md)：既要注册 MCP，也要安装完整的 `operate-cmo` Skill。MCP
   server 本身不会分发 Skill。
 
-重启 Agent 并新建会话，然后要求它调用 `cmo_bridge_status`。当前 MCP surface 提供 68 个有类型
+重启 Agent 并新建会话，然后先要求它调用 `cmo_bridge_diagnose`；需要时由它在当前会话调用
+`cmo_bridge_prepare`，再调用 `cmo_bridge_status`。当前 MCP surface 提供 70 个有类型
 工具。CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*` tools。
 
 ## 6. 选择正确模式

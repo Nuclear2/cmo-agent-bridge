@@ -1,6 +1,6 @@
 ---
 name: operate-cmo
-description: "Assess, plan, command, operate, test, or author Command: Modern Operations (CMO) scenarios through cmo-agent-bridge. Use for live battlespace assessment, courses of action, missions, contacts, units, doctrine, WRA, EMCON, sensors, weapons, logistics, attacks, time control, scenario-author or umpire work, event designs, special actions, scoring, and playtesting."
+description: "Assess, plan, command, operate, test, or author Command: Modern Operations (CMO) scenarios through cmo-agent-bridge. Use for live battlespace assessment, courses of action, missions, contacts, units, doctrine, WRA, EMCON, sensors, weapons, logistics, attacks, time control, scenario-author or umpire work, event designs, special actions, scoring, and playtesting. Also use when the plugin or Skill is installed but its MCP tools are missing, uv/uvx or the release-bound CMO runtime needs setup, or the polling event must be mounted or repaired."
 ---
 
 # Operate CMO
@@ -8,6 +8,33 @@ description: "Assess, plan, command, operate, test, or author Command: Modern Op
 Treat MCP results as the authority for the scenario currently open in CMO. Prefer the MCP tools
 over the CLI whenever the corresponding tool exists. Never present an official Lua capability,
 planned bridge capability, or manually mounted script as an already callable MCP tool.
+
+## Establish bridge readiness
+
+At the first CMO interaction in each Agent task, determine whether `cmo_bridge_diagnose` is present
+in the registered tool set.
+
+- If `cmo_bridge_diagnose` is present, call it first. If it reports `unconfigured` or
+  `not_prepared`, call `cmo_bridge_prepare`; omit `game_root` when the reported saved root is the
+  intended installation, otherwise pass a user-confirmed root. The same MCP session becomes ready
+  without a client restart. Then call `cmo_bridge_status`; guide the user through the polling event
+  only if status times out.
+- If all CMO tools are absent, stop the operational or authoring workflow and read
+  [references/setup.md](references/setup.md). When a local shell is available, perform the
+  documented `uv`/`uvx` checks and pinned release probe yourself. Ask the user only for missing
+  permission, an ambiguous CMO installation path, or CMO editor work.
+- Do not run `cmo-bridge serve` as a detached or interactive terminal process. The Agent client owns
+  that stdio process, and a manually started server cannot add tools to the current task.
+- After repairing a missing-tool startup failure, have the user fully restart the Agent client and
+  open a new task. This restart is needed only when the tools themselves were absent; MCP-side
+  `cmo_bridge_prepare` hot-activates an already registered tool set.
+- If `cmo_bridge_diagnose` reports ready, call `cmo_bridge_status` before other live CMO tools. If
+  status times out, recover the polling event and advancing scenario time as described in the setup
+  reference.
+
+Do not mistake these layers: absent tools mean the MCP server did not initialize; a diagnostic
+`not_prepared` result is repaired in-session; status timeouts usually mean the CMO-side polling
+event is not servicing requests.
 
 ## Select one operating mode
 

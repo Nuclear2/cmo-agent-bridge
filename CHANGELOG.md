@@ -2,6 +2,30 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.1.2] - 2026-07-17 (Preview)
+
+本次预览版补齐 MCP 首次启动与版本升级后的自恢复流程；即使 CMO 侧 runtime 尚未部署，Agent
+也能先加载工具并在当前任务内完成准备。
+
+### Added
+
+- 新增 host-only `cmo_bridge_diagnose` 与 `cmo_bridge_prepare`，MCP surface 增至 70 个有类型工具。
+- `cmo_bridge_prepare` 成功后会在同一 stdio 进程和同一 MCP 会话中启用普通 CMO 工具，无需再次
+  注册工具或重启 Agent。
+
+### Changed
+
+- `cmo-bridge serve` 改为延迟构建严格 CMO runtime；无配置、runtime 缺失或版本不匹配时不再在
+  MCP initialize 之前退出。
+- `operate-cmo` 优先使用 MCP 内诊断与准备工具；只有工具本身缺失时才进入 `uvx`/客户端启动排障。
+
+### Fixed
+
+- `operate-cmo` 现在区分 MCP 启动失败、host runtime 未准备与 CMO 轮询超时，并在各层给出可执行
+  的下一步和轮询事件挂载说明。
+- Codex plugin 改用标准根目录 `.mcp.json`，并将首次 `uvx` 冷启动超时提高到 60 秒；Claude Code
+  继续使用不含 Codex 专属超时字段的独立配置。
+
 ## [0.1.1] - 2026-07-17 (Preview)
 
 本次预览版集中完善跨框架发行与安装体验，不改变 CMO bridge 的工具协议。
@@ -52,5 +76,6 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.1.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.0

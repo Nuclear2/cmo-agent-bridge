@@ -12,9 +12,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = ROOT / "scripts" / "install-codex-desktop.ps1"
-VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"][
-    "version"
-]
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 
 
 def _powershell() -> str:
@@ -36,25 +34,23 @@ def _write_bundle(
             {
                 "name": "cmo-agent-bridge",
                 "version": version,
-                "mcpServers": "./.codex-mcp.json",
+                "mcpServers": "./.mcp.json",
                 "skills": "./skills/",
             }
         ),
         "plugins/cmo-agent-bridge/skills/operate-cmo/SKILL.md": (
-            "---\n"
-            "name: operate-cmo\n"
-            "description: Test skill.\n"
-            "---\n\n"
-            "# Test skill\n"
+            "---\nname: operate-cmo\ndescription: Test skill.\n---\n\n# Test skill\n"
         ),
         "plugins/cmo-agent-bridge/content-marker.txt": marker,
     }
     if include_codex_mcp:
-        files["plugins/cmo-agent-bridge/.codex-mcp.json"] = json.dumps(
+        files["plugins/cmo-agent-bridge/.mcp.json"] = json.dumps(
             {
-                "cmo-agent-bridge": {
-                    "command": "uvx",
-                    "args": ["cmo-bridge", "serve"],
+                "mcpServers": {
+                    "cmo-agent-bridge": {
+                        "command": "uvx",
+                        "args": ["cmo-bridge", "serve"],
+                    }
                 }
             }
         )
@@ -109,7 +105,7 @@ def test_installer_creates_desktop_plugin_and_personal_marketplace(tmp_path: Pat
     assert result.returncode == 0, result.stderr
     plugin = _plugin_path(user_home)
     assert (plugin / ".codex-plugin" / "plugin.json").is_file()
-    assert (plugin / ".codex-mcp.json").is_file()
+    assert (plugin / ".mcp.json").is_file()
     assert (plugin / "skills" / "operate-cmo" / "SKILL.md").is_file()
     marketplace = json.loads(_marketplace_path(user_home).read_text(encoding="utf-8-sig"))
     assert marketplace["name"] == "personal"

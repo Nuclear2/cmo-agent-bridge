@@ -45,7 +45,8 @@ opencode mcp list
 
 ## 验证
 
-重启 OpenCode，运行 `opencode mcp list`，然后要求 Agent 调用 `cmo_bridge_status`。MCP 提供实际
+重启 OpenCode，运行 `opencode mcp list`，然后要求 Agent 调用 `cmo_bridge_diagnose`，需要时调用
+`cmo_bridge_prepare`，再调用 `cmo_bridge_status`。MCP 提供实际
 工具；skill 提供使用规范，两者必须分别可见。
 
 官方参考：[OpenCode MCP servers](https://opencode.ai/docs/mcp-servers/)、

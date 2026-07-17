@@ -26,7 +26,7 @@ PUBLIC_INSTALLATION_FILES = (
     ROOT / "docs" / "frameworks" / "generic-mcp.md",
     PLUGIN_ROOT / "skills" / "operate-cmo" / "references" / "setup.md",
     PLUGIN_ROOT / ".mcp.json",
-    PLUGIN_ROOT / ".codex-mcp.json",
+    PLUGIN_ROOT / ".claude-mcp.json",
 )
 
 

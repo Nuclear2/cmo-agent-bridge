@@ -10,6 +10,8 @@ from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.errors import BridgeError
+from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
 from cmo_agent_bridge.operations.models import (
     BridgeStatusResult,
     CargoTransferItem,
@@ -81,6 +83,17 @@ class ApplicationPort(Protocol):
     ) -> InvocationOutcome: ...
 
 
+class McpApplicationPort(ApplicationPort, Protocol):
+    async def diagnose(self) -> McpBridgeDiagnostic: ...
+
+    async def prepare(
+        self,
+        *,
+        game_root: str | None = None,
+        replace_saved_game_root: bool = False,
+    ) -> McpBridgePrepareResult: ...
+
+
 ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
 DoctrineBooleanUpdateValue = bool | Literal["inherit"]
 
@@ -145,6 +158,17 @@ def _protocol_tool_error(operation: str) -> ToolError:
     )
 
 
+def _bridge_tool_error(error: BridgeError) -> ToolError:
+    return ToolError(
+        json.dumps(
+            error.to_payload(),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    )
+
+
 async def _invoke(
     application: ApplicationPort,
     operation: str,
@@ -172,15 +196,55 @@ async def _invoke(
         raise _protocol_tool_error(operation) from error
 
 
-def create_mcp_server(application: ApplicationPort) -> FastMCP[None]:
+def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     """Create the typed CMO MCP surface."""
     server = FastMCP(
         "CMO Agent Bridge",
         instructions=(
             "Read and update the running Command: Modern Operations scenario through a local "
-            "file-backed bridge. CMO must be running with the bridge polling event enabled."
+            "file-backed bridge. Use cmo_bridge_diagnose and cmo_bridge_prepare when the "
+            "release-bound runtime is not ready. Live CMO calls require the polling event."
         ),
         log_level="ERROR",
+    )
+
+    async def bridge_diagnose() -> McpBridgeDiagnostic:
+        return await application.diagnose()
+
+    server.add_tool(
+        bridge_diagnose,
+        name="cmo_bridge_diagnose",
+        title="Diagnose CMO bridge setup",
+        description=(
+            "Inspect host-side game-root and release-runtime readiness without contacting CMO. "
+            "Use the returned action when setup is incomplete."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def bridge_prepare(
+        game_root: str | None = None,
+        replace_saved_game_root: bool = False,
+    ) -> McpBridgePrepareResult:
+        try:
+            return await application.prepare(
+                game_root=game_root,
+                replace_saved_game_root=replace_saved_game_root,
+            )
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        bridge_prepare,
+        name="cmo_bridge_prepare",
+        title="Prepare CMO bridge runtime",
+        description=(
+            "Deploy this release's local Lua runtime and activate ordinary CMO tools in the "
+            "current MCP session. Omit game_root to use the server override or saved root."
+        ),
+        annotations=_mutation_annotations(),
+        structured_output=True,
     )
 
     async def bridge_status(accept_lineage_id: str | None = None) -> BridgeStatusResult:
@@ -1809,5 +1873,5 @@ def create_mcp_server(application: ApplicationPort) -> FastMCP[None]:
     return server
 
 
-def run_stdio(application: ApplicationPort) -> None:
+def run_stdio(application: McpApplicationPort) -> None:
     create_mcp_server(application).run(transport="stdio")

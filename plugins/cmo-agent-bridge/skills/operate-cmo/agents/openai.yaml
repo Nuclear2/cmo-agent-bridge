@@ -1,7 +1,7 @@
 interface:
   display_name: "Operate CMO"
   short_description: "Command operations or author CMO scenarios"
-  default_prompt: "Use $operate-cmo to select LIVE_PLAYER or SCENARIO_AUTHOR mode, then assess and command the operation or build and playtest the scenario while preserving the correct information boundary."
+  default_prompt: "Use $operate-cmo to diagnose and prepare bridge readiness first, recover host setup if the MCP tools are absent, then select LIVE_PLAYER or SCENARIO_AUTHOR mode and command or author the scenario within the correct information boundary."
 
 dependencies:
   tools:

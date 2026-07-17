@@ -2,7 +2,6 @@
   "mcpServers": {
     "cmo-agent-bridge": {
       "command": "uvx",
-      "startup_timeout_sec": 60,
       "args": [
         "--python",
         "3.12",

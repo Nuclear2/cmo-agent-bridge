@@ -41,7 +41,7 @@ cmo-bridge serve
         "--python",
         "3.12",
         "--from",
-        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl",
+        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.2/cmo_agent_bridge-0.1.2-py3-none-any.whl",
         "cmo-bridge",
         "serve"
       ]
@@ -51,7 +51,8 @@ cmo-bridge serve
 ```
 
 长期使用推荐先 `uv tool install`，再用更短的配置。无论哪种方案，都必须先运行一次
-`cmo-bridge prepare`（或等价的 `uvx ... cmo-bridge prepare`），并在想定内挂载轮询事件。
+`cmo_bridge_diagnose` 与所需的 `cmo_bridge_prepare`，并在想定内挂载轮询事件。CLI `prepare`
+只作为 MCP 工具无法加载时的备用入口。
 
 ## 客户端能力要求
 
@@ -69,11 +70,11 @@ cmo-bridge serve
 下载并解压独立 Skill 包：
 
 ```powershell
-$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.1.zip"
-$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.1"
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.2.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.2"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/operate-cmo-skill-0.1.1.zip" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.2/operate-cmo-skill-0.1.2.zip" `
   -OutFile $skillZip
 Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 ```

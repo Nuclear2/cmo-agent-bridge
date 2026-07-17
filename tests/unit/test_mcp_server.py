@@ -9,6 +9,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 from cmo_agent_bridge.application.models import InvocationOutcome
+from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
 from cmo_agent_bridge.mcp_server import create_mcp_server
 
 
@@ -39,6 +40,42 @@ class _FakeApplication:
     ) -> InvocationOutcome:
         self.calls.append(_Call(operation, dict(arguments), confirmation_token))
         return self._outcomes[operation]
+
+    async def diagnose(self) -> McpBridgeDiagnostic:
+        return McpBridgeDiagnostic(
+            runtime_state="ready",
+            ready=True,
+            bridge_version="0.1.2",
+            runtime_tag="0_1_2-" + "a" * 64,
+            config_path="config.toml",
+            game_root="CMO",
+            dispatcher_path="dispatcher.lua",
+            inbox_path="request.lua",
+            poll_path="poll.lua",
+            lua_action="return true",
+            error_code=None,
+            error_message=None,
+            required_next_action="Call cmo_bridge_status.",
+        )
+
+    async def prepare(
+        self,
+        *,
+        game_root: str | None = None,
+        replace_saved_game_root: bool = False,
+    ) -> McpBridgePrepareResult:
+        del game_root, replace_saved_game_root
+        return McpBridgePrepareResult(
+            ready=True,
+            bridge_version="0.1.2",
+            runtime_tag="0_1_2-" + "a" * 64,
+            game_root="CMO",
+            dispatcher_path="dispatcher.lua",
+            inbox_path="request.lua",
+            poll_path="poll.lua",
+            lua_action="return true",
+            next_step="Call cmo_bridge_status.",
+        )
 
 
 def _success(result: JsonValue) -> InvocationOutcome:
@@ -702,6 +739,8 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     tools_by_name = {tool.name: tool for tool in tools}
 
     assert set(tools_by_name) == {
+        "cmo_bridge_diagnose",
+        "cmo_bridge_prepare",
         "cmo_bridge_status",
         "cmo_scenario_get",
         "cmo_scenario_time_compression_set",
@@ -772,6 +811,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_mission_delete_confirm",
     }
     mutation_tools = {
+        "cmo_bridge_prepare",
         "cmo_scenario_time_compression_set",
         "cmo_unit_sensor_set",
         "cmo_unit_magazine_adjust",

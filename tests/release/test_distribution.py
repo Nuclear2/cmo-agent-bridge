@@ -82,14 +82,12 @@ def test_framework_manifests_launch_one_pinned_release_server() -> None:
         f"v{version}/cmo_agent_bridge-{version}-py3-none-any.whl"
     )
 
-    codex_servers = cast(
-        dict[str, dict[str, Any]],
-        _load_json(PLUGIN_ROOT / ".codex-mcp.json"),
-    )
-    assert "mcpServers" not in codex_servers
+    codex_config = _load_json(PLUGIN_ROOT / ".mcp.json")
+    codex_servers = cast(dict[str, dict[str, Any]], codex_config["mcpServers"])
     codex_server = codex_servers["cmo-agent-bridge"]
     codex_args = cast(list[str], codex_server["args"])
     assert codex_server["command"] == "uvx"
+    assert codex_server["startup_timeout_sec"] == 60
     assert "cwd" not in codex_server
     assert codex_args[codex_args.index("--python") + 1] == "3.12"
     assert codex_args[codex_args.index("--from") + 1] == wheel_url
@@ -97,11 +95,13 @@ def test_framework_manifests_launch_one_pinned_release_server() -> None:
 
     claude = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
     codex = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
-    claude_config = _load_json(PLUGIN_ROOT / ".mcp.json")
+    claude_config = _load_json(PLUGIN_ROOT / ".claude-mcp.json")
     claude_servers = cast(dict[str, dict[str, Any]], claude_config["mcpServers"])
-    assert claude_servers == codex_servers
-    assert codex["mcpServers"] == "./.codex-mcp.json"
-    assert claude["mcpServers"] == "./.mcp.json"
+    claude_server = claude_servers["cmo-agent-bridge"]
+    assert claude_server["command"] == codex_server["command"]
+    assert claude_server["args"] == codex_args
+    assert codex["mcpServers"] == "./.mcp.json"
+    assert claude["mcpServers"] == "./.claude-mcp.json"
     assert not list(PLUGIN_ROOT.rglob("*.whl"))
 
 
@@ -125,14 +125,55 @@ def test_packaged_skills_have_valid_minimal_frontmatter() -> None:
         assert parts[2].strip()
 
 
+def test_operate_cmo_skill_bootstraps_missing_mcp_tools() -> None:
+    skill = (PLUGIN_ROOT / "skills" / "operate-cmo" / "SKILL.md").read_text(encoding="utf-8")
+    readiness = skill.index("## Establish bridge readiness")
+    mode_gate = skill.index("## Select one operating mode")
+
+    assert readiness < mode_gate
+    assert "MCP tools are missing" in skill.split("---", 2)[1]
+    assert "cmo_bridge_diagnose" in skill
+    assert "cmo_bridge_prepare" in skill
+    assert "cmo_bridge_status" in skill
+    assert "references/setup.md" in skill
+    assert "Do not run `cmo-bridge serve`" in skill
+    assert "fully restart the Agent client" in skill
+    assert "absent tools mean the MCP server did not initialize" in skill
+    assert "hot-activates an already registered tool set" in skill
+
+
+def test_setup_runbook_covers_host_bootstrap_and_cmo_polling() -> None:
+    setup = (PLUGIN_ROOT / "skills" / "operate-cmo" / "references" / "setup.md").read_text(
+        encoding="utf-8"
+    )
+
+    for expected in (
+        "Get-Command uv",
+        "uv --version",
+        "cmo-bridge version",
+        "cmo-bridge prepare",
+        "cmo_bridge_diagnose",
+        "cmo_bridge_prepare",
+        "--replace-saved-game-root",
+        "new Agent task",
+        "Regular Time",
+        "Lua Script",
+        "Active",
+        "Repeatable",
+        "return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')",
+        "cmo_bridge_status",
+    ):
+        assert expected in setup
+
+
 def test_distribution_metadata_never_embeds_a_development_worktree() -> None:
     metadata_paths = [
         ROOT / ".agents" / "plugins" / "marketplace.json",
         ROOT / ".claude-plugin" / "marketplace.json",
         PLUGIN_ROOT / ".codex-plugin" / "plugin.json",
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
-        PLUGIN_ROOT / ".codex-mcp.json",
         PLUGIN_ROOT / ".mcp.json",
+        PLUGIN_ROOT / ".claude-mcp.json",
     ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in metadata_paths).lower()
     assert ".worktrees" not in combined
