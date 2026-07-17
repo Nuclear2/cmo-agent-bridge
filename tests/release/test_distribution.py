@@ -82,8 +82,11 @@ def test_framework_manifests_launch_one_pinned_release_server() -> None:
         f"v{version}/cmo_agent_bridge-{version}-py3-none-any.whl"
     )
 
-    codex_config = _load_json(PLUGIN_ROOT / ".mcp.json")
-    codex_servers = cast(dict[str, dict[str, Any]], codex_config["mcpServers"])
+    codex_servers = cast(
+        dict[str, dict[str, Any]],
+        _load_json(PLUGIN_ROOT / ".codex-mcp.json"),
+    )
+    assert "mcpServers" not in codex_servers
     codex_server = codex_servers["cmo-agent-bridge"]
     codex_args = cast(list[str], codex_server["args"])
     assert codex_server["command"] == "uvx"
@@ -94,7 +97,10 @@ def test_framework_manifests_launch_one_pinned_release_server() -> None:
 
     claude = _load_json(PLUGIN_ROOT / ".claude-plugin" / "plugin.json")
     codex = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
-    assert codex["mcpServers"] == "./.mcp.json"
+    claude_config = _load_json(PLUGIN_ROOT / ".mcp.json")
+    claude_servers = cast(dict[str, dict[str, Any]], claude_config["mcpServers"])
+    assert claude_servers == codex_servers
+    assert codex["mcpServers"] == "./.codex-mcp.json"
     assert claude["mcpServers"] == "./.mcp.json"
     assert not list(PLUGIN_ROOT.rglob("*.whl"))
 
@@ -125,6 +131,7 @@ def test_distribution_metadata_never_embeds_a_development_worktree() -> None:
         ROOT / ".claude-plugin" / "marketplace.json",
         PLUGIN_ROOT / ".codex-plugin" / "plugin.json",
         PLUGIN_ROOT / ".claude-plugin" / "plugin.json",
+        PLUGIN_ROOT / ".codex-mcp.json",
         PLUGIN_ROOT / ".mcp.json",
     ]
     combined = "\n".join(path.read_text(encoding="utf-8") for path in metadata_paths).lower()

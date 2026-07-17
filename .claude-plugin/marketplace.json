@@ -9,7 +9,7 @@
       "name": "cmo-agent-bridge",
       "source": "./plugins/cmo-agent-bridge",
       "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "author": {
         "name": "Nuclear2"
       },

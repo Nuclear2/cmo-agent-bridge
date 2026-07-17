@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> `v0.1.0` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
+> `v0.1.1` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
 > 上验证当前 CMO build、任务流程和写操作。
 
 ## 推荐方案：安装 Release wheel
@@ -14,20 +14,27 @@
 
 ### 安装 uv
 
-如果 `uv --version` 已成功，可跳过本节。
+需要 `uv 0.11.26` 或更高版本。如果 `uv --version` 显示的版本已满足要求，可跳过本节。
 
 ```powershell
 winget install --id astral-sh.uv -e
 uv --version
 ```
 
+已安装但版本较旧时，执行：
+
+```powershell
+winget upgrade --id astral-sh.uv -e
+uv --version
+```
+
 若 `uv` 安装后当前终端仍找不到它，关闭并重新打开 PowerShell。其他官方安装方式见
 [uv installation](https://docs.astral.sh/uv/getting-started/installation/)。
 
-### 安装 v0.1.0 Preview
+### 安装 v0.1.1 Preview
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -98,6 +105,49 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 Regular Time trigger 只在想定时间推进时执行。游戏暂停时请求不会被处理；恢复到 1x 后，下一次
 轮询会处理待办请求。复杂的多步规划应先降到 1x，刷新态势、执行并读回校验，再恢复原倍率。
 
+## 安装 Agent 集成
+
+### 只有 ChatGPT / Codex Desktop
+
+没有可用的 `codex` CLI 时，下载 Release 脚本后再执行：
+
+```powershell
+$installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
+Invoke-WebRequest `
+  -UseBasicParsing `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/install-codex-desktop.ps1" `
+  -OutFile $installer
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
+```
+
+不要用 `irm | iex` 直接执行网络内容。脚本只安装本地 Personal marketplace 与 plugin 源，不会安装
+Codex CLI，也不会编辑 `config.toml` 或插件缓存。完全退出并重启 Desktop 后，在
+**Plugins → Personal** 中打开 `cmo-agent-bridge` 并点击安装。此路径仍需要 `uv` / `uvx`。
+
+### 有 Codex CLI
+
+```powershell
+codex plugin marketplace add Nuclear2/cmo-agent-bridge --ref v0.1.1
+codex plugin add cmo-agent-bridge@cmo-tools
+```
+
+也可以注册 marketplace 后打开 `/plugins`，从 **CMO Tools** 安装。远程自建 marketplace 不会
+自动出现在官方插件目录中，必须先完成第一条命令。
+
+### Claude Code
+
+```powershell
+claude plugin marketplace add Nuclear2/cmo-agent-bridge@v0.1.1
+claude plugin install cmo-agent-bridge@cmo-tools --scope user
+```
+
+Codex 和 Claude plugin 都同时安装 MCP 配置与完整 `operate-cmo` Skill。
+
+### OpenCode、Cursor、Qoder 与其他 MCP 客户端
+
+这些框架需要完成两件事：注册下面的 stdio MCP server，并按“安装 operate-cmo skill”一节复制
+完整 Skill。MCP 只提供工具，不会携带 Skill。
+
 ## 注册 MCP server
 
 安装后的标准 `stdio` 启动命令是：
@@ -115,17 +165,31 @@ cmo-bridge serve
 - [Qoder](frameworks/qoder.md)
 - [通用 MCP 客户端](frameworks/generic-mcp.md)
 
-marketplace plugin 只打包 MCP 启动配置与 `operate-cmo` skill，不在 plugin zip 中重复内嵌 wheel。
-plugin 的 MCP 配置用固定版本 `uvx` URL 启动同一个 Release wheel；持久安装 wheel 仍是运行
-`prepare`、CLI 诊断和手工测试最直接的方式。
+plugin 不在 zip 中重复内嵌 wheel；它用固定版本的 `uvx` URL 启动同一个 Release wheel。持久安装
+wheel 仍是运行 `prepare`、CLI 诊断和手工测试最直接的方式。
 
 ## 安装 operate-cmo skill
 
 MCP server 提供工具，skill 提供如何评估、规划和安全使用这些工具的知识。若框架不使用本仓库的
-plugin marketplace，可从标签固定的源码复制完整 skill 目录：
+plugin marketplace，可下载 Release 中的独立 Skill 包：
 
 ```powershell
-git clone --depth 1 --branch v0.1.0 https://github.com/Nuclear2/cmo-agent-bridge.git
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.1.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.1"
+Invoke-WebRequest `
+  -UseBasicParsing `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/operate-cmo-skill-0.1.1.zip" `
+  -OutFile $skillZip
+Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
+```
+
+解压后的完整 Skill 目录是 `$skillRoot\operate-cmo\`，其中包含 `SKILL.md`、`agents/` 和
+`references/`。把整个 `operate-cmo` 目录复制到对应 Agent 框架的 Skill 搜索路径。
+
+如果机器上已安装 Git，也可从标签固定的源码取得：
+
+```powershell
+git clone --depth 1 --branch v0.1.1 https://github.com/Nuclear2/cmo-agent-bridge.git
 cd cmo-agent-bridge
 ```
 
@@ -135,15 +199,14 @@ cd cmo-agent-bridge
 plugins/cmo-agent-bridge/skills/operate-cmo/
 ```
 
-必须复制整个目录，包括 `SKILL.md`、`agents/` 和 `references/`，不能只复制入口文件。各框架的
-目标目录见对应配置文档。
+必须复制整个目录，不能只复制入口文件。各框架的目标目录见对应配置文档。
 
 ## 免安装运行：uvx
 
 不想持久安装 CLI 时，可让 `uvx` 从 Release wheel 启动隔离环境：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge --help
 uvx --python 3.12 --from $wheel cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"
@@ -152,7 +215,7 @@ uvx --python 3.12 --from $wheel cmo-bridge prepare `
 对应的 MCP 命令为：
 
 ```text
-uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl cmo-bridge serve
+uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl cmo-bridge serve
 ```
 
 `uvx` 不创建持久 tool 安装，但会使用 `uv` 的下载缓存。它适合试用和固定版本的可移植配置；长期
@@ -195,7 +258,7 @@ CLI 适合诊断；Agent 的正常操作应通过 `cmo_*` MCP tools 完成。
 查看目标 Release 的 wheel 文件名，然后执行：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uv tool install --force --python 3.12 $wheel
 cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"

@@ -15,7 +15,7 @@ concurrency:
 jobs:
   prerelease:
     name: Build and publish prerelease
-    if: "${{ startsWith(github.event.head_commit.message, 'chore: release v0.1.0') }}"
+    if: "${{ startsWith(github.event.head_commit.message, 'chore: release v') }}"
     runs-on: windows-latest
     timeout-minutes: 45
 
@@ -66,7 +66,7 @@ jobs:
         run: uv run python scripts/generate_manifest.py --check-python --check-corpus
 
       - name: Validate plugin, marketplace, and skill metadata
-        run: uv run pytest tests/release/test_distribution.py
+        run: uv run pytest tests/release
 
       - name: Lint
         run: uv run ruff check .
@@ -128,8 +128,8 @@ jobs:
               Sort-Object Name |
               ForEach-Object FullName
           )
-          if ($assets.Count -ne 5) {
-            throw "Expected five release files; found $($assets.Count)."
+          if ($assets.Count -ne 6) {
+            throw "Expected six release files; found $($assets.Count)."
           }
           gh release view $tag --json tagName *> $null
           if ($LASTEXITCODE -eq 0) {

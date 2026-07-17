@@ -41,7 +41,7 @@ cmo-bridge serve
         "--python",
         "3.12",
         "--from",
-        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl",
+        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl",
         "cmo-bridge",
         "serve"
       ]
@@ -61,8 +61,23 @@ cmo-bridge serve
 - server 启动超时建议至少 30 秒；
 - 一次会话只启动一个 bridge server，避免相同工具重复注册。
 
-## Skill
+## 安装 Skill
 
-Agent Skills 不是 MCP 协议的一部分。如果客户端支持 Agent Skills，把完整
-`plugins/cmo-agent-bridge/skills/operate-cmo` 目录安装到它的 skill 搜索路径；不支持时，可把
-`SKILL.md` 及其引用文档作为系统/项目指令导入，但不要声称客户端已原生安装 skill。
+注册 MCP 只会提供 `cmo_*` 工具，不会告诉 Agent 如何评估态势、组织任务或校验操作。Agent Skills
+不是 MCP 协议的一部分，因此必须另外安装完整的 `operate-cmo` Skill。
+
+下载并解压独立 Skill 包：
+
+```powershell
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.1.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.1"
+Invoke-WebRequest `
+  -UseBasicParsing `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/operate-cmo-skill-0.1.1.zip" `
+  -OutFile $skillZip
+Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
+```
+
+把解压后的整个 `$skillRoot\operate-cmo\` 目录安装到客户端的 Skill 搜索路径；它已包含
+`SKILL.md`、`agents/` 和 `references/`。如果客户端不支持 Agent Skills，可把这些说明作为
+系统/项目指令导入，但不要声称客户端已经原生安装 Skill。

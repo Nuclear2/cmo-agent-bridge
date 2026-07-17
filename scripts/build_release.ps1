@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '0.1.0',
+    [string]$Version,
 
     [Parameter()]
     [string]$OutputDirectory,
@@ -95,7 +95,10 @@ if (-not $projectVersionMatch.Success) {
     throw 'Could not read [project].version from pyproject.toml.'
 }
 $projectVersion = $projectVersionMatch.Groups['version'].Value
-if ($projectVersion -ne $Version) {
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = $projectVersion
+}
+elseif ($projectVersion -ne $Version) {
     throw "Requested version '$Version' does not match pyproject.toml version '$projectVersion'."
 }
 
@@ -121,6 +124,22 @@ $pluginSource = Join-Path $RepoRoot 'plugins\cmo-agent-bridge'
 $skillSource = Join-Path $pluginSource 'skills\operate-cmo'
 if (-not (Test-Path -LiteralPath (Join-Path $skillSource 'SKILL.md'))) {
     throw "Missing operate-cmo skill at '$skillSource'."
+}
+$desktopInstallerSource = Join-Path $RepoRoot 'scripts\install-codex-desktop.ps1'
+if (-not (Test-Path -LiteralPath $desktopInstallerSource -PathType Leaf)) {
+    throw "Missing Codex Desktop installer at '$desktopInstallerSource'."
+}
+$desktopInstallerText = Get-Content -Raw -LiteralPath $desktopInstallerSource
+$desktopInstallerVersionMatch = [regex]::Match(
+    $desktopInstallerText,
+    '(?m)^\s*\[string\]\$Version\s*=\s*''(?<version>[^'']+)'''
+)
+if (-not $desktopInstallerVersionMatch.Success) {
+    throw "Could not read the default version from '$desktopInstallerSource'."
+}
+$desktopInstallerVersion = $desktopInstallerVersionMatch.Groups['version'].Value
+if ($desktopInstallerVersion -ne $Version) {
+    throw "Codex Desktop installer version '$desktopInstallerVersion' does not match '$Version'."
 }
 
 if (Test-Path -LiteralPath $OutputDirectory) {
@@ -151,6 +170,7 @@ try {
 
     Copy-Item -LiteralPath $wheel[0].FullName -Destination $OutputDirectory
     Copy-Item -LiteralPath $sdist[0].FullName -Destination $OutputDirectory
+    Copy-Item -LiteralPath $desktopInstallerSource -Destination $OutputDirectory
 
     New-Item -ItemType Directory -Force -Path (Join-Path $marketplaceBundle '.agents\plugins') | Out-Null
     New-Item -ItemType Directory -Force -Path (Join-Path $marketplaceBundle '.claude-plugin') | Out-Null
@@ -194,8 +214,8 @@ $releaseFiles = @(
         Where-Object Name -ne 'SHA256SUMS' |
         Sort-Object Name
 )
-if ($releaseFiles.Count -ne 4) {
-    throw "Expected four release artifacts before checksums; found $($releaseFiles.Count)."
+if ($releaseFiles.Count -ne 5) {
+    throw "Expected five release artifacts before checksums; found $($releaseFiles.Count)."
 }
 
 $checksumLines = foreach ($file in $releaseFiles) {

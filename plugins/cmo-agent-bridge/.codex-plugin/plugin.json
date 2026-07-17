@@ -1,6 +1,6 @@
 {
   "name": "cmo-agent-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
   "author": {
     "name": "Nuclear2",
@@ -17,7 +17,7 @@
     "wargame"
   ],
   "skills": "./skills/",
-  "mcpServers": "./.mcp.json",
+  "mcpServers": "./.codex-mcp.json",
   "interface": {
     "displayName": "CMO Agent Bridge",
     "shortDescription": "Command live operations or author CMO scenarios.",

@@ -97,7 +97,7 @@ wheels = [
 
 [[package]]
 name = "cmo-agent-bridge"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },

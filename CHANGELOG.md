@@ -2,6 +2,26 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.1.1] - 2026-07-17 (Preview)
+
+本次预览版集中完善跨框架发行与安装体验，不改变 CMO bridge 的工具协议。
+
+### Added
+
+- 提供面向 Codex Desktop 的本地安装脚本，并将其作为独立 GitHub Release 资产发布。
+
+### Fixed
+
+- 为 Codex 和 Claude Code 分别提供符合各自格式的 MCP 配置；Codex 使用直接 server map，
+  Claude Code 继续使用带 `mcpServers` 的配置。
+- 修正 Codex marketplace 的说明，不再暗示尚未注册的自建 marketplace 会自动出现在插件目录中。
+
+### Changed
+
+- 明确 Codex/Claude plugin 同时包含 MCP 启动配置和完整 `operate-cmo` skill；仅安装 wheel 或注册
+  MCP 的其他框架仍需单独安装 skill。
+- 重写快速开始与安装说明，并在 README 开头醒目标明当前仅支持 Windows。
+
 ## [0.1.0] - 2026-07-17 (Preview)
 
 首个公开预览版，以 GitHub Pre-release 发布。该版本用于早期实机验证和兼容性反馈，不承诺稳定版
@@ -32,4 +52,5 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.1.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.0

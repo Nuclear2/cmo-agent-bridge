@@ -1,0 +1,13 @@
+{
+  "cmo-agent-bridge": {
+    "command": "uvx",
+    "args": [
+      "--python",
+      "3.12",
+      "--from",
+      "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl",
+      "cmo-bridge",
+      "serve"
+    ]
+  }
+}

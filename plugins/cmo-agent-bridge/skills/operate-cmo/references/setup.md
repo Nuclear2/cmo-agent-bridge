@@ -2,7 +2,7 @@
 
 Use this reference only for initial setup, repair, or direct CLI smoke tests.
 
-`v0.1.0` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.1.1` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Prerequisites
@@ -12,17 +12,18 @@ compatibility with an unverified CMO build.
 - A scenario that can save an enabled, repeatable event.
 - Either a persistent `cmo-bridge` tool installation or the pinned `uvx` commands below.
 
-The MCP client must install and enable the `cmo-agent-bridge` plugin, or register the stdio server
-manually. Start a new Agent task after installation so the 68 MCP tools are registered. Deploying
-the Lua runtime or copying the skill does not add MCP tools to an already-open task.
+The MCP client must install and enable the `cmo-agent-bridge` plugin, or register both the stdio
+server and the complete `operate-cmo` Skill manually. MCP does not distribute Skills. Start a new
+Agent task after installation so the 68 MCP tools are registered.
 
-The plugin zip does not contain the bridge wheel. Its `.mcp.json` starts the pinned GitHub Release
-wheel through `uvx`; CLI setup may use the same pinned URL or a persistent `uv tool install`.
+The Codex and Claude plugins include the MCP configuration and complete Skill, but not the bridge
+wheel. Their MCP configurations start the pinned GitHub Release wheel through `uvx`; other clients
+must register the server and install the complete Skill separately.
 
 ## Install the CLI persistently
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -41,7 +42,7 @@ cmo-bridge prepare `
 Without a persistent tool installation:
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"
 ```
@@ -80,7 +81,7 @@ cmo-bridge invoke unit.list `
 If the CLI is not installed persistently, use the exact pinned runner:
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.0/cmo_agent_bridge-0.1.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.1/cmo_agent_bridge-0.1.1-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge invoke unit.list `
   --args '{"side_name":"PLAAF","page_size":3}'
 ```
