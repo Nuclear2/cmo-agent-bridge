@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.1.3` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.1.4` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.3/cmo_agent_bridge-0.1.3-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.4/cmo_agent_bridge-0.1.4-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```

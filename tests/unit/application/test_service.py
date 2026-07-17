@@ -1314,6 +1314,7 @@ def _scenario_result() -> ScenarioResult:
         database="DB3000",
         save_version="1",
         started=True,
+        player_side_guid="SIDE-BLUE",
         time_compression=1.0,
         campaign_score=10,
     )

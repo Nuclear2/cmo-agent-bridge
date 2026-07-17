@@ -91,6 +91,10 @@ the user explicitly requests script-based scenario logic, apply the code-executi
 7. Confirm the intended player side and whether neutral or civilian sides require special
    awareness or auto-tracking behavior.
 
+`cmo_scenario_get.player_side_guid` identifies the side currently selected for play in CMO. It is
+useful for player-perspective testing, but does not by itself prove which sides the author intends
+to make playable.
+
 Do not use side-option or posture writes to alter a live-player problem. A one-way posture result
 does not prove the reverse relationship changed.
 

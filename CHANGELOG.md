@@ -2,6 +2,28 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.1.4] - 2026-07-17 (Preview)
+
+这一版补齐当前玩家阵营识别，并明确暂停期间请求等待、恢复轮询后继续执行的工作流。
+
+### Added
+
+- `cmo_scenario_get` 新增必填但可为空的 `player_side_guid`，直接投影官方
+  `VP_GetScenario().PlayerSide`；Lua 往返、MCP 输出 schema 和严格响应模型同步覆盖。
+
+### Changed
+
+- `operate-cmo` 在每个新想定的首次 `LIVE_PLAYER` 周期中，必须将 `player_side_guid` 与完整
+  `cmo_side_list` 匹配并报告指挥方名称与 GUID；无法唯一匹配时禁止猜测阵营或执行写操作。
+- 文档明确暂停期间已排队的请求会在有界等待窗口内继续等待，轮询恢复后正常完成；Skill
+  同时说明应保持 1x 直到工具返回，或按需重复 `Alt+1` 的 15 秒单步。
+- 项目版本升级到 `0.1.4`。
+
+### Fixed
+
+- 状态握手超时现在明确列出“想定暂停”和“轮询事件未激活或未加载”两类可能原因及恢复步骤，
+  不再把其中任一原因当作已确认事实。
+
 ## [0.1.3] - 2026-07-17 (Preview)
 
 这一版把插件市场的默认安装入口切换到 `stable` 发布通道，并为 Codex 插件和 `operate-cmo` Skill 加上 CMO 图标。
@@ -90,6 +112,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.1.4]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.1

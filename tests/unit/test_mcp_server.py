@@ -140,6 +140,7 @@ def _scenario_result() -> dict[str, JsonValue]:
         "database": "DB3K_517.db3",
         "save_version": "Command: Modern Operations Build 1868",
         "started": True,
+        "player_side_guid": "SIDE-BLUE",
         "time_compression": 1.0,
         "campaign_score": 0,
     }
@@ -915,6 +916,14 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     assert "3=15x" in compression_description
     assert "preserve cmo_scenario_get's multiplier" in compression_description
     assert "1/2/5/15/30/150" in compression_description
+
+    scenario_tool = tools_by_name["cmo_scenario_get"]
+    assert scenario_tool.description is not None
+    assert "current player-side GUID" in scenario_tool.description
+    scenario_schema = cast(dict[str, JsonValue], scenario_tool.outputSchema)
+    scenario_properties = cast(dict[str, JsonValue], scenario_schema["properties"])
+    assert "player_side_guid" in scenario_properties
+    assert "player_side_guid" in cast(list[JsonValue], scenario_schema["required"])
 
 
 @pytest.mark.asyncio

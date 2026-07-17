@@ -52,7 +52,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 |---|---|---|
 | `cmo_bridge_diagnose` | none | Inspect saved game root and release-runtime readiness without contacting CMO |
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage |
-| `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, actual compression multiplier, and projected score state |
+| `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, actual compression multiplier, and projected score state |
 | `cmo_scenario_time_compression_set` | code `0..5` | Set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; result echoes the requested code and actual multiplier |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
@@ -193,7 +193,7 @@ are now callable.
 | Generated-flight waypoint insert/update/delete and timing refresh | `EXPERIMENTAL` | Current tools create and inspect flight plans; do not claim route mutation |
 | Exclusion, no-nav, standard, and custom-environment zone objects | `EXPERIMENTAL` | Mission areas made from reference points are current; independent zone objects are not |
 | Remaining scenario metadata such as briefing, database selection, complexity/difficulty, and every environment field | `MANUAL LUA` or editor | Current authoring tools cover title, timeline, and the four global weather values only |
-| Deterministic pause/start/single-step simulation control | `UNSUPPORTED` | Time compression is not deterministic stepping |
+| Agent-driven deterministic pause/start/single-step simulation control | `UNSUPPORTED` | Retail Lua time compression cannot pause; the user can press `Alt+1` while paused for CMO's built-in 15-second time step |
 
 Current complex-planning tools are deliberately narrower than complete GUI parity:
 

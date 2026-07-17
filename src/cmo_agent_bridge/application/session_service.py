@@ -397,7 +397,7 @@ class SessionService:
             ),
             accept_lineage_id=accept_lineage_id,
         )
-        artifact = await channel.exchange(command)
+        artifact = await self._exchange_status(channel, command)
         try:
             status = self._extract_status(command, artifact)
         except BridgeError as error:
@@ -422,7 +422,7 @@ class SessionService:
                     expected_activation_id=None,
                     accept_lineage_id=None,
                 )
-                bootstrap_artifact = await channel.exchange(bootstrap_command)
+                bootstrap_artifact = await self._exchange_status(channel, bootstrap_command)
                 try:
                     bootstrap_status = self._extract_status(
                         bootstrap_command,
@@ -486,7 +486,7 @@ class SessionService:
                 expected_activation_id=artifact.accepted_response.envelope.activation_id,
                 accept_lineage_id=observed,
             )
-            second_artifact = await channel.exchange(second_command)
+            second_artifact = await self._exchange_status(channel, second_command)
             try:
                 second_status = self._extract_status(second_command, second_artifact)
             except BridgeError as second_error:
@@ -521,6 +521,39 @@ class SessionService:
             status=status,
             response_artifact=artifact,
         )
+
+    async def _exchange_status(
+        self,
+        channel: BridgeChannel,
+        command: ExchangeCommand,
+    ) -> ResponseArtifact:
+        try:
+            return await channel.exchange(command)
+        except BridgeError as error:
+            if error.code is not ErrorCode.REQUEST_TIMEOUT:
+                raise
+            details = dict(error.details)
+            details.update(
+                {
+                    "phase": "bridge_status_handshake",
+                    "likely_causes": [
+                        "scenario_paused",
+                        "polling_event_inactive_or_unloaded",
+                    ],
+                    "next_steps": [
+                        "If CMO is paused, resume at 1x until the tool returns or repeat Alt+1 time steps as needed.",
+                        "If time is already advancing, repair the enabled repeatable Regular Time polling event.",
+                    ],
+                }
+            )
+            raise BridgeError(
+                ErrorCode.REQUEST_TIMEOUT,
+                (
+                    "CMO did not service the bridge status request; scenario time may be paused "
+                    "or the polling event may be inactive"
+                ),
+                details,
+            ) from error
 
     @staticmethod
     def _scenario_changed_error(error: BridgeError, observed: UUID) -> BridgeError:

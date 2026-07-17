@@ -104,6 +104,7 @@ def _scenario_result() -> dict[str, JsonValue]:
         "database": "DB3K_517.db3",
         "save_version": "Command: Modern Operations Build 1868",
         "started": False,
+        "player_side_guid": "SIDE-BLUE",
         "time_compression": 0.0,
         "campaign_score": 0,
     }

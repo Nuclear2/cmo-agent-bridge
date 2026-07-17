@@ -1277,6 +1277,7 @@ class ScenarioResult(StrictModel):
     database: str
     save_version: str
     started: bool
+    player_side_guid: NonEmptyStr | None
     time_compression: float
     campaign_score: int
 

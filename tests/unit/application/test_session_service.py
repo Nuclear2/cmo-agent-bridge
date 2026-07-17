@@ -485,6 +485,60 @@ async def test_bootstrap_handshake_builds_null_context_and_persists_exact_sessio
 
 
 @pytest.mark.asyncio
+async def test_status_timeout_reports_paused_or_inactive_polling_recovery(
+    running_snapshot: RuntimeSnapshot,
+    session_store: SessionStore,
+) -> None:
+    command_exe = Path(r"D:\Games\CMO\Command.exe")
+    process = ProcessInfo(pid=1200, create_time=1000.5, executable=command_exe)
+
+    def timeout(command: ExchangeCommand) -> ResponseArtifact:
+        raise BridgeError(
+            ErrorCode.REQUEST_TIMEOUT,
+            "timed out waiting for a correlated CMO response",
+            {
+                "request_id": str(command.request_id),
+                "timeout_seconds": command.timeout,
+            },
+        )
+
+    channel = _Channel(process, timeout)
+    service = SessionService(
+        scope=_scope(command_exe),
+        session_store=session_store,
+        registry=OPERATION_REGISTRY,
+        runtime_snapshot=running_snapshot,
+        wall_clock=_WallClock(),
+        uuid4_source=_UuidSequence(CANDIDATE_1, REQUEST_1),
+        status_timeout_seconds=5,
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await service.handshake(channel)
+
+    assert caught.value.code is ErrorCode.REQUEST_TIMEOUT
+    assert caught.value.message == (
+        "CMO did not service the bridge status request; scenario time may be paused "
+        "or the polling event may be inactive"
+    )
+    assert caught.value.details == {
+        "request_id": str(REQUEST_1),
+        "timeout_seconds": 5.0,
+        "phase": "bridge_status_handshake",
+        "likely_causes": [
+            "scenario_paused",
+            "polling_event_inactive_or_unloaded",
+        ],
+        "next_steps": [
+            "If CMO is paused, resume at 1x until the tool returns or repeat Alt+1 time steps as needed.",
+            "If time is already advancing, repair the enabled repeatable Regular Time polling event.",
+        ],
+    }
+    assert len(channel.commands) == 1
+    assert session_store.load(ROOT_KEY) is None
+
+
+@pytest.mark.asyncio
 async def test_bootstrap_conditional_insert_cas_loss_preserves_winner(
     running_snapshot: RuntimeSnapshot,
     session_store: SessionStore,

@@ -274,7 +274,10 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         scenario_get,
         name="cmo_scenario_get",
         title="Get CMO scenario",
-        description="Return metadata and time state for the currently loaded CMO scenario.",
+        description=(
+            "Return metadata, time state, and the current player-side GUID for the loaded CMO "
+            "scenario. Resolve that GUID through cmo_side_list before live-player operations."
+        ),
         annotations=_read_only_annotations(),
         structured_output=True,
     )

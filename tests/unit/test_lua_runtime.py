@@ -52,7 +52,7 @@ def _lua_table(lua: LuaRuntime, value: dict[str, object]) -> Any:
     return lua.table_from(value)
 
 
-def _scenario(lua: LuaRuntime) -> Any:
+def _scenario(lua: LuaRuntime, *, player_side: object = "SIDE-BLUE") -> Any:
     return _lua_table(
         lua,
         {
@@ -70,6 +70,7 @@ def _scenario(lua: LuaRuntime) -> Any:
             "DBUsed": "DB3000",
             "SaveVersion": "1",
             "HasStarted": True,
+            "PlayerSide": player_side,
             "TimeCompression": 1,
             "CampaignScore": 5,
         },
@@ -651,6 +652,7 @@ def _run_lua(
     operation: str,
     public_arguments: dict[str, object],
     *,
+    player_side: object = "SIDE-BLUE",
     wire_argument_overrides: dict[str, object] | None = None,
     expect_ok: bool = True,
     repeat_dispatches: int = 1,
@@ -691,7 +693,7 @@ def _run_lua(
 
     lua = LuaRuntime(unpack_returned_tuples=True)
     globals_ = cast(Any, lua.globals())
-    scenario = _scenario(lua)
+    scenario = _scenario(lua, player_side=player_side)
     fixture = _cmo_fixture(lua)
     captured: dict[str, object] = {
         "score_sides": [],
@@ -2265,6 +2267,15 @@ def test_lua_scenario_get_round_trip_maps_scenario_wrapper() -> None:
     assert result["start_time_seconds"] == 1_768_471_200.0
     assert result["duration_seconds"] == 7_200.0
     assert result["setting"] == "Test"
+    assert result["player_side_guid"] == "SIDE-BLUE"
+
+
+@pytest.mark.parametrize("player_side", [None, ""])
+def test_lua_scenario_get_missing_player_side_maps_null(player_side: object) -> None:
+    run = _run_lua("scenario.get", {}, player_side=player_side)
+    result = cast(dict[str, JsonValue], run.result)
+
+    assert result["player_side_guid"] is None
 
 
 @pytest.mark.parametrize(

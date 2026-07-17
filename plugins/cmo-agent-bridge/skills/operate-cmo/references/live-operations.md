@@ -85,16 +85,20 @@ without a Special Action while CMO runs at 1x.
 
 Read only what can affect the next decision:
 
-1. Use `cmo_scenario_get` for scenario time, duration, database, and current high-level state.
-2. Resolve the commanded side and relevant relationships with `cmo_side_list` and
-   `cmo_side_posture_get`.
-3. Read friendly missions, reference points, and assigned units.
-4. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
+1. Use `cmo_scenario_get` for scenario time, duration, database, current high-level state, and
+   `player_side_guid`.
+2. Page through `cmo_side_list`, match `player_side_guid` while ignoring only case and surrounding
+   braces, and report the matched side's exact name and returned GUID. If it is null or cannot be
+   matched uniquely, stop live mutations instead of inferring a side.
+3. Read relevant directed relationships from the commanded side to each other side with
+   `cmo_side_posture_get`; never substitute the reverse relationship.
+4. Read friendly missions, reference points, and assigned units.
+5. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
    that might be committed.
-5. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
-6. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
+6. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
+7. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
    engagement or exposure is possible.
-7. Record the decision horizon, information gaps, latest useful decision time, and conservative
+8. Record the decision horizon, information gaps, latest useful decision time, and conservative
    default if an uncertainty remains unresolved.
 
 Follow paging to completion when comparing the entire force, contact set, mission set, or reference
@@ -323,9 +327,12 @@ authority, expected gain, and a recovery path.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
-- `BRIDGE_UNRESPONSIVE` or `REQUEST_TIMEOUT`: verify the repeatable polling event and advancing
-  scenario time. If CMO is manually paused, resume it at 1x; the next simulated second will service
-  a pending request.
+- `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: the bridge cannot distinguish a
+  paused scenario from an inactive or unloaded polling event. If paused, resume at 1x until the
+  tool returns, or repeat `Alt+1` 15-second time steps as needed. If time is already advancing,
+  repair the repeatable Regular Time polling event. While the call is waiting, a pending request
+  will be serviced automatically when polling resumes; after the bounded attempts are exhausted,
+  follow recovery state rather than assuming that the delayed mutation will still run.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Timeout after a non-idempotent mutation: search for the created object or resulting state before

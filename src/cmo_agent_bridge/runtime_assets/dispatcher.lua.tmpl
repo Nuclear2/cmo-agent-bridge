@@ -351,6 +351,17 @@ local function text_or(value, fallback)
     return tostring(value)
 end
 
+local function nullable_text(value)
+    if value == nil or value == Json.null then
+        return Json.null
+    end
+    local converted = tostring(value)
+    if converted == "" then
+        return Json.null
+    end
+    return converted
+end
+
 local function number_or(value, fallback)
     if value == nil or value == Json.null then
         return fallback
@@ -529,6 +540,12 @@ local function scenario_result(scenario, lineage_id)
             safe_get(scenario, { "HasStarted", "hasstarted", "started" }),
             false
         ),
+        player_side_guid = nullable_text(
+            safe_get(
+                scenario,
+                { "PlayerSide", "playerside", "playerSide", "player_side" }
+            )
+        ),
         time_compression = number_or(
             safe_get(scenario, { "TimeCompression", "timecompression", "time_compression" }),
             1
@@ -687,17 +704,6 @@ local function side_posture_get_result(arguments)
         side_b_guid = side_b_guid,
         posture = text_or(posture, ""),
     })
-end
-
-local function nullable_text(value)
-    if value == nil or value == Json.null then
-        return Json.null
-    end
-    local converted = tostring(value)
-    if converted == "" then
-        return Json.null
-    end
-    return converted
 end
 
 local function nullable_number(value)

@@ -674,6 +674,7 @@ class FakeFileBridgePeer:
                     "database": "DB3000",
                     "save_version": "1",
                     "started": True,
+                    "player_side_guid": "SIDE-1",
                     "time_compression": 1.0,
                     "campaign_score": 42,
                 },

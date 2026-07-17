@@ -4,7 +4,7 @@ Use this reference when the plugin or Skill is installed but the MCP tools are a
 `cmo_bridge_diagnose` reports incomplete setup, `cmo_bridge_status` times out, or the polling event
 must be mounted or repaired.
 
-`v0.1.3` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.1.4` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Identify the failed layer
@@ -71,7 +71,7 @@ permissions block the command.
 Get-Command uv, uvx
 uv --version
 
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.3/cmo_agent_bridge-0.1.3-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.4/cmo_agent_bridge-0.1.4-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge version
 ```
 
@@ -116,8 +116,12 @@ Normal player mode can use an event saved by the scenario author, but it cannot 
 event on demand through an MCP server that has no CMO connection. No Special Action is required.
 
 Regular Time triggers run only while scenario time advances. Use 1x while diagnosing or performing
-complex Agent work. If CMO is paused, resume at 1x; the next simulated second should service the
-pending request.
+complex Agent work. If CMO is paused and the user wants to minimize time movement, tell them before
+the call to press `Alt+1` after the request is queued and repeat the 15-second step if CMO pauses
+again before the tool returns. The reliable path is to resume at 1x until the tool returns. A status
+or read delivery may make one bounded retry, so the default 30-second per-attempt timeout can mean
+about 60 seconds of total waiting. Resume while the call is still waiting when delayed execution is
+intentional.
 
 ## Verify both layers
 
@@ -130,9 +134,10 @@ For a direct CLI smoke test, keep CMO and the event running:
 uvx --python 3.12 --from $wheel cmo-bridge invoke bridge.status --args '{}'
 ```
 
-If this times out, check that CMO is running, the intended saved scenario is loaded, the event is
-Active and Repeatable, the trigger and action are linked, and scenario time is advancing. Do not
-blindly retry a mutation while the outcome is uncertain.
+If this times out, inspect the structured `phase`, `likely_causes`, and `next_steps`. Check that CMO
+is running, the intended saved scenario is loaded, the event is Active and Repeatable, the trigger
+and action are linked, and scenario time is advancing. Do not blindly retry a mutation while the
+outcome is uncertain.
 
 ## Optional persistent CLI
 

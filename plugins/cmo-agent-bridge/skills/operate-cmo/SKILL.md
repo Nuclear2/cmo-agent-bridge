@@ -61,6 +61,23 @@ Do not mix modes inside one decision cycle:
 - Do not interpret this skill mode as a CMO UI mode. It controls agent authority and information
   use, not whether a Lua function technically runs in editor or normal play.
 
+## Resolve the commanded side
+
+At the first `LIVE_PLAYER` cycle in a task, and again after any scenario-lineage change:
+
+1. Call `cmo_scenario_get` and require a non-null `player_side_guid`.
+2. Page through `cmo_side_list` and match that GUID, ignoring only letter case and surrounding
+   braces. Use the matched side object's returned GUID for later calls.
+3. State the commanded side's exact name and GUID before side-scoped reads or writes.
+4. Read directed posture from the commanded side to each relevant other side with
+   `cmo_side_posture_get`; interpret `F/H/N/U` only in that direction.
+
+If the GUID is absent, unmatched, or ambiguous, stop `LIVE_PLAYER` mutations and ask the user to
+confirm the CMO player side. Never infer it from side names, force composition, aircraft types,
+mission ownership, posture symmetry, or prior conversation. In `SCENARIO_AUTHOR`, the field records
+the current CMO player viewpoint; it does not prove which sides the scenario design intends to be
+playable.
+
 ## Load only the references needed
 
 - For any live order, mission, contact decision, engagement, logistics action, or battle rhythm,
@@ -157,8 +174,15 @@ where high time compression could invalidate the plan:
    1x. If any request fails or the result is uncertain, remain at 1x and report the blocker.
 
 Do not cycle compression around isolated reads or trivial bounded orders when delay cannot affect
-the outcome. If the user has manually paused CMO, have them resume it, select 1x, and then continue;
-the normal bridge does not need a Special Action polling path.
+the outcome. A fully paused retail CMO instance does not schedule the Regular Time Lua action. If
+the user wants to minimize time movement, tell them before the call to press `Alt+1` after the
+request is queued and repeat the 15-second time step if CMO pauses again before the tool returns.
+The reliable path is to resume at 1x until the tool returns. A queued request remains pending while
+the call waits and completes normally when polling resumes. Status/read delivery may make one
+bounded retry, so the default 30-second per-attempt timeout can produce about 60 seconds of total
+waiting. If the wait is exhausted, the bridge withdraws or quarantines the request to prevent an
+unexpected late mutation; never retry it blindly. An exhausted wait can also mean an inactive
+polling event, so do not claim which cause applies without user or UI confirmation.
 
 ## Preserve these universal invariants
 
