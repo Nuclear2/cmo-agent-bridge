@@ -146,3 +146,22 @@ jobs:
               --title "CMO Agent Bridge $tag"
             if ($LASTEXITCODE -ne 0) { throw 'Failed to create the prerelease.' }
           }
+
+      - name: Advance stable marketplace branch
+        shell: pwsh
+        run: |
+          git push origin "HEAD:refs/heads/stable"
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Advanced stable to $((git rev-parse HEAD).Trim())."
+            exit 0
+          }
+
+          Write-Warning 'Stable push raced with another release; verifying the winner.'
+          git fetch origin stable
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to fetch stable after push failure.' }
+          git merge-base --is-ancestor HEAD FETCH_HEAD
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'stable already contains this release commit.'
+            exit 0
+          }
+          throw 'stable did not advance and does not contain this release commit.'

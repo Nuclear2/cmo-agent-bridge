@@ -1,6 +1,8 @@
 interface:
   display_name: "Operate CMO"
   short_description: "Command operations or author CMO scenarios"
+  icon_small: "./assets/command.png"
+  icon_large: "./assets/command.png"
   default_prompt: "Use $operate-cmo to diagnose and prepare bridge readiness first, recover host setup if the MCP tools are absent, then select LIVE_PLAYER or SCENARIO_AUTHOR mode and command or author the scenario within the correct information boundary."
 
 dependencies:

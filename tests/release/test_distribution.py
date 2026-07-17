@@ -105,6 +105,23 @@ def test_framework_manifests_launch_one_pinned_release_server() -> None:
     assert not list(PLUGIN_ROOT.rglob("*.whl"))
 
 
+def test_codex_plugin_and_skill_include_command_icons() -> None:
+    codex = _load_json(PLUGIN_ROOT / ".codex-plugin" / "plugin.json")
+    interface = cast(dict[str, Any], codex["interface"])
+    plugin_icon = PLUGIN_ROOT / "assets" / "command.png"
+    skill_root = PLUGIN_ROOT / "skills" / "operate-cmo"
+    skill_icon = skill_root / "assets" / "command.png"
+    skill_metadata = (skill_root / "agents" / "openai.yaml").read_text(encoding="utf-8")
+
+    assert interface["composerIcon"] == "./assets/command.png"
+    assert interface["logo"] == "./assets/command.png"
+    assert 'icon_small: "./assets/command.png"' in skill_metadata
+    assert 'icon_large: "./assets/command.png"' in skill_metadata
+    for icon in (plugin_icon, skill_icon):
+        assert icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+        assert (icon.with_suffix(".NOTICE.txt")).is_file()
+
+
 def test_packaged_skills_have_valid_minimal_frontmatter() -> None:
     skill_directories = sorted(path for path in (PLUGIN_ROOT / "skills").iterdir() if path.is_dir())
     assert skill_directories

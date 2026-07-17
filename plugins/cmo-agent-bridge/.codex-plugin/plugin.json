@@ -1,6 +1,6 @@
 {
   "name": "cmo-agent-bridge",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
   "author": {
     "name": "Nuclear2",
@@ -25,6 +25,8 @@
     "developerName": "Nuclear2",
     "category": "Productivity",
     "websiteURL": "https://github.com/Nuclear2/cmo-agent-bridge",
+    "composerIcon": "./assets/command.png",
+    "logo": "./assets/command.png",
     "capabilities": [
       "Read",
       "Write",

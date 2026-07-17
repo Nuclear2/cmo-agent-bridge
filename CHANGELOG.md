@@ -2,6 +2,20 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [0.1.3] - 2026-07-17 (Preview)
+
+这一版把插件市场的默认安装入口切换到 `stable` 发布通道，并为 Codex 插件和 `operate-cmo` Skill 加上 CMO 图标。
+
+### Added
+
+- Codex 插件与 `operate-cmo` Skill 现在使用游戏安装目录中的 CMO 图标；发布包内同时附带来源与权利说明。
+
+### Changed
+
+- Codex 和 Claude Code 的 marketplace 安装命令改为跟踪 `stable`，无需在每次升级时重新注册新的版本标签。
+- Release 工作流只在 wheel、插件包和校验文件全部发布成功后推进 `stable` 分支；既有版本标签仍保持不可变。
+- 项目版本升级到 `0.1.3`。
+
 ## [0.1.2] - 2026-07-17 (Preview)
 
 本次预览版补齐 MCP 首次启动与版本升级后的自恢复流程；即使 CMO 侧 runtime 尚未部署，Agent
@@ -76,6 +90,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.1.3]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.3
 [0.1.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.2
 [0.1.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.1
 [0.1.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.0

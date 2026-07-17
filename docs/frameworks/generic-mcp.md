@@ -41,7 +41,7 @@ cmo-bridge serve
         "--python",
         "3.12",
         "--from",
-        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.2/cmo_agent_bridge-0.1.2-py3-none-any.whl",
+        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.3/cmo_agent_bridge-0.1.3-py3-none-any.whl",
         "cmo-bridge",
         "serve"
       ]
@@ -70,11 +70,11 @@ cmo-bridge serve
 下载并解压独立 Skill 包：
 
 ```powershell
-$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.2.zip"
-$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.2"
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.1.3.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.1.3"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.2/operate-cmo-skill-0.1.2.zip" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.1.3/operate-cmo-skill-0.1.3.zip" `
   -OutFile $skillZip
 Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 ```

@@ -1,0 +1,7 @@
+Command: Modern Operations icon
+
+command.png was converted from Command.ico distributed with Command: Modern Operations.
+All copyright and trademark rights in the game and icon remain with their respective owners.
+The icon is used only to identify compatibility and is not covered by this project's MIT license.
+CMO Agent Bridge is an unofficial community project and is not affiliated with the game's
+developers or publishers.
