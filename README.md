@@ -4,8 +4,11 @@
 **Command: Modern Operations（CMO）**想定。
 
 [![CI](https://github.com/Nuclear2/cmo-agent-bridge/actions/workflows/ci.yml/badge.svg)](https://github.com/Nuclear2/cmo-agent-bridge/actions/workflows/ci.yml)
+[![Platform](https://img.shields.io/badge/platform-Windows-0078D6.svg)](docs/installation.md)
 [![Release](https://img.shields.io/github/v/release/Nuclear2/cmo-agent-bridge?include_prereleases&label=release)](https://github.com/Nuclear2/cmo-agent-bridge/releases)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+> **平台支持：仅限 Windows。**
 
 [下载 v0.1.0](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.0) ·
 [快速上手](docs/quickstart.md) ·
