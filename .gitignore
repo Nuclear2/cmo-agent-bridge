@@ -1,0 +1,15 @@
+.worktrees/
+.superpowers/
+.pytest-race-*/
+.tmp/
+.venv/
+build/
+dist/
+artifacts/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+__pycache__/

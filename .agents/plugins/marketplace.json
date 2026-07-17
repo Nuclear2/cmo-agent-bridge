@@ -1,0 +1,20 @@
+{
+  "name": "cmo-tools",
+  "interface": {
+    "displayName": "CMO Tools"
+  },
+  "plugins": [
+    {
+      "name": "cmo-agent-bridge",
+      "source": {
+        "source": "local",
+        "path": "./plugins/cmo-agent-bridge"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

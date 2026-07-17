@@ -1,0 +1,44 @@
+# Agent 框架配置
+
+CMO Agent Bridge 的执行层是标准本地 `stdio` MCP server。不同框架的主要差异只在配置文件结构、
+命令行入口以及 skill/plugin 的发现目录。
+
+| 框架 | MCP 注册 | operate-cmo skill | Marketplace plugin |
+|---|---|---|---|
+| Codex | `codex mcp add` 或 `~/.codex/config.toml` | plugin 自动携带；也可放入 `.agents/skills` | Desktop / CLI 支持；IDE 不支持 plugin |
+| Claude Code | `claude mcp add` 或 `.mcp.json` | plugin 自动携带；也可放入 `.claude/skills` | 支持 |
+| OpenCode | `opencode.json` | 全局 `~/.config/opencode/skills`；项目 `.opencode/skills` | 本项目不依赖 |
+| Cursor | `~/.cursor/mcp.json` 或项目 `.cursor/mcp.json` | `.cursor/skills` 或 `.agents/skills` | MCP/skill 手工配置 |
+| Qoder | `qodercli mcp add` 或 `.mcp.json` | `.qoder/skills` | MCP/skill 手工配置 |
+| 其他客户端 | 客户端的 stdio MCP 配置 | 取决于是否实现 Agent Skills | 不要求 |
+
+## 推荐组合
+
+1. 用 `uv tool install` 安装 Release wheel，并运行一次 `cmo-bridge prepare`；
+2. 在想定中保存 1 秒轮询事件；
+3. 用框架原生方式注册 `cmo-bridge serve`；
+4. 安装完整 `operate-cmo` skill；
+5. 重启框架并新建会话，调用 `cmo_bridge_status`。
+
+Codex 或 Claude Code 用户可以用 marketplace plugin 同时取得 MCP 配置与 skill。不要再手工注册同名
+server，否则同一会话可能加载两套相同的 68 tools。
+
+## PATH 与绝对路径
+
+先运行：
+
+```powershell
+(Get-Command cmo-bridge).Source
+```
+
+命令行示例可直接使用 `cmo-bridge`。如果桌面 Agent 无法从 PATH 找到它，把上面返回的完整
+`cmo-bridge.exe` 路径写进配置；JSON 中的 `\` 要写成 `\\`。更新 PATH 后应完全重启桌面应用。
+
+## 分页
+
+- [Codex](codex.md)
+- [Claude Code](claude-code.md)
+- [OpenCode](opencode.md)
+- [Cursor](cursor.md)
+- [Qoder](qoder.md)
+- [通用 MCP 客户端](generic-mcp.md)

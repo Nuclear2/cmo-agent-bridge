@@ -1,0 +1,39 @@
+{
+  "name": "cmo-agent-bridge",
+  "version": "0.1.0",
+  "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
+  "author": {
+    "name": "Nuclear2",
+    "url": "https://github.com/Nuclear2"
+  },
+  "homepage": "https://github.com/Nuclear2/cmo-agent-bridge#readme",
+  "repository": "https://github.com/Nuclear2/cmo-agent-bridge",
+  "license": "MIT",
+  "keywords": [
+    "cmo",
+    "command-modern-operations",
+    "lua",
+    "mcp",
+    "wargame"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "CMO Agent Bridge",
+    "shortDescription": "Command live operations or author CMO scenarios.",
+    "longDescription": "Connect Codex to a running Command: Modern Operations scenario through a local Lua and file bridge. In live-player mode, assess the player-visible battlespace, compare courses of action, build synchronized missions, task pools, packages, moving areas, flight plans, TOT and tanker plans, then assess execution. In scenario-author mode, build forces and missions, edit scenario settings, sides, events, special actions and scoring, and conduct controlled playtests without mixing author omniscience into fair play.",
+    "developerName": "Nuclear2",
+    "category": "Productivity",
+    "websiteURL": "https://github.com/Nuclear2/cmo-agent-bridge",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Local MCP"
+    ],
+    "defaultPrompt": [
+      "Assess the live CMO battlespace and recommend a plan.",
+      "Build and verify a synchronized CMO package with flight and tanker plans.",
+      "Help me author and playtest a CMO scenario with events and scoring."
+    ]
+  }
+}

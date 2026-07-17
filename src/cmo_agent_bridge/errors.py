@@ -1,0 +1,42 @@
+from enum import StrEnum
+from typing import Any
+
+
+class ErrorCode(StrEnum):
+    INVALID_ARGUMENT = "INVALID_ARGUMENT"
+    GAME_ROOT_INVALID = "GAME_ROOT_INVALID"
+    CMO_NOT_RUNNING = "CMO_NOT_RUNNING"
+    MULTIPLE_CMO_INSTANCES = "MULTIPLE_CMO_INSTANCES"
+    BRIDGE_NOT_PREPARED = "BRIDGE_NOT_PREPARED"
+    BRIDGE_NOT_INSTALLED = "BRIDGE_NOT_INSTALLED"
+    BRIDGE_UNRESPONSIVE = "BRIDGE_UNRESPONSIVE"
+    SCENARIO_NOT_ADVANCING = "SCENARIO_NOT_ADVANCING"
+    REQUEST_TIMEOUT = "REQUEST_TIMEOUT"
+    CMO_LUA_ERROR = "CMO_LUA_ERROR"
+    INDETERMINATE_OUTCOME = "INDETERMINATE_OUTCOME"
+    MUTATION_QUARANTINED = "MUTATION_QUARANTINED"
+    REQUEST_ID_REUSED = "REQUEST_ID_REUSED"
+    SCENARIO_CHANGED = "SCENARIO_CHANGED"
+    ACTIVATION_REQUIRED = "ACTIVATION_REQUIRED"
+    ACTIVATION_MISMATCH = "ACTIVATION_MISMATCH"
+    MANIFEST_MISMATCH = "MANIFEST_MISMATCH"
+    AMBIGUOUS_SELECTOR = "AMBIGUOUS_SELECTOR"
+    NOT_FOUND = "NOT_FOUND"
+    POLICY_DENIED = "POLICY_DENIED"
+    UNSUPPORTED_BUILD = "UNSUPPORTED_BUILD"
+    PAYLOAD_TOO_LARGE = "PAYLOAD_TOO_LARGE"
+    PROTOCOL_ERROR = "PROTOCOL_ERROR"
+    INSTALL_CONFLICT = "INSTALL_CONFLICT"
+    JOURNAL_CORRUPT = "JOURNAL_CORRUPT"
+    STATE_CONFLICT = "STATE_CONFLICT"
+
+
+class BridgeError(Exception):
+    def __init__(self, code: ErrorCode, message: str, details: dict[str, Any] | None = None):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.details = details or {}
+
+    def to_payload(self) -> dict[str, Any]:
+        return {"code": self.code.value, "message": self.message, "details": self.details}

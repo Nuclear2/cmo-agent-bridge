@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "cmo-agent-bridge",
+  "displayName": "CMO Agent Bridge",
+  "version": "0.1.0",
+  "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
+  "author": {
+    "name": "Nuclear2",
+    "url": "https://github.com/Nuclear2"
+  },
+  "homepage": "https://github.com/Nuclear2/cmo-agent-bridge#readme",
+  "repository": "https://github.com/Nuclear2/cmo-agent-bridge",
+  "license": "MIT",
+  "keywords": [
+    "cmo",
+    "command-modern-operations",
+    "lua",
+    "mcp",
+    "wargame"
+  ],
+  "mcpServers": "./.mcp.json"
+}

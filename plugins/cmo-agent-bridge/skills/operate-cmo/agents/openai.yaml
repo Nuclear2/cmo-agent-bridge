@@ -1,0 +1,11 @@
+interface:
+  display_name: "Operate CMO"
+  short_description: "Command operations or author CMO scenarios"
+  default_prompt: "Use $operate-cmo to select LIVE_PLAYER or SCENARIO_AUTHOR mode, then assess and command the operation or build and playtest the scenario while preserving the correct information boundary."
+
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "cmo-agent-bridge"
+      description: "Operate or author the loaded CMO scenario through the local stdio bridge"
+      transport: "stdio"

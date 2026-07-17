@@ -1,0 +1,1832 @@
+[
+  {
+    "name": "bridge.status",
+    "target": "cmo",
+    "base_class": "status",
+    "public_arguments_model": "BridgeStatusArgs",
+    "wire_arguments_model": "BridgeStatusWireArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "BridgeStatusResult",
+    "public_result_factory": "BridgeStatusResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": ["activation_candidate"],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "accept_lineage_id": {"type": "uuid", "nullable": true},
+        "activation_candidate": {"type": "uuid"}
+      },
+      "required": ["activation_candidate"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "bridge.reconcile",
+    "target": "cmo",
+    "base_class": "reconcile",
+    "public_arguments_model": "ReconcileArgs",
+    "wire_arguments_model": "ReconcileWireArgs",
+    "wire_resolver": "reconcile",
+    "effective_class_resolver": "reconcile",
+    "wire_result_factory": "reconcile",
+    "public_result_factory": "ReconciliationResult",
+    "result_factory_data": {"probe": "ReconcileProbeResult", "commit": "ReconcileCommitResult"},
+    "recovery_factory": "effective",
+    "confirmation_required": true,
+    "expose_mcp": false,
+    "trusted_fields": ["confirmation_proof"],
+    "invariant_ids": ["reconcile_disposition_pair", "trusted_confirmation"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "request_id": {"type": "uuid"},
+        "disposition": {"type": "string", "enum": ["applied", "not_applied"]},
+        "confirmation_proof": {"type": "string", "min_length": 64, "max_length": 64}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "scenario.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "EmptyArgs",
+    "wire_arguments_model": "EmptyArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ScenarioResult",
+    "public_result_factory": "ScenarioResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {"type": "object", "properties": {}, "required": [], "no_extra_fields": true}
+  },
+  {
+    "name": "side.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "PageArgs",
+    "wire_arguments_model": "PageArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "paged:SideResult",
+    "public_result_factory": "paged:SideResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["projection_allowlist"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "fields": {"type": "array", "items": {"type": "string", "min_length": 1, "enum": ["guid", "name", "awareness", "proficiency", "computer_controlled_only", "unit_count", "contact_count", "mission_count"]}, "min_items": 1, "unique_items": true, "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "reference_point.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "ReferencePointListArgs",
+    "wire_arguments_model": "ReferencePointListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "paged:ReferencePointResult",
+    "public_result_factory": "paged:ReferencePointResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector", "projection_allowlist"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "fields": {"type": "array", "items": {"type": "string", "min_length": 1, "enum": ["guid", "name", "side_guid", "latitude", "longitude", "relative_to_type", "relative_to_guid", "relative_bearing_deg", "relative_distance_nm", "bearing_type"]}, "min_items": 1, "unique_items": true, "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitListArgs",
+    "wire_arguments_model": "UnitListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "paged:UnitResult",
+    "public_result_factory": "paged:UnitResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector", "projection_allowlist"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "fields": {"type": "array", "items": {"type": "string", "min_length": 1, "enum": ["guid", "dbid", "name", "side_name", "type", "subtype", "category", "class_name", "latitude", "longitude", "altitude", "speed", "heading", "throttle", "proficiency", "fuel_state", "weapon_state", "unit_state", "operating", "mission_guid", "mission_name", "loadout_dbid", "depth", "force_speed", "desired_heading", "move_to", "manual_throttle", "manual_speed", "manual_altitude", "hold_position", "hold_fire", "sprint_drift", "avoid_cavitation", "obey_emcon"]}, "min_items": 1, "unique_items": true, "nullable": true},
+        "unit_type": {"type": "string", "nullable": true},
+        "name_contains": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitGetArgs",
+    "wire_arguments_model": "UnitGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitResult",
+    "public_result_factory": "UnitResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["unit_get_selector_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "nullable": true},
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "unit_name": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.combat_status.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitCombatStatusArgs",
+    "wire_arguments_model": "UnitCombatStatusArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCombatStatusResult",
+    "public_result_factory": "UnitCombatStatusResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.loadout.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitLoadoutGetArgs",
+    "wire_arguments_model": "UnitLoadoutGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitLoadoutResult",
+    "public_result_factory": "UnitLoadoutResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "contact.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "ContactListArgs",
+    "wire_arguments_model": "ContactListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "paged:ContactResult",
+    "public_result_factory": "paged:ContactResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector", "projection_allowlist"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "fields": {"type": "array", "items": {"type": "string", "min_length": 1, "enum": ["guid", "name", "observer_side_guid", "type", "type_description", "classification", "posture", "latitude", "longitude", "altitude", "speed", "heading", "actual_unit_guid", "actual_unit_dbid"]}, "min_items": 1, "unique_items": true, "nullable": true},
+        "contact_type": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "MissionListArgs",
+    "wire_arguments_model": "MissionListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "paged:MissionResult",
+    "public_result_factory": "paged:MissionResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector", "projection_allowlist"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "fields": {"type": "array", "items": {"type": "string", "min_length": 1, "enum": ["guid", "name", "side_name", "mission_class", "mission_class_string", "category", "parent_task_pool_guid", "package_guids", "active", "start_time", "end_time", "assigned_unit_guids", "target_guids", "patrol_type", "strike_type", "reference_point_guids", "prosecution_zone_reference_point_guids", "destination_guid", "flight_size", "use_flight_size", "minimum_aircraft_required", "on_station", "one_time_only", "preplanned_only", "one_third_rule", "loop_type", "active_emcon", "check_opa", "check_wwr", "group_size", "use_group_size", "transit_throttle_aircraft", "transit_throttle_ship", "transit_throttle_submarine", "station_throttle_aircraft", "station_throttle_ship", "station_throttle_submarine", "attack_throttle_aircraft", "attack_throttle_ship", "attack_throttle_submarine", "transit_altitude_aircraft", "station_altitude_aircraft", "attack_altitude_aircraft", "transit_depth_submarine", "station_depth_submarine", "attack_depth_submarine", "strike_minimum_trigger", "strike_max_flights", "strike_auto_planner", "strike_min_distance_aircraft", "strike_max_distance_aircraft", "strike_min_distance_ship", "strike_max_distance_ship", "focus_on_strike", "arming_delay", "mines_per_set", "mine_spacing_m", "set_spacing_m", "laying_method", "cargo_subtype", "move_all_cargo", "allow_ground_self_delivery", "assigned_cargo", "air_refueling"]}, "min_items": 1, "unique_items": true, "nullable": true},
+        "mission_class": {"type": "string", "nullable": true},
+        "category": {"type": "string", "enum": ["mission", "package", "task_pool"], "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "MissionGetArgs",
+    "wire_arguments_model": "MissionGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionResult",
+    "public_result_factory": "MissionResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector", "mission_get_selector_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "mission_guid": {"type": "string", "nullable": true},
+        "mission_name": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "doctrine.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "DoctrineGetArgs",
+    "wire_arguments_model": "DoctrineGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DoctrineResult",
+    "public_result_factory": "DoctrineResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["doctrine_scope_fields"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "scope": {"type": "string", "enum": ["side", "unit", "mission"]},
+        "side_guid": {"type": "string", "nullable": true},
+        "unit_guid": {"type": "string", "nullable": true},
+        "mission_guid": {"type": "string", "nullable": true},
+        "actual": {"type": "boolean"}
+      },
+      "required": ["scope"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "reference_point.add",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "ReferencePointAddArgs",
+    "wire_arguments_model": "ReferencePointAddArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ReferencePointResult",
+    "public_result_factory": "ReferencePointResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["reference_point_location_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "name": {"type": "string", "min_length": 1},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90, "nullable": true},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180, "nullable": true},
+        "relative_to_type": {"type": "string", "enum": ["unit", "contact", "reference_point"], "nullable": true},
+        "relative_to_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "relative_bearing_deg": {"type": "number", "minimum": 0, "maximum": 360, "nullable": true},
+        "relative_distance_nm": {"type": "number", "minimum": 0, "nullable": true},
+        "bearing_type": {"type": "string", "enum": ["fixed", "rotating"], "nullable": true}
+      },
+      "required": ["side_guid", "name"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "reference_point.update",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "ReferencePointUpdateArgs",
+    "wire_arguments_model": "ReferencePointUpdateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ReferencePointResult",
+    "public_result_factory": "ReferencePointResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["at_least_one_update", "reference_point_relative_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "reference_point_guid": {"type": "string", "min_length": 1},
+        "name": {"type": "string", "min_length": 1, "nullable": true},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90, "nullable": true},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180, "nullable": true},
+        "relative_to_type": {"type": "string", "enum": ["unit", "contact", "reference_point"], "nullable": true},
+        "relative_to_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "relative_bearing_deg": {"type": "number", "minimum": 0, "maximum": 360, "nullable": true},
+        "relative_distance_nm": {"type": "number", "minimum": 0, "nullable": true},
+        "bearing_type": {"type": "string", "enum": ["fixed", "rotating"], "nullable": true},
+        "clear_relative": {"type": "boolean"}
+      },
+      "required": ["side_guid", "reference_point_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitSetArgs",
+    "wire_arguments_model": "UnitSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitSetResult",
+    "public_result_factory": "UnitSetResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["at_least_one_update", "unit_speed_throttle_exclusive"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "name": {"type": "string", "nullable": true},
+        "speed": {"type": "number", "minimum": 0, "nullable": true},
+        "altitude": {"type": "number", "nullable": true},
+        "depth": {"type": "number", "nullable": true},
+        "throttle": {"type": "string", "nullable": true},
+        "force_speed": {"type": "boolean", "nullable": true},
+        "heading": {"type": "number", "minimum": 0, "maximum": 360, "nullable": true},
+        "desired_heading": {"type": "number", "minimum": 0, "maximum": 360, "nullable": true},
+        "course": {"type": "array", "items": {"type": "object", "properties": {"latitude": {"type": "number", "minimum": -90, "maximum": 90}, "longitude": {"type": "number", "minimum": -180, "maximum": 180}, "altitude": {"type": "number", "nullable": true}}, "required": ["latitude", "longitude"], "no_extra_fields": true}, "nullable": true},
+        "move_to": {"type": "boolean", "nullable": true},
+        "manual_throttle": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "manual_speed": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "manual_altitude": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "hold_position": {"type": "boolean", "nullable": true},
+        "hold_fire": {"type": "boolean", "nullable": true},
+        "sprint_drift": {"type": "boolean", "nullable": true},
+        "avoid_cavitation": {"type": "boolean", "nullable": true},
+        "obey_emcon": {"type": "boolean", "nullable": true}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.add",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitAddArgs",
+    "wire_arguments_model": "UnitAddArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitAddResult",
+    "public_result_factory": "UnitAddResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["unit_add_location_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "unit_type": {"type": "string", "min_length": 1},
+        "dbid": {"type": "integer", "minimum": 1},
+        "name": {"type": "string", "min_length": 1},
+        "base_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "latitude": {"type": "number", "minimum": -90, "maximum": 90, "nullable": true},
+        "longitude": {"type": "number", "minimum": -180, "maximum": 180, "nullable": true},
+        "altitude": {"type": "number", "nullable": true},
+        "loadout_dbid": {"type": "integer", "minimum": 1, "nullable": true}
+      },
+      "required": ["side_guid", "unit_type", "dbid", "name"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.assign_mission",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitAssignMissionArgs",
+    "wire_arguments_model": "UnitAssignMissionArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitAssignMissionResult",
+    "public_result_factory": "UnitAssignMissionResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "escort": {"type": "boolean"}
+      },
+      "required": ["unit_guid", "mission_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.unassign_mission",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitUnassignMissionArgs",
+    "wire_arguments_model": "UnitUnassignMissionArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitUnassignMissionResult",
+    "public_result_factory": "UnitUnassignMissionResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.loadout.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitLoadoutSetArgs",
+    "wire_arguments_model": "UnitLoadoutSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitLoadoutResult",
+    "public_result_factory": "UnitLoadoutResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "loadout_dbid": {"type": "integer", "minimum": 1},
+        "time_to_ready_minutes": {"type": "number", "minimum": 0, "nullable": true},
+        "ignore_magazines": {"type": "boolean"},
+        "exclude_optional_weapons": {"type": "boolean"}
+      },
+      "required": ["unit_guid", "loadout_dbid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.launch",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitCommandArgs",
+    "wire_arguments_model": "UnitCommandArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCommandResult",
+    "public_result_factory": "UnitCommandResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.rtb",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitCommandArgs",
+    "wire_arguments_model": "UnitCommandArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCommandResult",
+    "public_result_factory": "UnitCommandResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.refuel",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitRefuelArgs",
+    "wire_arguments_model": "UnitRefuelArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCommandResult",
+    "public_result_factory": "UnitCommandResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["unit_refuel_tanker_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "tanker_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "tanker_mission_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 1, "nullable": true}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.attack_contact",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitAttackContactArgs",
+    "wire_arguments_model": "UnitAttackContactArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitAttackContactResult",
+    "public_result_factory": "UnitAttackContactResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["unit_attack_contact_mode_fields"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "attacker_unit_guid": {"type": "string", "min_length": 1},
+        "contact_guid": {"type": "string", "min_length": 1},
+        "mode": {"type": "string", "enum": ["auto", "manual_weapon", "manual_target"]},
+        "mount_dbid": {"type": "integer", "minimum": 1, "nullable": true},
+        "weapon_dbid": {"type": "integer", "minimum": 1, "nullable": true},
+        "quantity": {"type": "integer", "minimum": 1, "nullable": true}
+      },
+      "required": ["side_guid", "attacker_unit_guid", "contact_guid", "mode"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.create",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionCreateArgs",
+    "wire_arguments_model": "MissionCreateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionCreateResult",
+    "public_result_factory": "MissionCreateResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [
+      "mission_details_discriminator",
+      "cargo_mission_form",
+      "mission_category_parent_pool"
+    ],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "name": {"type": "string", "min_length": 1},
+        "category": {"type": "string", "enum": ["mission", "package", "task_pool"]},
+        "parent_task_pool_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "details": {
+          "type": "object",
+          "discriminator": "mission_class",
+          "one_of": [
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["patrol"]}, "patrol_type": {"type": "string", "enum": ["asw", "naval", "aaw", "land", "mixed", "sead", "sea"]}, "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 3, "max_items": 64}}, "required": ["mission_class", "patrol_type", "reference_point_guids"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["support"]}, "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 2, "max_items": 64}}, "required": ["mission_class", "reference_point_guids"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["strike"]}, "strike_type": {"type": "string", "enum": ["air", "land", "sea", "sub"]}, "target_guids": {"type": "array", "items": {"type": "string", "min_length": 1}}}, "required": ["mission_class", "strike_type"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["ferry"]}, "destination_guid": {"type": "string", "min_length": 1}}, "required": ["mission_class", "destination_guid"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["mining"]}, "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 3, "max_items": 64}}, "required": ["mission_class", "reference_point_guids"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["mine_clearing"]}, "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 3, "max_items": 64}}, "required": ["mission_class", "reference_point_guids"], "no_extra_fields": true},
+            {"type": "object", "properties": {"mission_class": {"type": "string", "enum": ["cargo"]}, "cargo_subtype": {"type": "string", "enum": ["transfer", "delivery"]}, "destination_guid": {"type": "string", "min_length": 1, "nullable": true}, "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 3, "max_items": 64, "nullable": true}}, "required": ["mission_class", "cargo_subtype"], "no_extra_fields": true}
+          ]
+        }
+      },
+      "required": ["side_guid", "name", "details"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.update",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionUpdateArgs",
+    "wire_arguments_model": "MissionUpdateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionUpdateResult",
+    "public_result_factory": "MissionUpdateResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["at_least_one_update"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "active": {"type": "boolean", "nullable": true},
+        "start_time": {"type": "string", "nullable": true},
+        "end_time": {"type": "string", "nullable": true},
+        "flight_size": {"type": "integer", "enum": [1, 2, 3, 4, 6], "nullable": true},
+        "use_flight_size": {"type": "boolean", "nullable": true},
+        "minimum_aircraft_required": {"type": "integer", "enum": [0, 1, 2, 3, 4, 6, 8, 12], "nullable": true},
+        "on_station": {"type": "integer", "minimum": 0, "nullable": true},
+        "one_time_only": {"type": "boolean", "nullable": true},
+        "preplanned_only": {"type": "boolean", "nullable": true},
+        "one_third_rule": {"type": "boolean", "nullable": true},
+        "reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "max_items": 64, "nullable": true},
+        "prosecution_zone_reference_point_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "max_items": 64, "nullable": true},
+        "destination_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "loop_type": {"type": "integer", "minimum": 0, "maximum": 2, "nullable": true},
+        "active_emcon": {"type": "boolean", "nullable": true},
+        "check_opa": {"type": "boolean", "nullable": true},
+        "check_wwr": {"type": "boolean", "nullable": true},
+        "group_size": {"type": "integer", "minimum": 1, "nullable": true},
+        "use_group_size": {"type": "boolean", "nullable": true},
+        "transit_throttle_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "transit_throttle_ship": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "transit_throttle_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "station_throttle_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "station_throttle_ship": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "station_throttle_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "attack_throttle_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "attack_throttle_ship": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "attack_throttle_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "transit_altitude_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "station_altitude_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "attack_altitude_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "transit_depth_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "station_depth_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "attack_depth_submarine": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "strike_minimum_trigger": {"type": "string", "nullable": true},
+        "strike_max_flights": {"type": "integer", "minimum": 0, "nullable": true},
+        "strike_auto_planner": {"type": "boolean", "nullable": true},
+        "strike_min_distance_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "strike_max_distance_aircraft": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "strike_min_distance_ship": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "strike_max_distance_ship": {"type": "string", "one_of": [{"type": "string"}, {"type": "number"}], "nullable": true},
+        "focus_on_strike": {"type": "boolean", "nullable": true},
+        "arming_delay": {"type": "string", "nullable": true},
+        "mines_per_set": {"type": "integer", "minimum": 1, "nullable": true},
+        "mine_spacing_m": {"type": "number", "minimum": 0, "nullable": true},
+        "set_spacing_m": {"type": "number", "minimum": 0, "nullable": true},
+        "laying_method": {"type": "integer", "enum": [0, 1], "nullable": true},
+        "cargo_subtype": {"type": "string", "enum": ["transfer", "delivery"], "nullable": true},
+        "move_all_cargo": {"type": "boolean", "nullable": true},
+        "allow_ground_self_delivery": {"type": "boolean", "nullable": true}
+      },
+      "required": ["side_guid", "mission_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.air_refueling.update",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionAirRefuelingUpdateArgs",
+    "wire_arguments_model": "MissionAirRefuelingUpdateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionAirRefuelingResult",
+    "public_result_factory": "MissionAirRefuelingResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["at_least_one_update"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "use_refuel_unrep": {"type": "string", "enum": ["Always_ExceptTankersRefuellingTankers", "Never", "Always_IncludingTankersRefuellingTankers"], "nullable": true},
+        "tanker_usage": {"type": "string", "enum": ["automatic", "mission"], "nullable": true},
+        "launch_without_tankers_in_place": {"type": "boolean", "nullable": true},
+        "tanker_follows_receivers": {"type": "boolean", "nullable": true},
+        "keep_on_mission_without_tankers_in_place": {"type": "boolean", "nullable": true},
+        "tanker_mission_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "nullable": true},
+        "minimum_tankers_total": {"type": "integer", "minimum": 0, "nullable": true},
+        "minimum_tankers_airborne": {"type": "integer", "minimum": 0, "nullable": true},
+        "minimum_tankers_on_station": {"type": "integer", "minimum": 0, "nullable": true},
+        "max_receivers_in_queue_per_tanker": {"type": "integer", "minimum": 0, "nullable": true},
+        "fuel_percent_to_start_looking": {"type": "number", "minimum": 0, "maximum": 100, "nullable": true},
+        "tanker_max_distance_nm": {"type": "string", "one_of": [{"type": "number", "minimum": 0}, {"type": "string", "enum": ["internal"]}], "nullable": true},
+        "tanker_one_time": {"type": "boolean", "nullable": true},
+        "tanker_max_receivers": {"type": "string", "one_of": [{"type": "integer", "minimum": 0}, {"type": "string", "min_length": 1}], "nullable": true}
+      },
+      "required": ["side_guid", "mission_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.flight_plan.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "MissionFlightPlanListArgs",
+    "wire_arguments_model": "MissionFlightPlanListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionFlightPlanListResult",
+    "public_result_factory": "MissionFlightPlanListResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_guid", "mission_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.flight_plan.create",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionFlightPlanCreateArgs",
+    "wire_arguments_model": "MissionFlightPlanCreateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionFlightPlanCreateResult",
+    "public_result_factory": "MissionFlightPlanCreateResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["mission_flight_plan_schedule_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "date_on_target": {"type": "string", "nullable": true},
+        "time_on_target": {"type": "string", "nullable": true},
+        "takeoff_date": {"type": "string", "nullable": true},
+        "takeoff_time": {"type": "string", "nullable": true}
+      },
+      "required": ["side_guid", "mission_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.target.add",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionTargetArgs",
+    "wire_arguments_model": "MissionTargetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionTargetAddResult",
+    "public_result_factory": "MissionTargetAddResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "target_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_guid", "mission_guid", "target_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.target.remove",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionTargetArgs",
+    "wire_arguments_model": "MissionTargetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionTargetRemoveResult",
+    "public_result_factory": "MissionTargetRemoveResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "target_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_guid", "mission_guid", "target_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "doctrine.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "DoctrineSetArgs",
+    "wire_arguments_model": "DoctrineSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DoctrineSetResult",
+    "public_result_factory": "DoctrineSetResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["doctrine_scope_fields", "at_least_one_update"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "scope": {"type": "string", "enum": ["side", "unit", "mission"]},
+        "side_guid": {"type": "string", "nullable": true},
+        "unit_guid": {"type": "string", "nullable": true},
+        "mission_guid": {"type": "string", "nullable": true},
+        "weapon_control_air": {"type": "string", "enum": ["Free", "Tight", "Hold", "inherit"], "nullable": true},
+        "weapon_control_surface": {"type": "string", "enum": ["Free", "Tight", "Hold", "inherit"], "nullable": true},
+        "weapon_control_subsurface": {"type": "string", "enum": ["Free", "Tight", "Hold", "inherit"], "nullable": true},
+        "weapon_control_land": {"type": "string", "enum": ["Free", "Tight", "Hold", "inherit"], "nullable": true},
+        "nuclear_use": {"type": "boolean", "nullable": true},
+        "refuel_unrep": {"type": "string", "enum": ["Always_ExceptTankersRefuellingTankers", "Never", "Always_IncludingTankersRefuellingTankers"], "nullable": true},
+        "engage_opportunity_targets": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "automatic_evasion": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "ignore_plotted_course": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "ignore_emcon_while_under_attack": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "maintain_standoff": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "use_sams_in_anti_surface_mode": {"type": "boolean", "one_of": [{"type": "boolean"}, {"type": "string", "enum": ["inherit"]}], "nullable": true},
+        "engaging_ambiguous_targets": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "fuel_state_planned": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "fuel_state_rtb": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "weapon_state_planned": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "weapon_state_rtb": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "withdraw_on_attack": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "withdraw_on_damage": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "withdraw_on_defence": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "withdraw_on_fuel": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "bvr_logic": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "dipping_sonar": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "use_aip": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "recharge_on_attack": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true},
+        "recharge_on_patrol": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}], "nullable": true}
+      },
+      "required": ["scope"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "emcon.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "EmconSetArgs",
+    "wire_arguments_model": "EmconSetWireArgs",
+    "wire_resolver": "emcon",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "EmconSetResult",
+    "public_result_factory": "EmconSetResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["emcon_has_clause"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "scope": {"type": "string", "enum": ["side", "mission", "group", "unit"]},
+        "target_guid": {"type": "string", "min_length": 1},
+        "emcon": {"type": "string", "min_length": 1}
+      },
+      "required": ["scope", "target_guid", "emcon"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "scenario.time_compression.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "ScenarioTimeCompressionSetArgs",
+    "wire_arguments_model": "ScenarioTimeCompressionSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ScenarioTimeCompressionSetResult",
+    "public_result_factory": "ScenarioTimeCompressionSetResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "code": {"type": "integer", "enum": [0, 1, 2, 3, 4, 5]}
+      },
+      "required": ["code"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "side.posture.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "SidePostureGetArgs",
+    "wire_arguments_model": "SidePostureGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "SidePostureResult",
+    "public_result_factory": "SidePostureResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_a_guid": {"type": "string", "min_length": 1},
+        "side_b_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_a_guid", "side_b_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "contact.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "ContactGetArgs",
+    "wire_arguments_model": "ContactGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ContactDetailResult",
+    "public_result_factory": "ContactDetailResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "contact_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["contact_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "contact.posture.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "ContactPostureSetArgs",
+    "wire_arguments_model": "ContactPostureSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ContactDetailResult",
+    "public_result_factory": "ContactDetailResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "contact_guid": {"type": "string", "min_length": 1},
+        "posture": {"type": "string", "enum": ["F", "N", "U", "H"]}
+      },
+      "required": ["side_guid", "contact_guid", "posture"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "contact.weapon_allocations.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "ContactWeaponAllocationsGetArgs",
+    "wire_arguments_model": "ContactWeaponAllocationsGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "ContactWeaponAllocationsResult",
+    "public_result_factory": "ContactWeaponAllocationsResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "contact_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_guid", "contact_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.inventory.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitInventoryGetArgs",
+    "wire_arguments_model": "UnitInventoryGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitInventoryResult",
+    "public_result_factory": "UnitInventoryResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.sensor.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitSensorSetArgs",
+    "wire_arguments_model": "UnitSensorSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitSensorSetResult",
+    "public_result_factory": "UnitSensorSetResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "sensor_guid": {"type": "string", "min_length": 1},
+        "active": {"type": "boolean"},
+        "obey_emcon": {"type": "boolean", "nullable": true}
+      },
+      "required": ["unit_guid", "sensor_guid", "active"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.magazine.adjust",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitMagazineAdjustArgs",
+    "wire_arguments_model": "UnitMagazineAdjustArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitInventoryResult",
+    "public_result_factory": "UnitInventoryResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["inventory_adjust_mode_fields"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "weapon_dbid": {"type": "integer", "minimum": 1},
+        "mode": {"type": "string", "enum": ["add", "remove", "fill"]},
+        "quantity": {"type": "integer", "minimum": 1, "nullable": true},
+        "magazine_guid": {"type": "string", "min_length": 1},
+        "max_capacity": {"type": "integer", "minimum": 1, "nullable": true},
+        "allow_new": {"type": "boolean", "nullable": true}
+      },
+      "required": ["unit_guid", "weapon_dbid", "mode", "magazine_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.mount_reload.adjust",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitMountReloadAdjustArgs",
+    "wire_arguments_model": "UnitMountReloadAdjustArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitInventoryResult",
+    "public_result_factory": "UnitInventoryResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["inventory_adjust_mode_fields"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "weapon_dbid": {"type": "integer", "minimum": 1},
+        "mode": {"type": "string", "enum": ["add", "remove", "fill"]},
+        "quantity": {"type": "integer", "minimum": 1, "nullable": true},
+        "mount_guid": {"type": "string", "min_length": 1},
+        "add_as_cell": {"type": "boolean", "nullable": true}
+      },
+      "required": ["unit_guid", "weapon_dbid", "mode", "mount_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.cargo.transfer",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitCargoTransferArgs",
+    "wire_arguments_model": "UnitCargoTransferArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCargoTransferResult",
+    "public_result_factory": "UnitCargoTransferResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["cargo_transfer_item_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "from_unit_guid": {"type": "string", "min_length": 1},
+        "to_unit_guid": {"type": "string", "min_length": 1},
+        "items": {
+          "type": "array",
+          "min_items": 1,
+          "items": {
+            "type": "object",
+            "properties": {
+              "cargo_guid": {"type": "string", "min_length": 1, "nullable": true},
+              "dbid": {"type": "integer", "minimum": 1, "nullable": true},
+              "quantity": {"type": "integer", "minimum": 1, "nullable": true}
+            },
+            "required": [],
+            "no_extra_fields": true
+          }
+        }
+      },
+      "required": ["from_unit_guid", "to_unit_guid", "items"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.cargo.unload",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "UnitCargoUnloadArgs",
+    "wire_arguments_model": "UnitCargoUnloadArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCargoUnloadResult",
+    "public_result_factory": "UnitCargoUnloadResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.cargo.update",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "MissionCargoUpdateArgs",
+    "wire_arguments_model": "MissionCargoUpdateArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "MissionCargoUpdateResult",
+    "public_result_factory": "MissionCargoUpdateResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["mission_cargo_form"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "action": {"type": "string", "enum": ["assign", "unassign"]},
+        "cargo_kind": {"type": "string", "enum": ["mount", "object"]},
+        "dbid": {"type": "integer", "minimum": 1},
+        "quantity": {"type": "integer", "minimum": 1, "nullable": true},
+        "object_type": {"type": "integer", "minimum": 1, "maximum": 5, "nullable": true},
+        "cargo_guid": {"type": "string", "min_length": 1, "nullable": true}
+      },
+      "required": ["side_guid", "mission_guid", "action", "cargo_kind", "dbid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "doctrine.wra.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "DoctrineWraGetArgs",
+    "wire_arguments_model": "DoctrineWraGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DoctrineWraResult",
+    "public_result_factory": "DoctrineWraResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["doctrine_scope_fields", "doctrine_wra_target_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "scope": {"type": "string", "enum": ["side", "unit", "mission"]},
+        "side_guid": {"type": "string", "nullable": true},
+        "unit_guid": {"type": "string", "nullable": true},
+        "mission_guid": {"type": "string", "nullable": true},
+        "contact_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "target_type": {"type": "string", "one_of": [{"type": "string", "min_length": 1}, {"type": "integer"}], "nullable": true},
+        "weapon_dbid": {"type": "integer", "minimum": 1, "nullable": true},
+        "full_wra": {"type": "boolean"}
+      },
+      "required": ["scope"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "doctrine.wra.set",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "DoctrineWraSetArgs",
+    "wire_arguments_model": "DoctrineWraSetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DoctrineWraResult",
+    "public_result_factory": "DoctrineWraResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["doctrine_scope_fields", "doctrine_wra_target_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "scope": {"type": "string", "enum": ["side", "unit", "mission"]},
+        "side_guid": {"type": "string", "nullable": true},
+        "unit_guid": {"type": "string", "nullable": true},
+        "mission_guid": {"type": "string", "nullable": true},
+        "contact_guid": {"type": "string", "min_length": 1, "nullable": true},
+        "target_type": {"type": "string", "one_of": [{"type": "string", "min_length": 1}, {"type": "integer"}], "nullable": true},
+        "weapon_dbid": {"type": "integer", "minimum": 1},
+        "weapons_per_salvo": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}, {"type": "number"}]},
+        "shooters_per_salvo": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}, {"type": "number"}]},
+        "firing_range": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}, {"type": "number"}]},
+        "self_defence_range": {"type": "string", "one_of": [{"type": "string"}, {"type": "integer"}, {"type": "number"}]}
+      },
+      "required": ["scope", "weapon_dbid", "weapons_per_salvo", "shooters_per_salvo", "firing_range", "self_defence_range"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "special_action.list",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "SpecialActionListArgs",
+    "wire_arguments_model": "SpecialActionListArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "SpecialActionListResult",
+    "public_result_factory": "SpecialActionListResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["at_most_one_side_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "special_action.execute",
+    "target": "cmo",
+    "base_class": "mutation",
+    "public_arguments_model": "SpecialActionExecuteArgs",
+    "wire_arguments_model": "SpecialActionExecuteArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "SpecialActionExecuteResult",
+    "public_result_factory": "SpecialActionExecuteResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "action_guid": {"type": "string", "min_length": 1}
+      },
+      "required": ["side_guid", "action_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.delete",
+    "target": "cmo",
+    "base_class": "destructive",
+    "public_arguments_model": "DeleteUnitArgs",
+    "wire_arguments_model": "ConfirmedDeleteUnitWireArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DeleteResult",
+    "public_result_factory": "DeleteResult",
+    "recovery_factory": "same",
+    "confirmation_required": true,
+    "expose_mcp": false,
+    "trusted_fields": ["confirmation_proof"],
+    "invariant_ids": ["trusted_confirmation"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guid": {"type": "string", "min_length": 1},
+        "confirmation_proof": {"type": "string", "min_length": 64, "max_length": 64}
+      },
+      "required": ["unit_guid", "confirmation_proof"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "mission.delete",
+    "target": "cmo",
+    "base_class": "destructive",
+    "public_arguments_model": "DeleteMissionArgs",
+    "wire_arguments_model": "ConfirmedDeleteMissionWireArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DeleteResult",
+    "public_result_factory": "DeleteResult",
+    "recovery_factory": "same",
+    "confirmation_required": true,
+    "expose_mcp": false,
+    "trusted_fields": ["confirmation_proof"],
+    "invariant_ids": ["trusted_confirmation"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "mission_guid": {"type": "string", "min_length": 1},
+        "confirmation_proof": {"type": "string", "min_length": 64, "max_length": 64}
+      },
+      "required": ["side_guid", "mission_guid", "confirmation_proof"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "lua.call",
+    "target": "cmo",
+    "base_class": "dynamic",
+    "public_arguments_model": "LuaCallArgs",
+    "wire_arguments_model": "LuaCallArgs",
+    "wire_resolver": "lua_allowlist",
+    "effective_class_resolver": "lua_allowlist",
+    "resolver_data": {
+      "ScenEdit_GetScore": {
+        "class": "read",
+        "arguments_model": "GetScoreArgs",
+        "result_model": "ScoreResult"
+      },
+      "ScenEdit_GetWeather": {
+        "class": "read",
+        "arguments_model": "ScenarioWeatherGetArgs",
+        "result_model": "ScenarioWeatherResult"
+      },
+      "ScenEdit_SetWeather": {
+        "class": "mutation",
+        "arguments_model": "ScenarioWeatherSetArgs",
+        "result_model": "ScenarioWeatherResult"
+      },
+      "SetScenarioTitle": {
+        "class": "mutation",
+        "arguments_model": "ScenarioTitleSetArgs",
+        "result_model": "ScenarioResult"
+      },
+      "ScenEdit_SetTime": {
+        "class": "mutation",
+        "arguments_model": "ScenarioTimelineSetArgs",
+        "result_model": "ScenarioResult"
+      },
+      "ScenEdit_AddSide": {
+        "class": "mutation",
+        "arguments_model": "SideAddArgs",
+        "result_model": "SideResult"
+      },
+      "ScenEdit_SetSideOptions": {
+        "class": "mutation",
+        "arguments_model": "SideOptionsSetArgs",
+        "result_model": "SideResult"
+      },
+      "ScenEdit_SetSidePosture": {
+        "class": "mutation",
+        "arguments_model": "SidePostureSetArgs",
+        "result_model": "SidePostureResult"
+      },
+      "ScenEdit_SetScore": {
+        "class": "mutation",
+        "arguments_model": "ScoreSetArgs",
+        "result_model": "ScoreResult"
+      },
+      "ScenEdit_GetEvents": {
+        "class": "read",
+        "arguments_model": "EventListArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_GetEvent": {
+        "class": "read",
+        "arguments_model": "EventGetArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetEvent": {
+        "class": "mutation",
+        "arguments_model": "EventSetArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetTrigger": {
+        "class": "mutation",
+        "arguments_model": "EventComponentSetArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetCondition": {
+        "class": "mutation",
+        "arguments_model": "EventComponentSetArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetAction": {
+        "class": "mutation",
+        "arguments_model": "EventComponentSetArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetEventTrigger": {
+        "class": "mutation",
+        "arguments_model": "EventComponentLinkArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetEventCondition": {
+        "class": "mutation",
+        "arguments_model": "EventComponentLinkArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetEventAction": {
+        "class": "mutation",
+        "arguments_model": "EventComponentLinkArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_AddSpecialAction": {
+        "class": "mutation",
+        "arguments_model": "SpecialActionAddArgs",
+        "result_model": "AuthoringDataResult"
+      },
+      "ScenEdit_SetSpecialAction": {
+        "class": "mutation",
+        "arguments_model": "SpecialActionSetArgs",
+        "result_model": "AuthoringDataResult"
+      }
+    },
+    "wire_result_factory": "lua_allowlist",
+    "public_result_factory": "lua_allowlist",
+    "recovery_factory": "effective",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["lua_function_arguments"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "function": {
+          "type": "string",
+          "enum": [
+            "ScenEdit_GetScore",
+            "ScenEdit_GetWeather",
+            "ScenEdit_SetWeather",
+            "SetScenarioTitle",
+            "ScenEdit_SetTime",
+            "ScenEdit_AddSide",
+            "ScenEdit_SetSideOptions",
+            "ScenEdit_SetSidePosture",
+            "ScenEdit_SetScore",
+            "ScenEdit_GetEvents",
+            "ScenEdit_GetEvent",
+            "ScenEdit_SetEvent",
+            "ScenEdit_SetTrigger",
+            "ScenEdit_SetCondition",
+            "ScenEdit_SetAction",
+            "ScenEdit_SetEventTrigger",
+            "ScenEdit_SetEventCondition",
+            "ScenEdit_SetEventAction",
+            "ScenEdit_AddSpecialAction",
+            "ScenEdit_SetSpecialAction"
+          ]
+        },
+        "arguments": {
+          "type": "object",
+          "properties": {},
+          "required": [],
+          "no_extra_fields": false
+        }
+      },
+      "required": ["function", "arguments"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "compat.probe.step",
+    "target": "cmo",
+    "base_class": "dynamic",
+    "public_arguments_model": "CompatProbeStepArgs",
+    "wire_arguments_model": "CompatProbeStepArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "compat_step",
+    "resolver_data": {
+      "observational": "read",
+      "payload": "read",
+      "high-speed": "read",
+      "lineage": "read",
+      "key-value": "mutation",
+      "dedupe": "mutation",
+      "indeterminate": "mutation",
+      "ledger-capacity": "mutation",
+      "apply-profile": "mutation"
+    },
+    "wire_result_factory": "discriminated",
+    "public_result_factory": "discriminated",
+    "result_factory_data": {
+      "argument_field": "step",
+      "models": {
+        "observational": "ObservationalProbeStepResult",
+        "payload": "PayloadProbeStepResult",
+        "high-speed": "HighSpeedProbeStepResult",
+        "lineage": "LineageProbeStepResult",
+        "key-value": "KeyValueProbeStepResult",
+        "dedupe": "DedupeProbeStepResult",
+        "indeterminate": "IndeterminateProbeStepResult",
+        "ledger-capacity": "LedgerCapacityProbeStepResult",
+        "apply-profile": "ApplyProfileProbeStepResult"
+      }
+    },
+    "recovery_factory": "effective",
+    "confirmation_required": false,
+    "expose_mcp": false,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "discriminator": "step",
+      "one_of": [
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["observational"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["payload"]}, "candidate_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}}, "required": ["step", "candidate_bytes"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["high-speed"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["lineage"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["key-value"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["dedupe"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["indeterminate"]}}, "required": ["step"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["ledger-capacity"]}, "candidate_entries": {"type": "integer", "minimum": 1, "maximum": 256}}, "required": ["step", "candidate_entries"], "no_extra_fields": true},
+        {"type": "object", "properties": {"step": {"type": "string", "enum": ["apply-profile"]}, "safe_payload_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576}, "verified_ledger_entries": {"type": "integer", "minimum": 1, "maximum": 256}, "effective_ledger_capacity": {"type": "integer", "minimum": 1, "maximum": 256}}, "required": ["step", "safe_payload_bytes", "verified_ledger_entries", "effective_ledger_capacity"], "no_extra_fields": true}
+      ]
+    }
+  },
+  {
+    "name": "bridge.prepare",
+    "target": "local",
+    "base_class": "mutation",
+    "public_arguments_model": "BridgePrepareArgs",
+    "wire_arguments_model": "BridgePrepareArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "PrepareResult",
+    "public_result_factory": "PrepareResult",
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": false,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "control_side": {"type": "string", "nullable": true},
+        "poll_interval_code": {"type": "string", "enum": ["0", "1", "2", "3", "4", "5", "6", "7", "8"]},
+        "rotate_lineage": {"type": "boolean"},
+        "persist_game_root": {"type": "boolean"},
+        "replace_saved_game_root": {"type": "boolean"}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "bridge.doctor",
+    "target": "local",
+    "base_class": "status",
+    "public_arguments_model": "BridgeDoctorArgs",
+    "wire_arguments_model": "BridgeDoctorArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "DoctorResult",
+    "public_result_factory": "DoctorResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": false,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {"live": {"type": "boolean"}},
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "bridge.uninstall",
+    "target": "local",
+    "base_class": "mutation",
+    "public_arguments_model": "BridgeUninstallArgs",
+    "wire_arguments_model": "BridgeUninstallArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "discriminated",
+    "public_result_factory": "discriminated",
+    "result_factory_data": {
+      "argument_field": "phase",
+      "models": {
+        "command": "UninstallCommandResult",
+        "files": "UninstallFilesResult"
+      }
+    },
+    "recovery_factory": "same",
+    "confirmation_required": false,
+    "expose_mcp": false,
+    "trusted_fields": [],
+    "invariant_ids": ["uninstall_phase_marker"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "phase": {"type": "string", "enum": ["command", "files"]},
+        "uninstall_marker": {"type": "string", "nullable": true}
+      },
+      "required": ["phase"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "compat.probe",
+    "target": "local",
+    "base_class": "status",
+    "public_arguments_model": "CompatProbeArgs",
+    "wire_arguments_model": "CompatProbeArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "discriminated",
+    "public_result_factory": "discriminated",
+    "result_factory_data": {
+      "argument_field": "phase",
+      "models": {
+        "automatic": "CompatAutomaticResult",
+        "arm-paused-special-action": "CompatArmResult",
+        "collect-paused-special-action": "CompatCollectResult"
+      }
+    },
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": false,
+    "trusted_fields": [],
+    "invariant_ids": ["compat_phase_case"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "phase": {"type": "string", "enum": ["automatic", "arm-paused-special-action", "collect-paused-special-action"]},
+        "case": {"type": "string", "enum": ["activation-reload", "mutation-dedupe", "cancel-before-read", "mutation-indeterminate", "host-crash-recovery", "hundred-roundtrips", "high-speed", "lineage-switch"], "nullable": true}
+      },
+      "required": ["phase"],
+      "no_extra_fields": true
+    }
+  }
+]

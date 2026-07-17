@@ -1,0 +1,148 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  prerelease:
+    name: Build and publish prerelease
+    if: "${{ startsWith(github.event.head_commit.message, 'chore: release v0.1.0') }}"
+    runs-on: windows-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the release commit
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.29"
+          enable-cache: true
+
+      - name: Verify release commit and project version
+        shell: pwsh
+        run: |
+          $pyproject = Get-Content -Raw -LiteralPath pyproject.toml
+          $match = [regex]::Match(
+            $pyproject,
+            '(?ms)^\[project\]\s+.*?^version\s*=\s*"(?<version>[^"]+)"'
+          )
+          if (-not $match.Success) {
+            throw 'Could not read [project].version from pyproject.toml.'
+          }
+          $version = $match.Groups['version'].Value
+          if ($version -notmatch '^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$') {
+            throw "Project version '$version' is not release semver."
+          }
+          $expectedSubject = "chore: release v$version"
+          $subject = (git log -1 --pretty=%s).Trim()
+          if (-not $subject.StartsWith($expectedSubject, [StringComparison]::Ordinal)) {
+            throw "Release commit subject must start with '$expectedSubject'; got '$subject'."
+          }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_TAG=v$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Sync locked environment
+        run: uv sync --locked --dev
+
+      - name: Check generated operation artifacts
+        run: uv run python scripts/generate_manifest.py --check-python --check-corpus
+
+      - name: Validate plugin, marketplace, and skill metadata
+        run: uv run pytest tests/release/test_distribution.py
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run pyright
+
+      - name: Test without a live CMO instance
+        run: uv run pytest -m "not cmo_live" --ignore=tests/release
+
+      - name: Build release artifacts from this commit
+        shell: pwsh
+        run: ./scripts/build_release.ps1 -Version $env:RELEASE_VERSION -RequireClean
+
+      - name: Create or verify annotated tag
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $headCommit = (git rev-parse HEAD).Trim()
+          git fetch --force --tags origin
+          if ($LASTEXITCODE -ne 0) { throw 'Failed to fetch remote tags.' }
+
+          git rev-parse --quiet --verify "refs/tags/$tag^{commit}" *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $tagCommit = (git rev-list -n 1 $tag).Trim()
+            if ($tagCommit -ne $headCommit) {
+              throw "Existing tag $tag points to $tagCommit, not release commit $headCommit."
+            }
+            Write-Host "Verified existing tag $tag at $headCommit."
+            exit 0
+          }
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a $tag $headCommit -m "CMO Agent Bridge $tag"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to create annotated tag $tag." }
+          git push origin "refs/tags/$tag"
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "Created annotated tag $tag at $headCommit."
+            exit 0
+          }
+
+          Write-Warning 'Tag push raced with another workflow; fetching and verifying the winner.'
+          git fetch --force origin "refs/tags/${tag}:refs/tags/${tag}"
+          if ($LASTEXITCODE -ne 0) { throw "Failed to fetch remote tag $tag after push race." }
+          $tagCommit = (git rev-list -n 1 $tag).Trim()
+          if ($tagCommit -ne $headCommit) {
+            throw "Remote tag $tag points to $tagCommit, not release commit $headCommit."
+          }
+
+      - name: Publish GitHub prerelease
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $assets = @(
+            Get-ChildItem -File -LiteralPath dist/release |
+              Sort-Object Name |
+              ForEach-Object FullName
+          )
+          if ($assets.Count -ne 5) {
+            throw "Expected five release files; found $($assets.Count)."
+          }
+          gh release view $tag --json tagName *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @assets --clobber
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to upload release assets.' }
+            gh release edit $tag --prerelease --title "CMO Agent Bridge $tag"
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to update the prerelease.' }
+          }
+          else {
+            gh release create $tag @assets `
+              --verify-tag `
+              --prerelease `
+              --generate-notes `
+              --title "CMO Agent Bridge $tag"
+            if ($LASTEXITCODE -ne 0) { throw 'Failed to create the prerelease.' }
+          }

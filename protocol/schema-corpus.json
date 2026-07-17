@@ -1,0 +1,5204 @@
+{
+  "cases": [
+    {
+      "caller_arguments": {},
+      "id": "bridge.status:valid",
+      "invariant_id": null,
+      "operation": "bridge.status",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "activation_candidate": "00000000-0000-0000-0000-000000000001"
+      },
+      "valid": true,
+      "wire_arguments": {
+        "accept_lineage_id": null,
+        "activation_candidate": "00000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "bridge.status:invalid-extra",
+      "invariant_id": null,
+      "operation": "bridge.status",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "activation_candidate": "00000000-0000-0000-0000-000000000001"
+      },
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "activation_candidate": "00000000-0000-0000-0000-000000000001"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.status:invalid-invariant-1",
+      "invariant_id": null,
+      "operation": "bridge.status",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:valid",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "disposition": null,
+        "request_id": null
+      },
+      "id": "bridge.reconcile:valid-explicit-null-probe",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "id": "bridge.reconcile:valid-confirmed-applied",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "valid": true,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {
+        "disposition": "not_applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "id": "bridge.reconcile:valid-confirmed-not-applied",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "valid": true,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": "not_applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "bridge.reconcile:invalid-extra",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {
+        "disposition": "applied"
+      },
+      "id": "bridge.reconcile:invalid-invariant-1",
+      "invariant_id": "reconcile_disposition_pair",
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "disposition": "applied"
+      }
+    },
+    {
+      "caller_arguments": {
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "id": "bridge.reconcile:invalid-confirmed-missing-proof",
+      "invariant_id": "trusted_confirmation",
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {
+        "disposition": "not_applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "id": "bridge.reconcile:invalid-confirmed-invalid-proof",
+      "invariant_id": "trusted_confirmation",
+      "operation": "bridge.reconcile",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+      },
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": "gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg",
+        "disposition": "not_applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      },
+      "id": "bridge.reconcile:invalid-public-caller-proof",
+      "invariant_id": "trusted_confirmation",
+      "operation": "bridge.reconcile",
+      "surface": "registry-public",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-explicit-null-all",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": null,
+        "disposition": null,
+        "request_id": null
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-null-request",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": "applied",
+        "request_id": null
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-null-disposition",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "disposition": null,
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-null-proof",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": null,
+        "disposition": "applied",
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-request-only",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "request_id": "00000000-0000-0000-0000-000000000002"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.reconcile:invalid-raw-proof-only",
+      "invariant_id": null,
+      "operation": "bridge.reconcile",
+      "surface": "raw-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "confirmation_proof": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "scenario.get:valid",
+      "invariant_id": null,
+      "operation": "scenario.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "scenario.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "scenario.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "side.list:valid",
+      "invariant_id": null,
+      "operation": "side.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "cursor": null,
+        "fields": null,
+        "page_size": 100
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "side.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "side.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {
+        "fields": [
+          "not_a_side_field"
+        ]
+      },
+      "id": "side.list:invalid-invariant-1",
+      "invariant_id": "projection_allowlist",
+      "operation": "side.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "fields": [
+          "not_a_side_field"
+        ]
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.list:valid",
+      "invariant_id": null,
+      "operation": "reference_point.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "cursor": null,
+        "fields": null,
+        "page_size": 100,
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "reference_point.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "reference_point.list:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "reference_point.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.list:valid",
+      "invariant_id": null,
+      "operation": "unit.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "cursor": null,
+        "fields": null,
+        "name_contains": null,
+        "page_size": 100,
+        "side_guid": "SIDE-1",
+        "side_name": null,
+        "unit_type": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      },
+      "id": "unit.list:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "unit.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.get:valid",
+      "invariant_id": null,
+      "operation": "unit.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_guid": null,
+        "side_name": null,
+        "unit_guid": "UNIT-1",
+        "unit_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "unit.get:invalid-invariant-1",
+      "invariant_id": "unit_get_selector_form",
+      "operation": "unit.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.combat_status.get:valid",
+      "invariant_id": null,
+      "operation": "unit.combat_status.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.combat_status.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.combat_status.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.loadout.get:valid",
+      "invariant_id": null,
+      "operation": "unit.loadout.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.loadout.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.loadout.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_name": "Blue"
+      },
+      "id": "contact.list:valid",
+      "invariant_id": null,
+      "operation": "contact.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_type": null,
+        "cursor": null,
+        "fields": null,
+        "page_size": 100,
+        "side_guid": null,
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_name": "Blue"
+      },
+      "id": "contact.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "contact.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "contact.list:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "contact.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.list:valid",
+      "invariant_id": null,
+      "operation": "mission.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": null,
+        "cursor": null,
+        "fields": null,
+        "mission_class": null,
+        "page_size": 100,
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "mission.list:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "mission.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.get:valid",
+      "invariant_id": null,
+      "operation": "mission.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "mission_name": null,
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.get:invalid-invariant-1",
+      "invariant_id": "mission_get_selector_form",
+      "operation": "mission.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      },
+      "id": "doctrine.get:valid",
+      "invariant_id": null,
+      "operation": "doctrine.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "actual": true,
+        "mission_guid": null,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "unit_guid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "actual": true,
+        "mission_guid": "M-1",
+        "scope": "mission",
+        "side_guid": "SIDE-1"
+      },
+      "id": "doctrine.get:valid-2",
+      "invariant_id": null,
+      "operation": "doctrine.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "actual": true,
+        "mission_guid": "M-1",
+        "scope": "mission",
+        "side_guid": "SIDE-1",
+        "unit_guid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      },
+      "id": "doctrine.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "doctrine.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "unit",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "doctrine.get:invalid-invariant-1",
+      "invariant_id": "doctrine_scope_fields",
+      "operation": "doctrine.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "scope": "unit",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "latitude": 1,
+        "longitude": 2,
+        "name": "CAP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.add:valid",
+      "invariant_id": null,
+      "operation": "reference_point.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "bearing_type": null,
+        "latitude": 1.0,
+        "longitude": 2.0,
+        "name": "CAP-1",
+        "relative_bearing_deg": null,
+        "relative_distance_nm": null,
+        "relative_to_guid": null,
+        "relative_to_type": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "bearing_type": "rotating",
+        "name": "Carrier CAP corner",
+        "relative_bearing_deg": 45,
+        "relative_distance_nm": 50,
+        "relative_to_guid": "UNIT-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.add:valid-2",
+      "invariant_id": null,
+      "operation": "reference_point.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "bearing_type": "rotating",
+        "latitude": null,
+        "longitude": null,
+        "name": "Carrier CAP corner",
+        "relative_bearing_deg": 45.0,
+        "relative_distance_nm": 50.0,
+        "relative_to_guid": "UNIT-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "CAP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.add:invalid-extra",
+      "invariant_id": null,
+      "operation": "reference_point.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "CAP-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "name": "Missing position",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.add:invalid-invariant-1",
+      "invariant_id": "reference_point_location_form",
+      "operation": "reference_point.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "name": "Missing position",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Mixed position",
+        "relative_bearing_deg": 90,
+        "relative_distance_nm": 10,
+        "relative_to_guid": "UNIT-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.add:invalid-invariant-2",
+      "invariant_id": "reference_point_location_form",
+      "operation": "reference_point.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Mixed position",
+        "relative_bearing_deg": 90,
+        "relative_distance_nm": 10,
+        "relative_to_guid": "UNIT-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "latitude": 3,
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:valid",
+      "invariant_id": null,
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "bearing_type": null,
+        "clear_relative": false,
+        "latitude": 3.0,
+        "longitude": null,
+        "name": null,
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": null,
+        "relative_distance_nm": null,
+        "relative_to_guid": null,
+        "relative_to_type": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "bearing_type": "fixed",
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": 90,
+        "relative_distance_nm": 60,
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:valid-2",
+      "invariant_id": null,
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "bearing_type": "fixed",
+        "clear_relative": false,
+        "latitude": null,
+        "longitude": null,
+        "name": null,
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": 90.0,
+        "relative_distance_nm": 60.0,
+        "relative_to_guid": null,
+        "relative_to_type": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "clear_relative": true,
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:valid-3",
+      "invariant_id": null,
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "bearing_type": null,
+        "clear_relative": true,
+        "latitude": null,
+        "longitude": null,
+        "name": null,
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": null,
+        "relative_distance_nm": null,
+        "relative_to_guid": null,
+        "relative_to_type": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "latitude": 3,
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:invalid-extra",
+      "invariant_id": null,
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "latitude": 3,
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:invalid-invariant-1",
+      "invariant_id": "at_least_one_update",
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "reference_point_guid": "RP-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "reference_point_guid": "RP-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:invalid-invariant-2",
+      "invariant_id": "reference_point_relative_form",
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "reference_point_guid": "RP-1",
+        "relative_to_type": "unit",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "clear_relative": true,
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": 30,
+        "side_guid": "SIDE-1"
+      },
+      "id": "reference_point.update:invalid-invariant-3",
+      "invariant_id": "reference_point_relative_form",
+      "operation": "reference_point.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "clear_relative": true,
+        "reference_point_guid": "RP-1",
+        "relative_bearing_deg": 30,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "heading": 90,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:valid",
+      "invariant_id": null,
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "avoid_cavitation": null,
+        "course": null,
+        "depth": null,
+        "desired_heading": null,
+        "force_speed": null,
+        "heading": 90.0,
+        "hold_fire": null,
+        "hold_position": null,
+        "manual_altitude": null,
+        "manual_speed": null,
+        "manual_throttle": null,
+        "move_to": null,
+        "name": null,
+        "obey_emcon": null,
+        "speed": null,
+        "sprint_drift": null,
+        "throttle": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "course": [],
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:valid-2",
+      "invariant_id": null,
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "avoid_cavitation": null,
+        "course": [],
+        "depth": null,
+        "desired_heading": null,
+        "force_speed": null,
+        "heading": null,
+        "hold_fire": null,
+        "hold_position": null,
+        "manual_altitude": null,
+        "manual_speed": null,
+        "manual_throttle": null,
+        "move_to": null,
+        "name": null,
+        "obey_emcon": null,
+        "speed": null,
+        "sprint_drift": null,
+        "throttle": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "move_to": true,
+        "throttle": "Cruise",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:valid-3",
+      "invariant_id": null,
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "avoid_cavitation": null,
+        "course": null,
+        "depth": null,
+        "desired_heading": null,
+        "force_speed": null,
+        "heading": null,
+        "hold_fire": null,
+        "hold_position": null,
+        "manual_altitude": null,
+        "manual_speed": null,
+        "manual_throttle": null,
+        "move_to": true,
+        "name": null,
+        "obey_emcon": null,
+        "speed": null,
+        "sprint_drift": null,
+        "throttle": "Cruise",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "manual_altitude": "Low",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:valid-4",
+      "invariant_id": null,
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "avoid_cavitation": null,
+        "course": null,
+        "depth": null,
+        "desired_heading": null,
+        "force_speed": null,
+        "heading": null,
+        "hold_fire": null,
+        "hold_position": null,
+        "manual_altitude": "Low",
+        "manual_speed": null,
+        "manual_throttle": null,
+        "move_to": null,
+        "name": null,
+        "obey_emcon": null,
+        "speed": null,
+        "sprint_drift": null,
+        "throttle": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "heading": 90,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "heading": 90,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:invalid-invariant-1",
+      "invariant_id": "at_least_one_update",
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "speed": 450,
+        "throttle": "Military",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.set:invalid-invariant-2",
+      "invariant_id": "unit_speed_throttle_exclusive",
+      "operation": "unit.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "speed": 450,
+        "throttle": "Military",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "dbid": 1,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:valid",
+      "invariant_id": null,
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "base_guid": null,
+        "dbid": 1,
+        "latitude": 1.0,
+        "loadout_dbid": null,
+        "longitude": 2.0,
+        "name": "Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "base_guid": "BASE-1",
+        "dbid": 1,
+        "name": "Based Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:valid-2",
+      "invariant_id": null,
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "altitude": null,
+        "base_guid": "BASE-1",
+        "dbid": 1,
+        "latitude": null,
+        "loadout_dbid": null,
+        "longitude": null,
+        "name": "Based Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "dbid": 1,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "dbid": 1,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Alpha",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "dbid": 1,
+        "name": "No location",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:invalid-invariant-1",
+      "invariant_id": "unit_add_location_form",
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "dbid": 1,
+        "name": "No location",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "dbid": 1,
+        "latitude": 1,
+        "name": "Partial coordinates",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:invalid-invariant-2",
+      "invariant_id": "unit_add_location_form",
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "dbid": 1,
+        "latitude": 1,
+        "name": "Partial coordinates",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "base_guid": "BASE-1",
+        "dbid": 1,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Conflicting location",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      },
+      "id": "unit.add:invalid-invariant-3",
+      "invariant_id": "unit_add_location_form",
+      "operation": "unit.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "base_guid": "BASE-1",
+        "dbid": 1,
+        "latitude": 1,
+        "longitude": 2,
+        "name": "Conflicting location",
+        "side_guid": "SIDE-1",
+        "unit_type": "Aircraft"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.assign_mission:valid",
+      "invariant_id": null,
+      "operation": "unit.assign_mission",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "escort": false,
+        "mission_guid": "MISSION-1",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.assign_mission:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.assign_mission",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.unassign_mission:valid",
+      "invariant_id": null,
+      "operation": "unit.unassign_mission",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.unassign_mission:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.unassign_mission",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "loadout_dbid": 1001,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.loadout.set:valid",
+      "invariant_id": null,
+      "operation": "unit.loadout.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "exclude_optional_weapons": false,
+        "ignore_magazines": false,
+        "loadout_dbid": 1001,
+        "time_to_ready_minutes": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "exclude_optional_weapons": true,
+        "ignore_magazines": true,
+        "loadout_dbid": 1001,
+        "time_to_ready_minutes": 30,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.loadout.set:valid-2",
+      "invariant_id": null,
+      "operation": "unit.loadout.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "exclude_optional_weapons": true,
+        "ignore_magazines": true,
+        "loadout_dbid": 1001,
+        "time_to_ready_minutes": 30.0,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "loadout_dbid": 1001,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.loadout.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.loadout.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "loadout_dbid": 1001,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.launch:valid",
+      "invariant_id": null,
+      "operation": "unit.launch",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.launch:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.launch",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.rtb:valid",
+      "invariant_id": null,
+      "operation": "unit.rtb",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.rtb:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.rtb",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.refuel:valid",
+      "invariant_id": null,
+      "operation": "unit.refuel",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "tanker_guid": null,
+        "tanker_mission_guids": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "tanker_guid": "TANKER-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.refuel:valid-2",
+      "invariant_id": null,
+      "operation": "unit.refuel",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "tanker_guid": "TANKER-1",
+        "tanker_mission_guids": null,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "tanker_mission_guids": [
+          "MISSION-1",
+          "MISSION-2"
+        ],
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.refuel:valid-3",
+      "invariant_id": null,
+      "operation": "unit.refuel",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "tanker_guid": null,
+        "tanker_mission_guids": [
+          "MISSION-1",
+          "MISSION-2"
+        ],
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.refuel:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.refuel",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "tanker_guid": "TANKER-1",
+        "tanker_mission_guids": [
+          "MISSION-1"
+        ],
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.refuel:invalid-invariant-1",
+      "invariant_id": "unit_refuel_tanker_selector",
+      "operation": "unit.refuel",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "tanker_guid": "TANKER-1",
+        "tanker_mission_guids": [
+          "MISSION-1"
+        ],
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.attack_contact:valid",
+      "invariant_id": null,
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "mount_dbid": null,
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.attack_contact:valid-2",
+      "invariant_id": null,
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "mount_dbid": null,
+        "quantity": null,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_target",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.attack_contact:valid-3",
+      "invariant_id": null,
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_target",
+        "mount_dbid": null,
+        "quantity": null,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "mount_dbid": 3001,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.attack_contact:valid-4",
+      "invariant_id": null,
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "mount_dbid": 3001,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.attack_contact:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.attack_contact:invalid-invariant-1",
+      "invariant_id": "unit_attack_contact_mode_fields",
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "manual_weapon",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.attack_contact:invalid-invariant-2",
+      "invariant_id": "unit_attack_contact_mode_fields",
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "CAP",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "CAP",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "category": "task_pool",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land"
+        },
+        "name": "Strike pool",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-2",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "task_pool",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land",
+          "target_guids": []
+        },
+        "name": "Strike pool",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "category": "package",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land",
+          "target_guids": [
+            "TARGET-1"
+          ]
+        },
+        "name": "Strike package",
+        "parent_task_pool_guid": "POOL-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-3",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "package",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land",
+          "target_guids": [
+            "TARGET-1"
+          ]
+        },
+        "name": "Strike package",
+        "parent_task_pool_guid": "POOL-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "support",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2"
+          ]
+        },
+        "name": "Support",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-4",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "mission_class": "support",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2"
+          ]
+        },
+        "name": "Support",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "air",
+          "target_guids": [
+            "TARGET-1"
+          ]
+        },
+        "name": "Strike",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-5",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "air",
+          "target_guids": [
+            "TARGET-1"
+          ]
+        },
+        "name": "Strike",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "destination_guid": "BASE-1",
+          "mission_class": "ferry"
+        },
+        "name": "Ferry",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-6",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "destination_guid": "BASE-1",
+          "mission_class": "ferry"
+        },
+        "name": "Ferry",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "mining",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Mining",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-7",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "mission_class": "mining",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Mining",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "mine_clearing",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Mine clearing",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-8",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "mission_class": "mine_clearing",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Mine clearing",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "cargo_subtype": "transfer",
+          "destination_guid": "BASE-1",
+          "mission_class": "cargo"
+        },
+        "name": "Cargo transfer",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-9",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "cargo_subtype": "transfer",
+          "destination_guid": "BASE-1",
+          "mission_class": "cargo",
+          "reference_point_guids": null
+        },
+        "name": "Cargo transfer",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "cargo_subtype": "delivery",
+          "mission_class": "cargo",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Cargo delivery",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:valid-10",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "category": "mission",
+        "details": {
+          "cargo_subtype": "delivery",
+          "destination_guid": null,
+          "mission_class": "cargo",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "Cargo delivery",
+        "parent_task_pool_guid": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "CAP",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2",
+            "RP-3"
+          ]
+        },
+        "name": "CAP",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "category": "package",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land"
+        },
+        "name": "Orphan package",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:invalid-invariant-1",
+      "invariant_id": "mission_category_parent_pool",
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "category": "package",
+        "details": {
+          "mission_class": "strike",
+          "strike_type": "land"
+        },
+        "name": "Orphan package",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2"
+          ]
+        },
+        "name": "CAP",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:invalid-invariant-2",
+      "invariant_id": "mission_details_discriminator",
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "details": {
+          "mission_class": "patrol",
+          "patrol_type": "aaw",
+          "reference_point_guids": [
+            "RP-1",
+            "RP-2"
+          ]
+        },
+        "name": "CAP",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "details": {
+          "cargo_subtype": "transfer",
+          "mission_class": "cargo"
+        },
+        "name": "Invalid cargo transfer",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.create:invalid-invariant-3",
+      "invariant_id": "cargo_mission_form",
+      "operation": "mission.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "details": {
+          "cargo_subtype": "transfer",
+          "mission_class": "cargo"
+        },
+        "name": "Invalid cargo transfer",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "active": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.update:valid",
+      "invariant_id": null,
+      "operation": "mission.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "active": true,
+        "active_emcon": null,
+        "allow_ground_self_delivery": null,
+        "arming_delay": null,
+        "attack_altitude_aircraft": null,
+        "attack_depth_submarine": null,
+        "attack_throttle_aircraft": null,
+        "attack_throttle_ship": null,
+        "attack_throttle_submarine": null,
+        "cargo_subtype": null,
+        "check_opa": null,
+        "check_wwr": null,
+        "destination_guid": null,
+        "end_time": null,
+        "flight_size": null,
+        "focus_on_strike": null,
+        "group_size": null,
+        "laying_method": null,
+        "loop_type": null,
+        "mine_spacing_m": null,
+        "mines_per_set": null,
+        "minimum_aircraft_required": null,
+        "mission_guid": "MISSION-1",
+        "move_all_cargo": null,
+        "on_station": null,
+        "one_third_rule": null,
+        "one_time_only": null,
+        "preplanned_only": null,
+        "prosecution_zone_reference_point_guids": null,
+        "reference_point_guids": null,
+        "set_spacing_m": null,
+        "side_guid": "SIDE-1",
+        "start_time": null,
+        "station_altitude_aircraft": null,
+        "station_depth_submarine": null,
+        "station_throttle_aircraft": null,
+        "station_throttle_ship": null,
+        "station_throttle_submarine": null,
+        "strike_auto_planner": null,
+        "strike_max_distance_aircraft": null,
+        "strike_max_distance_ship": null,
+        "strike_max_flights": null,
+        "strike_min_distance_aircraft": null,
+        "strike_min_distance_ship": null,
+        "strike_minimum_trigger": null,
+        "transit_altitude_aircraft": null,
+        "transit_depth_submarine": null,
+        "transit_throttle_aircraft": null,
+        "transit_throttle_ship": null,
+        "transit_throttle_submarine": null,
+        "use_flight_size": null,
+        "use_group_size": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "prosecution_zone_reference_point_guids": [],
+        "reference_point_guids": [
+          "RP-3",
+          "RP-1",
+          "RP-2",
+          "RP-1"
+        ],
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.update:valid-2",
+      "invariant_id": null,
+      "operation": "mission.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "active": null,
+        "active_emcon": null,
+        "allow_ground_self_delivery": null,
+        "arming_delay": null,
+        "attack_altitude_aircraft": null,
+        "attack_depth_submarine": null,
+        "attack_throttle_aircraft": null,
+        "attack_throttle_ship": null,
+        "attack_throttle_submarine": null,
+        "cargo_subtype": null,
+        "check_opa": null,
+        "check_wwr": null,
+        "destination_guid": null,
+        "end_time": null,
+        "flight_size": null,
+        "focus_on_strike": null,
+        "group_size": null,
+        "laying_method": null,
+        "loop_type": null,
+        "mine_spacing_m": null,
+        "mines_per_set": null,
+        "minimum_aircraft_required": null,
+        "mission_guid": "MISSION-1",
+        "move_all_cargo": null,
+        "on_station": null,
+        "one_third_rule": null,
+        "one_time_only": null,
+        "preplanned_only": null,
+        "prosecution_zone_reference_point_guids": [],
+        "reference_point_guids": [
+          "RP-3",
+          "RP-1",
+          "RP-2",
+          "RP-1"
+        ],
+        "set_spacing_m": null,
+        "side_guid": "SIDE-1",
+        "start_time": null,
+        "station_altitude_aircraft": null,
+        "station_depth_submarine": null,
+        "station_throttle_aircraft": null,
+        "station_throttle_ship": null,
+        "station_throttle_submarine": null,
+        "strike_auto_planner": null,
+        "strike_max_distance_aircraft": null,
+        "strike_max_distance_ship": null,
+        "strike_max_flights": null,
+        "strike_min_distance_aircraft": null,
+        "strike_min_distance_ship": null,
+        "strike_minimum_trigger": null,
+        "transit_altitude_aircraft": null,
+        "transit_depth_submarine": null,
+        "transit_throttle_aircraft": null,
+        "transit_throttle_ship": null,
+        "transit_throttle_submarine": null,
+        "use_flight_size": null,
+        "use_group_size": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "strike_minimum_trigger": "hostile"
+      },
+      "id": "mission.update:valid-3",
+      "invariant_id": null,
+      "operation": "mission.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "active": null,
+        "active_emcon": null,
+        "allow_ground_self_delivery": null,
+        "arming_delay": null,
+        "attack_altitude_aircraft": null,
+        "attack_depth_submarine": null,
+        "attack_throttle_aircraft": null,
+        "attack_throttle_ship": null,
+        "attack_throttle_submarine": null,
+        "cargo_subtype": null,
+        "check_opa": null,
+        "check_wwr": null,
+        "destination_guid": null,
+        "end_time": null,
+        "flight_size": null,
+        "focus_on_strike": null,
+        "group_size": null,
+        "laying_method": null,
+        "loop_type": null,
+        "mine_spacing_m": null,
+        "mines_per_set": null,
+        "minimum_aircraft_required": null,
+        "mission_guid": "MISSION-1",
+        "move_all_cargo": null,
+        "on_station": null,
+        "one_third_rule": null,
+        "one_time_only": null,
+        "preplanned_only": null,
+        "prosecution_zone_reference_point_guids": null,
+        "reference_point_guids": null,
+        "set_spacing_m": null,
+        "side_guid": "SIDE-1",
+        "start_time": null,
+        "station_altitude_aircraft": null,
+        "station_depth_submarine": null,
+        "station_throttle_aircraft": null,
+        "station_throttle_ship": null,
+        "station_throttle_submarine": null,
+        "strike_auto_planner": null,
+        "strike_max_distance_aircraft": null,
+        "strike_max_distance_ship": null,
+        "strike_max_flights": null,
+        "strike_min_distance_aircraft": null,
+        "strike_min_distance_ship": null,
+        "strike_minimum_trigger": "hostile",
+        "transit_altitude_aircraft": null,
+        "transit_depth_submarine": null,
+        "transit_throttle_aircraft": null,
+        "transit_throttle_ship": null,
+        "transit_throttle_submarine": null,
+        "use_flight_size": null,
+        "use_group_size": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "active": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.update:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "active": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.update:invalid-invariant-1",
+      "invariant_id": "at_least_one_update",
+      "operation": "mission.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_mission_guids": [
+          "TANKER-MISSION-1"
+        ],
+        "tanker_usage": "mission"
+      },
+      "id": "mission.air_refueling.update:valid",
+      "invariant_id": null,
+      "operation": "mission.air_refueling.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "fuel_percent_to_start_looking": null,
+        "keep_on_mission_without_tankers_in_place": null,
+        "launch_without_tankers_in_place": null,
+        "max_receivers_in_queue_per_tanker": null,
+        "minimum_tankers_airborne": null,
+        "minimum_tankers_on_station": null,
+        "minimum_tankers_total": null,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_follows_receivers": null,
+        "tanker_max_distance_nm": null,
+        "tanker_max_receivers": null,
+        "tanker_mission_guids": [
+          "TANKER-MISSION-1"
+        ],
+        "tanker_one_time": null,
+        "tanker_usage": "mission",
+        "use_refuel_unrep": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "fuel_percent_to_start_looking": 40,
+        "keep_on_mission_without_tankers_in_place": false,
+        "launch_without_tankers_in_place": false,
+        "max_receivers_in_queue_per_tanker": 3,
+        "minimum_tankers_airborne": 1,
+        "minimum_tankers_on_station": 1,
+        "minimum_tankers_total": 2,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_follows_receivers": true,
+        "tanker_max_distance_nm": "internal",
+        "tanker_mission_guids": [],
+        "tanker_usage": "automatic",
+        "use_refuel_unrep": "Always_IncludingTankersRefuellingTankers"
+      },
+      "id": "mission.air_refueling.update:valid-2",
+      "invariant_id": null,
+      "operation": "mission.air_refueling.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "fuel_percent_to_start_looking": 40.0,
+        "keep_on_mission_without_tankers_in_place": false,
+        "launch_without_tankers_in_place": false,
+        "max_receivers_in_queue_per_tanker": 3,
+        "minimum_tankers_airborne": 1,
+        "minimum_tankers_on_station": 1,
+        "minimum_tankers_total": 2,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_follows_receivers": true,
+        "tanker_max_distance_nm": "internal",
+        "tanker_max_receivers": null,
+        "tanker_mission_guids": [],
+        "tanker_one_time": null,
+        "tanker_usage": "automatic",
+        "use_refuel_unrep": "Always_IncludingTankersRefuellingTankers"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_max_receivers": "Unlimited",
+        "tanker_one_time": true
+      },
+      "id": "mission.air_refueling.update:valid-3",
+      "invariant_id": null,
+      "operation": "mission.air_refueling.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "fuel_percent_to_start_looking": null,
+        "keep_on_mission_without_tankers_in_place": null,
+        "launch_without_tankers_in_place": null,
+        "max_receivers_in_queue_per_tanker": null,
+        "minimum_tankers_airborne": null,
+        "minimum_tankers_on_station": null,
+        "minimum_tankers_total": null,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_follows_receivers": null,
+        "tanker_max_distance_nm": null,
+        "tanker_max_receivers": "Unlimited",
+        "tanker_mission_guids": null,
+        "tanker_one_time": true,
+        "tanker_usage": null,
+        "use_refuel_unrep": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_mission_guids": [
+          "TANKER-MISSION-1"
+        ],
+        "tanker_usage": "mission"
+      },
+      "id": "mission.air_refueling.update:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.air_refueling.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "tanker_mission_guids": [
+          "TANKER-MISSION-1"
+        ],
+        "tanker_usage": "mission"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.air_refueling.update:invalid-invariant-1",
+      "invariant_id": "at_least_one_update",
+      "operation": "mission.air_refueling.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.flight_plan.list:valid",
+      "invariant_id": null,
+      "operation": "mission.flight_plan.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.flight_plan.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.flight_plan.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "time_on_target": "12:30:00"
+      },
+      "id": "mission.flight_plan.create:valid",
+      "invariant_id": null,
+      "operation": "mission.flight_plan.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "takeoff_date": null,
+        "takeoff_time": null,
+        "time_on_target": "12:30:00"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "takeoff_date": "2026/07/16",
+        "takeoff_time": "10:00:00"
+      },
+      "id": "mission.flight_plan.create:valid-2",
+      "invariant_id": null,
+      "operation": "mission.flight_plan.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "date_on_target": null,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "takeoff_date": "2026/07/16",
+        "takeoff_time": "10:00:00",
+        "time_on_target": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "time_on_target": "12:30:00"
+      },
+      "id": "mission.flight_plan.create:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.flight_plan.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "time_on_target": "12:30:00"
+      }
+    },
+    {
+      "caller_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.flight_plan.create:invalid-invariant-1",
+      "invariant_id": "mission_flight_plan_schedule_form",
+      "operation": "mission.flight_plan.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "takeoff_date": "2026/07/16",
+        "takeoff_time": "10:00:00",
+        "time_on_target": "12:00:00"
+      },
+      "id": "mission.flight_plan.create:invalid-invariant-2",
+      "invariant_id": "mission_flight_plan_schedule_form",
+      "operation": "mission.flight_plan.create",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "date_on_target": "2026/07/16",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "takeoff_date": "2026/07/16",
+        "takeoff_time": "10:00:00",
+        "time_on_target": "12:00:00"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      },
+      "id": "mission.target.add:valid",
+      "invariant_id": null,
+      "operation": "mission.target.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      },
+      "id": "mission.target.add:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.target.add",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      },
+      "id": "mission.target.remove:valid",
+      "invariant_id": null,
+      "operation": "mission.target.remove",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      },
+      "id": "mission.target.remove:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.target.remove",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1",
+        "target_guid": "TARGET-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "weapon_control_air": "Hold"
+      },
+      "id": "doctrine.set:valid",
+      "invariant_id": null,
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "automatic_evasion": null,
+        "bvr_logic": null,
+        "dipping_sonar": null,
+        "engage_opportunity_targets": null,
+        "engaging_ambiguous_targets": null,
+        "fuel_state_planned": null,
+        "fuel_state_rtb": null,
+        "ignore_emcon_while_under_attack": null,
+        "ignore_plotted_course": null,
+        "maintain_standoff": null,
+        "mission_guid": null,
+        "nuclear_use": null,
+        "recharge_on_attack": null,
+        "recharge_on_patrol": null,
+        "refuel_unrep": null,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "unit_guid": null,
+        "use_aip": null,
+        "use_sams_in_anti_surface_mode": null,
+        "weapon_control_air": "Hold",
+        "weapon_control_land": null,
+        "weapon_control_subsurface": null,
+        "weapon_control_surface": null,
+        "weapon_state_planned": null,
+        "weapon_state_rtb": null,
+        "withdraw_on_attack": null,
+        "withdraw_on_damage": null,
+        "withdraw_on_defence": null,
+        "withdraw_on_fuel": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "unit",
+        "side_guid": "SIDE-1",
+        "unit_guid": "UNIT-1",
+        "weapon_control_air": "inherit"
+      },
+      "id": "doctrine.set:valid-2",
+      "invariant_id": null,
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "automatic_evasion": null,
+        "bvr_logic": null,
+        "dipping_sonar": null,
+        "engage_opportunity_targets": null,
+        "engaging_ambiguous_targets": null,
+        "fuel_state_planned": null,
+        "fuel_state_rtb": null,
+        "ignore_emcon_while_under_attack": null,
+        "ignore_plotted_course": null,
+        "maintain_standoff": null,
+        "mission_guid": null,
+        "nuclear_use": null,
+        "recharge_on_attack": null,
+        "recharge_on_patrol": null,
+        "refuel_unrep": null,
+        "scope": "unit",
+        "side_guid": "SIDE-1",
+        "unit_guid": "UNIT-1",
+        "use_aip": null,
+        "use_sams_in_anti_surface_mode": null,
+        "weapon_control_air": "inherit",
+        "weapon_control_land": null,
+        "weapon_control_subsurface": null,
+        "weapon_control_surface": null,
+        "weapon_state_planned": null,
+        "weapon_state_rtb": null,
+        "withdraw_on_attack": null,
+        "withdraw_on_damage": null,
+        "withdraw_on_defence": null,
+        "withdraw_on_fuel": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "automatic_evasion": "inherit",
+        "engage_opportunity_targets": "inherit",
+        "ignore_emcon_while_under_attack": "inherit",
+        "ignore_plotted_course": "inherit",
+        "maintain_standoff": "inherit",
+        "mission_guid": "MISSION-1",
+        "scope": "mission",
+        "side_guid": "SIDE-1",
+        "use_sams_in_anti_surface_mode": "inherit"
+      },
+      "id": "doctrine.set:valid-3",
+      "invariant_id": null,
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "automatic_evasion": "inherit",
+        "bvr_logic": null,
+        "dipping_sonar": null,
+        "engage_opportunity_targets": "inherit",
+        "engaging_ambiguous_targets": null,
+        "fuel_state_planned": null,
+        "fuel_state_rtb": null,
+        "ignore_emcon_while_under_attack": "inherit",
+        "ignore_plotted_course": "inherit",
+        "maintain_standoff": "inherit",
+        "mission_guid": "MISSION-1",
+        "nuclear_use": null,
+        "recharge_on_attack": null,
+        "recharge_on_patrol": null,
+        "refuel_unrep": null,
+        "scope": "mission",
+        "side_guid": "SIDE-1",
+        "unit_guid": null,
+        "use_aip": null,
+        "use_sams_in_anti_surface_mode": "inherit",
+        "weapon_control_air": null,
+        "weapon_control_land": null,
+        "weapon_control_subsurface": null,
+        "weapon_control_surface": null,
+        "weapon_state_planned": null,
+        "weapon_state_rtb": null,
+        "withdraw_on_attack": null,
+        "withdraw_on_damage": null,
+        "withdraw_on_defence": null,
+        "withdraw_on_fuel": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "weapon_control_air": "Hold"
+      },
+      "id": "doctrine.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "weapon_control_air": "Hold"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      },
+      "id": "doctrine.set:invalid-invariant-1",
+      "invariant_id": "at_least_one_update",
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "engage_opportunity_targets": "true",
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      },
+      "id": "doctrine.set:invalid-invariant-2",
+      "invariant_id": null,
+      "operation": "doctrine.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "engage_opportunity_targets": "true",
+        "scope": "side",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "radar": "Passive",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      },
+      "id": "emcon.set:valid",
+      "invariant_id": null,
+      "operation": "emcon.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "emcon": "Radar=Passive",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "inherit": true,
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      },
+      "id": "emcon.set:valid-2",
+      "invariant_id": null,
+      "operation": "emcon.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "emcon": "Inherit",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "radar": "Passive",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      },
+      "id": "emcon.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "emcon.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "radar": "Passive",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      },
+      "id": "emcon.set:invalid-invariant-1",
+      "invariant_id": "emcon_has_clause",
+      "operation": "emcon.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "emcon": "Inherit=Yes",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      },
+      "id": "emcon.set:invalid-invariant-2",
+      "invariant_id": "emcon_has_clause",
+      "operation": "emcon.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "emcon": "Inherit=Yes",
+        "scope": "unit",
+        "target_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "code": 2
+      },
+      "id": "scenario.time_compression.set:valid",
+      "invariant_id": null,
+      "operation": "scenario.time_compression.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "code": 2
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "code": 2
+      },
+      "id": "scenario.time_compression.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "scenario.time_compression.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "code": 2
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_a_guid": "SIDE-1",
+        "side_b_guid": "SIDE-2"
+      },
+      "id": "side.posture.get:valid",
+      "invariant_id": null,
+      "operation": "side.posture.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_a_guid": "SIDE-1",
+        "side_b_guid": "SIDE-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_a_guid": "SIDE-1",
+        "side_b_guid": "SIDE-2"
+      },
+      "id": "side.posture.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "side.posture.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_a_guid": "SIDE-1",
+        "side_b_guid": "SIDE-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.get:valid",
+      "invariant_id": null,
+      "operation": "contact.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "contact.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1"
+      },
+      "id": "contact.get:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "contact.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "posture": "H",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.posture.set:valid",
+      "invariant_id": null,
+      "operation": "contact.posture.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "posture": "H",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "posture": "H",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.posture.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "contact.posture.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "posture": "H",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.weapon_allocations.get:valid",
+      "invariant_id": null,
+      "operation": "contact.weapon_allocations.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "contact.weapon_allocations.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "contact.weapon_allocations.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.inventory.get:valid",
+      "invariant_id": null,
+      "operation": "unit.inventory.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.inventory.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.inventory.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "active": true,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.sensor.set:valid",
+      "invariant_id": null,
+      "operation": "unit.sensor.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "active": true,
+        "obey_emcon": null,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "active": false,
+        "obey_emcon": false,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.sensor.set:valid-2",
+      "invariant_id": null,
+      "operation": "unit.sensor.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "active": false,
+        "obey_emcon": false,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "active": true,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.sensor.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.sensor.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "active": true,
+        "sensor_guid": "SENSOR-1",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "magazine_guid": "MAG-1",
+        "mode": "add",
+        "quantity": 4,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.magazine.adjust:valid",
+      "invariant_id": null,
+      "operation": "unit.magazine.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "allow_new": null,
+        "magazine_guid": "MAG-1",
+        "max_capacity": null,
+        "mode": "add",
+        "quantity": 4,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "allow_new": true,
+        "magazine_guid": "MAG-1",
+        "max_capacity": 20,
+        "mode": "fill",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.magazine.adjust:valid-2",
+      "invariant_id": null,
+      "operation": "unit.magazine.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "allow_new": true,
+        "magazine_guid": "MAG-1",
+        "max_capacity": 20,
+        "mode": "fill",
+        "quantity": null,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "magazine_guid": "MAG-1",
+        "mode": "remove",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.magazine.adjust:valid-3",
+      "invariant_id": null,
+      "operation": "unit.magazine.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "allow_new": null,
+        "magazine_guid": "MAG-1",
+        "max_capacity": null,
+        "mode": "remove",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "magazine_guid": "MAG-1",
+        "mode": "add",
+        "quantity": 4,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.magazine.adjust:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.magazine.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "magazine_guid": "MAG-1",
+        "mode": "add",
+        "quantity": 4,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "magazine_guid": "MAG-1",
+        "mode": "fill",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.magazine.adjust:invalid-invariant-1",
+      "invariant_id": "inventory_adjust_mode_fields",
+      "operation": "unit.magazine.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "magazine_guid": "MAG-1",
+        "mode": "fill",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "mode": "fill",
+        "mount_guid": "MOUNT-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.mount_reload.adjust:valid",
+      "invariant_id": null,
+      "operation": "unit.mount_reload.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "add_as_cell": null,
+        "mode": "fill",
+        "mount_guid": "MOUNT-1",
+        "quantity": null,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "add_as_cell": true,
+        "mode": "add",
+        "mount_guid": "MOUNT-1",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.mount_reload.adjust:valid-2",
+      "invariant_id": null,
+      "operation": "unit.mount_reload.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "add_as_cell": true,
+        "mode": "add",
+        "mount_guid": "MOUNT-1",
+        "quantity": 1,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mode": "fill",
+        "mount_guid": "MOUNT-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.mount_reload.adjust:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.mount_reload.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "mode": "fill",
+        "mount_guid": "MOUNT-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "mode": "add",
+        "mount_guid": "MOUNT-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.mount_reload.adjust:invalid-invariant-1",
+      "invariant_id": "inventory_adjust_mode_fields",
+      "operation": "unit.mount_reload.adjust",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "mode": "add",
+        "mount_guid": "MOUNT-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1"
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      },
+      "id": "unit.cargo.transfer:valid",
+      "invariant_id": null,
+      "operation": "unit.cargo.transfer",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1",
+            "dbid": null,
+            "quantity": null
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "dbid": 4001,
+            "quantity": 3
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      },
+      "id": "unit.cargo.transfer:valid-2",
+      "invariant_id": null,
+      "operation": "unit.cargo.transfer",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": null,
+            "dbid": 4001,
+            "quantity": 3
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1"
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      },
+      "id": "unit.cargo.transfer:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.cargo.transfer",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1"
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1",
+            "dbid": 4001,
+            "quantity": 1
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      },
+      "id": "unit.cargo.transfer:invalid-invariant-1",
+      "invariant_id": "cargo_transfer_item_form",
+      "operation": "unit.cargo.transfer",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "from_unit_guid": "UNIT-1",
+        "items": [
+          {
+            "cargo_guid": "CARGO-1",
+            "dbid": 4001,
+            "quantity": 1
+          }
+        ],
+        "to_unit_guid": "UNIT-2"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.cargo.unload:valid",
+      "invariant_id": null,
+      "operation": "unit.cargo.unload",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.cargo.unload:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.cargo.unload",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "action": "assign",
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "quantity": 2,
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.cargo.update:valid",
+      "invariant_id": null,
+      "operation": "mission.cargo.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "action": "assign",
+        "cargo_guid": null,
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "object_type": null,
+        "quantity": 2,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "action": "unassign",
+        "cargo_guid": "CARGO-1",
+        "cargo_kind": "object",
+        "dbid": 4001,
+        "mission_guid": "MISSION-1",
+        "object_type": 2,
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.cargo.update:valid-2",
+      "invariant_id": null,
+      "operation": "mission.cargo.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "action": "unassign",
+        "cargo_guid": "CARGO-1",
+        "cargo_kind": "object",
+        "dbid": 4001,
+        "mission_guid": "MISSION-1",
+        "object_type": 2,
+        "quantity": null,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "action": "assign",
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "quantity": 2,
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.cargo.update:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.cargo.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "action": "assign",
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "quantity": 2,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "action": "assign",
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.cargo.update:invalid-invariant-1",
+      "invariant_id": "mission_cargo_form",
+      "operation": "mission.cargo.update",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "action": "assign",
+        "cargo_kind": "mount",
+        "dbid": 3001,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type"
+      },
+      "id": "doctrine.wra.get:valid",
+      "invariant_id": null,
+      "operation": "doctrine.wra.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": null,
+        "full_wra": false,
+        "mission_guid": null,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "unit_guid": null,
+        "weapon_dbid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "full_wra": true,
+        "scope": "unit",
+        "side_guid": "SIDE-1",
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      },
+      "id": "doctrine.wra.get:valid-2",
+      "invariant_id": null,
+      "operation": "doctrine.wra.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "full_wra": true,
+        "mission_guid": null,
+        "scope": "unit",
+        "side_guid": "SIDE-1",
+        "target_type": null,
+        "unit_guid": "UNIT-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type"
+      },
+      "id": "doctrine.wra.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "doctrine.wra.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type"
+      },
+      "id": "doctrine.wra.get:invalid-invariant-1",
+      "invariant_id": "doctrine_wra_target_selector",
+      "operation": "doctrine.wra.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type"
+      }
+    },
+    {
+      "caller_arguments": {
+        "firing_range": 50.0,
+        "scope": "side",
+        "self_defence_range": "max",
+        "shooters_per_salvo": 2,
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      },
+      "id": "doctrine.wra.set:valid",
+      "invariant_id": null,
+      "operation": "doctrine.wra.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": null,
+        "firing_range": 50.0,
+        "mission_guid": null,
+        "scope": "side",
+        "self_defence_range": "max",
+        "shooters_per_salvo": 2,
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "unit_guid": null,
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      }
+    },
+    {
+      "caller_arguments": {
+        "contact_guid": "CONTACT-1",
+        "firing_range": 75,
+        "mission_guid": "MISSION-1",
+        "scope": "mission",
+        "self_defence_range": "system",
+        "shooters_per_salvo": "inherit",
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "max"
+      },
+      "id": "doctrine.wra.set:valid-2",
+      "invariant_id": null,
+      "operation": "doctrine.wra.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "contact_guid": "CONTACT-1",
+        "firing_range": 75,
+        "mission_guid": "MISSION-1",
+        "scope": "mission",
+        "self_defence_range": "system",
+        "shooters_per_salvo": "inherit",
+        "side_guid": "SIDE-1",
+        "target_type": null,
+        "unit_guid": null,
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "max"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "firing_range": 50.0,
+        "scope": "side",
+        "self_defence_range": "max",
+        "shooters_per_salvo": 2,
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      },
+      "id": "doctrine.wra.set:invalid-extra",
+      "invariant_id": null,
+      "operation": "doctrine.wra.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "firing_range": 50.0,
+        "scope": "side",
+        "self_defence_range": "max",
+        "shooters_per_salvo": 2,
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      }
+    },
+    {
+      "caller_arguments": {
+        "firing_range": "max",
+        "scope": "side",
+        "self_defence_range": "inherit",
+        "shooters_per_salvo": "inherit",
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      },
+      "id": "doctrine.wra.set:invalid-invariant-1",
+      "invariant_id": "doctrine_wra_target_selector",
+      "operation": "doctrine.wra.set",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "firing_range": "max",
+        "scope": "side",
+        "self_defence_range": "inherit",
+        "shooters_per_salvo": "inherit",
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "special_action.list:valid",
+      "invariant_id": null,
+      "operation": "special_action.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_guid": null,
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "special_action.list:valid-2",
+      "invariant_id": null,
+      "operation": "special_action.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_name": "Blue"
+      },
+      "id": "special_action.list:valid-3",
+      "invariant_id": null,
+      "operation": "special_action.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_guid": null,
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "special_action.list:invalid-extra",
+      "invariant_id": null,
+      "operation": "special_action.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      },
+      "id": "special_action.list:invalid-invariant-1",
+      "invariant_id": "at_most_one_side_selector",
+      "operation": "special_action.list",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {
+        "action_guid": "ACTION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "special_action.execute:valid",
+      "invariant_id": null,
+      "operation": "special_action.execute",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "action_guid": "ACTION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "action_guid": "ACTION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "special_action.execute:invalid-extra",
+      "invariant_id": null,
+      "operation": "special_action.execute",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "action_guid": "ACTION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.delete:valid",
+      "invariant_id": null,
+      "operation": "unit.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": true,
+      "wire_arguments": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.delete:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guid": "UNIT-1"
+      },
+      "id": "unit.delete:invalid-invariant-1",
+      "invariant_id": "trusted_confirmation",
+      "operation": "unit.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.delete:valid",
+      "invariant_id": null,
+      "operation": "mission.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": true,
+      "wire_arguments": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.delete:invalid-extra",
+      "invariant_id": null,
+      "operation": "mission.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "confirmation_proof": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "mission.delete:invalid-invariant-1",
+      "invariant_id": "trusted_confirmation",
+      "operation": "mission.delete",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "mission_guid": "MISSION-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "side": "Blue"
+        },
+        "function": "ScenEdit_GetScore"
+      },
+      "id": "lua.call:valid",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "side": "Blue"
+        },
+        "function": "ScenEdit_GetScore"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_GetWeather"
+      },
+      "id": "lua.call:valid-2",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_GetWeather"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "rainfall": 5,
+          "sea_state": 3,
+          "temperature_c": -20,
+          "undercloud_fraction": 0.4
+        },
+        "function": "ScenEdit_SetWeather"
+      },
+      "id": "lua.call:valid-3",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "rainfall": 5.0,
+          "sea_state": 3,
+          "temperature_c": -20.0,
+          "undercloud_fraction": 0.4
+        },
+        "function": "ScenEdit_SetWeather"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "title": "Northern Shield"
+        },
+        "function": "SetScenarioTitle"
+      },
+      "id": "lua.call:valid-4",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "title": "Northern Shield"
+        },
+        "function": "SetScenarioTitle"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "current_time": "2026-07-16T12:00:00",
+          "duration": "1:06:00"
+        },
+        "function": "ScenEdit_SetTime"
+      },
+      "id": "lua.call:valid-5",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "current_time": "2026-07-16T12:00:00",
+          "duration": "1:06:00",
+          "start_time": null
+        },
+        "function": "ScenEdit_SetTime"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "name": "OPFOR"
+        },
+        "function": "ScenEdit_AddSide"
+      },
+      "id": "lua.call:valid-6",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "name": "OPFOR"
+        },
+        "function": "ScenEdit_AddSide"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "awareness": "Blind",
+          "computer_controlled_only": true,
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_SetSideOptions"
+      },
+      "id": "lua.call:valid-7",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "auto_track_civilians": null,
+          "awareness": "Blind",
+          "collective_responsibility": null,
+          "computer_controlled_only": true,
+          "proficiency": null,
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_SetSideOptions"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "posture": "H",
+          "side_a_guid": "SIDE-1",
+          "side_b_guid": "SIDE-2"
+        },
+        "function": "ScenEdit_SetSidePosture"
+      },
+      "id": "lua.call:valid-8",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "posture": "H",
+          "side_a_guid": "SIDE-1",
+          "side_b_guid": "SIDE-2"
+        },
+        "function": "ScenEdit_SetSidePosture"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "reason": "Primary objective achieved",
+          "score": 250,
+          "side": "Blue"
+        },
+        "function": "ScenEdit_SetScore"
+      },
+      "id": "lua.call:valid-9",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "reason": "Primary objective achieved",
+          "score": 250,
+          "side": "Blue"
+        },
+        "function": "ScenEdit_SetScore"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "level": 4
+        },
+        "function": "ScenEdit_GetEvents"
+      },
+      "id": "lua.call:valid-10",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "level": 4
+        },
+        "function": "ScenEdit_GetEvents"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "event_id_or_name": "EVENT-1",
+          "level": 4
+        },
+        "function": "ScenEdit_GetEvent"
+      },
+      "id": "lua.call:valid-11",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "event_id_or_name": "EVENT-1",
+          "level": 4
+        },
+        "function": "ScenEdit_GetEvent"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "active": false,
+          "event_id_or_name": "Enemy detected",
+          "mode": "add",
+          "probability": 100,
+          "repeatable": false,
+          "shown": false
+        },
+        "function": "ScenEdit_SetEvent"
+      },
+      "id": "lua.call:valid-12",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "active": false,
+          "event_id_or_name": "Enemy detected",
+          "mode": "add",
+          "new_description": null,
+          "probability": 100,
+          "repeatable": false,
+          "shown": false
+        },
+        "function": "ScenEdit_SetEvent"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "Every five minutes",
+          "component_type": "RegularTime",
+          "mode": "add",
+          "parameters_json": "{\"Interval\":300}"
+        },
+        "function": "ScenEdit_SetTrigger"
+      },
+      "id": "lua.call:valid-13",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "Every five minutes",
+          "component_type": "RegularTime",
+          "mode": "add",
+          "new_description": null,
+          "parameters_json": "{\"Interval\":300}"
+        },
+        "function": "ScenEdit_SetTrigger"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "Scenario started",
+          "component_type": "ScenHasStarted",
+          "mode": "add",
+          "parameters_json": "{}"
+        },
+        "function": "ScenEdit_SetCondition"
+      },
+      "id": "lua.call:valid-14",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "Scenario started",
+          "component_type": "ScenHasStarted",
+          "mode": "add",
+          "new_description": null,
+          "parameters_json": "{}"
+        },
+        "function": "ScenEdit_SetCondition"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "Notify Blue",
+          "component_type": "LuaScript",
+          "mode": "add",
+          "parameters_json": "{\"ScriptText\":\"return true\\r\\n\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      },
+      "id": "lua.call:valid-15",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "Notify Blue",
+          "component_type": "LuaScript",
+          "mode": "add",
+          "new_description": null,
+          "parameters_json": "{\"ScriptText\":\"return true\\r\\n\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "TRIGGER-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add"
+        },
+        "function": "ScenEdit_SetEventTrigger"
+      },
+      "id": "lua.call:valid-16",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "TRIGGER-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add",
+          "replacement_id_or_name": null
+        },
+        "function": "ScenEdit_SetEventTrigger"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "CONDITION-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add"
+        },
+        "function": "ScenEdit_SetEventCondition"
+      },
+      "id": "lua.call:valid-17",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "CONDITION-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add",
+          "replacement_id_or_name": null
+        },
+        "function": "ScenEdit_SetEventCondition"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add"
+        },
+        "function": "ScenEdit_SetEventAction"
+      },
+      "id": "lua.call:valid-18",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "event_id_or_name": "EVENT-1",
+          "mode": "add",
+          "replacement_id_or_name": null
+        },
+        "function": "ScenEdit_SetEventAction"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "active": false,
+          "description": "Launch the reserve package.",
+          "name": "Launch reserve",
+          "repeatable": false,
+          "script_text": "return true\r\n",
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_AddSpecialAction"
+      },
+      "id": "lua.call:valid-19",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "active": false,
+          "description": "Launch the reserve package.",
+          "name": "Launch reserve",
+          "repeatable": false,
+          "script_text": "return true\r\n",
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_AddSpecialAction"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "action_id_or_name": "ACTION-1",
+          "active": true,
+          "mode": "update",
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_SetSpecialAction"
+      },
+      "id": "lua.call:valid-20",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "action_id_or_name": "ACTION-1",
+          "active": true,
+          "description": null,
+          "mode": "update",
+          "new_name": null,
+          "repeatable": null,
+          "script_text": null,
+          "side_guid": "SIDE-1"
+        },
+        "function": "ScenEdit_SetSpecialAction"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "arguments": {
+          "side": "Blue"
+        },
+        "function": "ScenEdit_GetScore"
+      },
+      "id": "lua.call:invalid-extra",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "arguments": {
+          "side": "Blue"
+        },
+        "function": "ScenEdit_GetScore"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_DeleteUnit"
+      },
+      "id": "lua.call:invalid-invariant-1",
+      "invariant_id": "lua_function_arguments",
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_DeleteUnit"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_GetScore"
+      },
+      "id": "lua.call:invalid-invariant-2",
+      "invariant_id": "lua_function_arguments",
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "arguments": {},
+        "function": "ScenEdit_GetScore"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "observational"
+      },
+      "id": "compat.probe.step:valid",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "observational"
+      }
+    },
+    {
+      "caller_arguments": {
+        "candidate_bytes": 1024,
+        "step": "payload"
+      },
+      "id": "compat.probe.step:valid-2",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "candidate_bytes": 1024,
+        "step": "payload"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "high-speed"
+      },
+      "id": "compat.probe.step:valid-3",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "high-speed"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "lineage"
+      },
+      "id": "compat.probe.step:valid-4",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "lineage"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "key-value"
+      },
+      "id": "compat.probe.step:valid-5",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "key-value"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "dedupe"
+      },
+      "id": "compat.probe.step:valid-6",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "dedupe"
+      }
+    },
+    {
+      "caller_arguments": {
+        "step": "indeterminate"
+      },
+      "id": "compat.probe.step:valid-7",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "step": "indeterminate"
+      }
+    },
+    {
+      "caller_arguments": {
+        "candidate_entries": 32,
+        "step": "ledger-capacity"
+      },
+      "id": "compat.probe.step:valid-8",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "candidate_entries": 32,
+        "step": "ledger-capacity"
+      }
+    },
+    {
+      "caller_arguments": {
+        "effective_ledger_capacity": 32,
+        "safe_payload_bytes": 4096,
+        "step": "apply-profile",
+        "verified_ledger_entries": 32
+      },
+      "id": "compat.probe.step:valid-9",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "effective_ledger_capacity": 32,
+        "safe_payload_bytes": 4096,
+        "step": "apply-profile",
+        "verified_ledger_entries": 32
+      }
+    },
+    {
+      "caller_arguments": {
+        "effective_ledger_capacity": 2,
+        "safe_payload_bytes": 4096,
+        "step": "apply-profile",
+        "verified_ledger_entries": 1
+      },
+      "id": "compat.probe.step:valid-10",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "effective_ledger_capacity": 2,
+        "safe_payload_bytes": 4096,
+        "step": "apply-profile",
+        "verified_ledger_entries": 1
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "step": "observational"
+      },
+      "id": "compat.probe.step:invalid-extra",
+      "invariant_id": null,
+      "operation": "compat.probe.step",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "step": "observational"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.prepare:valid",
+      "invariant_id": null,
+      "operation": "bridge.prepare",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "control_side": null,
+        "persist_game_root": true,
+        "poll_interval_code": "1",
+        "replace_saved_game_root": false,
+        "rotate_lineage": false
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "bridge.prepare:invalid-extra",
+      "invariant_id": null,
+      "operation": "bridge.prepare",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "bridge.doctor:valid",
+      "invariant_id": null,
+      "operation": "bridge.doctor",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "live": true
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true
+      },
+      "id": "bridge.doctor:invalid-extra",
+      "invariant_id": null,
+      "operation": "bridge.doctor",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "command"
+      },
+      "id": "bridge.uninstall:valid",
+      "invariant_id": null,
+      "operation": "bridge.uninstall",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "phase": "command",
+        "uninstall_marker": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "files",
+        "uninstall_marker": "verified-marker"
+      },
+      "id": "bridge.uninstall:valid-2",
+      "invariant_id": null,
+      "operation": "bridge.uninstall",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "phase": "files",
+        "uninstall_marker": "verified-marker"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "phase": "command"
+      },
+      "id": "bridge.uninstall:invalid-extra",
+      "invariant_id": null,
+      "operation": "bridge.uninstall",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "phase": "command"
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "command",
+        "uninstall_marker": "marker"
+      },
+      "id": "bridge.uninstall:invalid-invariant-1",
+      "invariant_id": "uninstall_phase_marker",
+      "operation": "bridge.uninstall",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "phase": "command",
+        "uninstall_marker": "marker"
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "automatic"
+      },
+      "id": "compat.probe:valid",
+      "invariant_id": null,
+      "operation": "compat.probe",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "case": null,
+        "phase": "automatic"
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "arm-paused-special-action"
+      },
+      "id": "compat.probe:valid-2",
+      "invariant_id": null,
+      "operation": "compat.probe",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "case": null,
+        "phase": "arm-paused-special-action"
+      }
+    },
+    {
+      "caller_arguments": {
+        "phase": "collect-paused-special-action"
+      },
+      "id": "compat.probe:valid-3",
+      "invariant_id": null,
+      "operation": "compat.probe",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "case": null,
+        "phase": "collect-paused-special-action"
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "phase": "automatic"
+      },
+      "id": "compat.probe:invalid-extra",
+      "invariant_id": null,
+      "operation": "compat.probe",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "phase": "automatic"
+      }
+    },
+    {
+      "caller_arguments": {
+        "case": "high-speed",
+        "phase": "collect-paused-special-action"
+      },
+      "id": "compat.probe:invalid-invariant-1",
+      "invariant_id": "compat_phase_case",
+      "operation": "compat.probe",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "case": "high-speed",
+        "phase": "collect-paused-special-action"
+      }
+    }
+  ],
+  "manifest_sha256": "f0c3511a00d740e89235851136bd5ecc1f0ef7b4409608c1d929f006e143612e"
+}
