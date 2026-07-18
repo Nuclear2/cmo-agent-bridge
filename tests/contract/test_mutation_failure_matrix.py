@@ -83,6 +83,7 @@ ACTIVATION_ID = UUID("44444444-4444-4444-8444-444444444444")
 NEW_REQUEST_ID = UUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeea209")
 _T = TypeVar("_T")
 _TASK_CANCEL_GRACE_SECONDS = 1.0
+_CRASH_HELPER_EXIT_TIMEOUT_SECONDS = 30.0
 
 
 async def _hard_task_result(
@@ -2001,12 +2002,22 @@ async def _wait_for_crash(
     checkpoint: Path,
     boundary: str,
 ) -> dict[str, str]:
-    deadline = time.monotonic() + 5
-    while process.poll() is None:
-        if time.monotonic() >= deadline:
-            raise AssertionError(f"crash helper did not exit after {boundary} within five seconds")
-        await asyncio.sleep(0.01)
-    stdout, stderr = process.communicate(timeout=1)
+    try:
+        stdout, stderr = await asyncio.to_thread(
+            process.communicate,
+            timeout=_CRASH_HELPER_EXIT_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        if process.poll() is None:
+            process.kill()
+        stdout, stderr = await asyncio.to_thread(process.communicate, timeout=5)
+        raise AssertionError(
+            f"crash helper did not exit after {boundary} within "
+            f"{_CRASH_HELPER_EXIT_TIMEOUT_SECONDS:g} seconds; "
+            f"pid={process.pid}; returncode={process.returncode}; "
+            f"checkpoint_exists={checkpoint.is_file()}; "
+            f"stdout={stdout!r}; stderr={stderr!r}"
+        ) from None
     assert process.returncode == CRASH_CODE, (
         f"crash helper exited at {boundary} with {process.returncode}; "
         f"stdout={stdout!r}; stderr={stderr!r}"

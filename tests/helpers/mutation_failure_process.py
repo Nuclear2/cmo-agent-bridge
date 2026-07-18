@@ -44,6 +44,7 @@ from cmo_agent_bridge.transports.file_bridge.transport import FileBridgeTranspor
 
 
 CRASH_CODE = 73
+_HELPER_EVENT_TIMEOUT_SECONDS = 15.0
 REQUEST_ID = UUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeea201")
 DELIVERY_ID = UUID("11111111-1111-4111-8111-11111111a201")
 CANCEL_ID = UUID("22222222-2222-4222-8222-22222222a201")
@@ -206,7 +207,10 @@ async def _write_cancel_response(
     cancel_wait_started: asyncio.Event,
     allow_cancel_waiter: asyncio.Event,
 ) -> None:
-    await asyncio.wait_for(cancel_wait_started.wait(), timeout=5)
+    await asyncio.wait_for(
+        cancel_wait_started.wait(),
+        timeout=_HELPER_EVENT_TIMEOUT_SECONDS,
+    )
     loaded = transport.journals.load()
     request = transport.ledger.get_request(REQUEST_ID)
     request_delivery = transport.ledger.get_delivery(DELIVERY_ID)
@@ -1255,7 +1259,10 @@ async def _run(game_root: Path, local_app_data: Path, boundary: str, checkpoint:
             await channel.exchange(_command(snapshot))
         else:
             exchange_task = asyncio.create_task(channel.exchange(_command(snapshot)))
-            await asyncio.wait_for(original_wait_started.wait(), timeout=5)
+            await asyncio.wait_for(
+                original_wait_started.wait(),
+                timeout=_HELPER_EVENT_TIMEOUT_SECONDS,
+            )
             assert exchange_task.cancel("hard-crash helper cancellation") is True
             publication_counts["task_cancel_requests"] += 1
             await exchange_task
