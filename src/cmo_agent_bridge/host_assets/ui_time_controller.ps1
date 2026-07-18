@@ -72,7 +72,56 @@ public static class CmoForegroundWindow
 
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
-    public static extern bool SetForegroundWindow(IntPtr windowHandle);
+    private static extern bool SetForegroundWindow(IntPtr windowHandle);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern uint GetWindowThreadProcessId(
+        IntPtr windowHandle,
+        out uint processId
+    );
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool AttachThreadInput(
+        uint attachThreadId,
+        uint attachToThreadId,
+        [MarshalAs(UnmanagedType.Bool)] bool attach
+    );
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
+
+    public static uint GetWindowProcessId(IntPtr windowHandle)
+    {
+        uint processId;
+        return GetWindowThreadProcessId(windowHandle, out processId) == 0 ? 0 : processId;
+    }
+
+    public static uint GetWindowThreadId(IntPtr windowHandle)
+    {
+        uint processId;
+        return GetWindowThreadProcessId(windowHandle, out processId);
+    }
+
+    public static bool IsWindowOwnedByProcess(IntPtr windowHandle, uint processId)
+    {
+        return windowHandle != IntPtr.Zero &&
+            IsWindow(windowHandle) &&
+            GetWindowProcessId(windowHandle) == processId;
+    }
+
+    public static bool TrySetForegroundWindowFromProcess(
+        IntPtr targetWindow,
+        uint expectedForegroundProcessId
+    )
+    {
+        IntPtr currentForeground = GetForegroundWindow();
+        if (!IsWindowOwnedByProcess(currentForeground, expectedForegroundProcessId))
+        {
+            return false;
+        }
+        return SetForegroundWindow(targetWindow);
+    }
 }
 "@
 }
@@ -728,44 +777,158 @@ function Get-Snapshot {
     }
 }
 
+function Wait-OriginalForeground {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$OriginalForeground,
+
+        [Parameter(Mandatory = $true)]
+        [uint32]$OriginalProcessId,
+
+        [ValidateRange(1, 10)]
+        [int]$RetryCount = 5
+    )
+
+    for ($attempt = 0; $attempt -lt $RetryCount; $attempt++) {
+        $currentForeground = [CmoForegroundWindow]::GetForegroundWindow()
+        $currentProcessId = [CmoForegroundWindow]::GetWindowProcessId($currentForeground)
+        if (
+            $currentForeground -eq $OriginalForeground -or
+            ($currentProcessId -ne 0 -and $currentProcessId -eq $OriginalProcessId)
+        ) {
+            return $true
+        }
+        if ($currentProcessId -ne $ProcessId) {
+            # The user selected another application while the CMO action was settling.
+            return $false
+        }
+        if ($attempt -lt ($RetryCount - 1)) {
+            Start-Sleep -Milliseconds 20
+        }
+    }
+    return $false
+}
+
 function Restore-OriginalForeground {
     param(
         [Parameter(Mandatory = $true)]
         [IntPtr]$OriginalForeground,
 
         [Parameter(Mandatory = $true)]
-        [IntPtr]$CmoWindow
+        [uint32]$OriginalProcessId
     )
 
     if (
         $OriginalForeground -eq [IntPtr]::Zero -or
-        $OriginalForeground -eq $CmoWindow -or
-        -not [CmoForegroundWindow]::IsWindow($OriginalForeground)
+        $OriginalProcessId -eq 0 -or
+        $OriginalProcessId -eq $ProcessId -or
+        -not [CmoForegroundWindow]::IsWindowOwnedByProcess(
+            $OriginalForeground,
+            $OriginalProcessId
+        )
     ) {
         return
     }
+
     $currentForeground = [CmoForegroundWindow]::GetForegroundWindow()
-    if ($currentForeground -ne $CmoWindow) {
+    if (-not [CmoForegroundWindow]::IsWindowOwnedByProcess($currentForeground, $ProcessId)) {
+        # Never take focus back from an application the user selected during the action.
         return
     }
 
-    if (-not [CmoForegroundWindow]::SetForegroundWindow($OriginalForeground)) {
-        try {
-            $originalRoot = [Windows.Automation.AutomationElement]::FromHandle($OriginalForeground)
-            if ($null -ne $originalRoot) {
-                $originalRoot.SetFocus()
-            }
+    # SetForegroundWindow may succeed when the UIA action temporarily made CMO foreground.
+    # Do not trust its return value: verify which process actually owns the foreground.
+    [void][CmoForegroundWindow]::TrySetForegroundWindowFromProcess(
+        $OriginalForeground,
+        [uint32]$ProcessId
+    )
+    if (
+        Wait-OriginalForeground `
+            -OriginalForeground $OriginalForeground `
+            -OriginalProcessId $OriginalProcessId
+    ) {
+        return
+    }
+
+    $currentForeground = [CmoForegroundWindow]::GetForegroundWindow()
+    if (-not [CmoForegroundWindow]::IsWindowOwnedByProcess($currentForeground, $ProcessId)) {
+        return
+    }
+
+    [uint32]$helperThreadId = [CmoForegroundWindow]::GetCurrentThreadId()
+    [uint32]$foregroundThreadId = [CmoForegroundWindow]::GetWindowThreadId($currentForeground)
+    [uint32]$originalThreadId = [CmoForegroundWindow]::GetWindowThreadId($OriginalForeground)
+    if ($helperThreadId -eq 0 -or $foregroundThreadId -eq 0 -or $originalThreadId -eq 0) {
+        return
+    }
+
+    $attachedForeground = $false
+    $attachedOriginal = $false
+    $readyToRestore = $true
+    try {
+        if ($helperThreadId -ne $foregroundThreadId) {
+            $attachedForeground = [CmoForegroundWindow]::AttachThreadInput(
+                $helperThreadId,
+                $foregroundThreadId,
+                $true
+            )
+            $readyToRestore = $attachedForeground
         }
-        catch {
-            # Foreground restoration is best-effort and must not obscure a verified time action.
+        if (
+            $readyToRestore -and
+            $helperThreadId -ne $originalThreadId -and
+            $foregroundThreadId -ne $originalThreadId
+        ) {
+            $attachedOriginal = [CmoForegroundWindow]::AttachThreadInput(
+                $helperThreadId,
+                $originalThreadId,
+                $true
+            )
+            $readyToRestore = $attachedOriginal
+        }
+        if (
+            $readyToRestore -and
+            [CmoForegroundWindow]::IsWindow($OriginalForeground)
+        ) {
+            # The native helper rechecks the current foreground owner immediately before
+            # the focus-changing call, so a user switch aborts this fallback.
+            [void][CmoForegroundWindow]::TrySetForegroundWindowFromProcess(
+                $OriginalForeground,
+                [uint32]$ProcessId
+            )
         }
     }
+    finally {
+        if ($attachedOriginal) {
+            [void][CmoForegroundWindow]::AttachThreadInput(
+                $helperThreadId,
+                $originalThreadId,
+                $false
+            )
+        }
+        if ($attachedForeground) {
+            [void][CmoForegroundWindow]::AttachThreadInput(
+                $helperThreadId,
+                $foregroundThreadId,
+                $false
+            )
+        }
+    }
+
+    # Foreground restoration is best-effort and must not obscure a verified time action.
+    [void](Wait-OriginalForeground `
+        -OriginalForeground $OriginalForeground `
+        -OriginalProcessId $OriginalProcessId)
 }
 
 $originalForeground = [IntPtr]::Zero
+$originalForegroundProcessId = [uint32]0
 $context = $null
 try {
     $originalForeground = [CmoForegroundWindow]::GetForegroundWindow()
+    $originalForegroundProcessId = [CmoForegroundWindow]::GetWindowProcessId(
+        $originalForeground
+    )
     $context = Get-WindowContext
     $originalHandle = $context.handle
     switch ($Action) {
@@ -846,7 +1009,7 @@ try {
     }
     Restore-OriginalForeground `
         -OriginalForeground $originalForeground `
-        -CmoWindow $verified.handle
+        -OriginalProcessId $originalForegroundProcessId
     Write-JsonResult $snapshot
 }
 catch {
@@ -875,7 +1038,7 @@ catch {
     if ($null -ne $originalForeground -and $null -ne $context) {
         Restore-OriginalForeground `
             -OriginalForeground $originalForeground `
-            -CmoWindow $context.handle
+            -OriginalProcessId $originalForegroundProcessId
     }
     Write-JsonResult ([ordered]@{
         ok = $false

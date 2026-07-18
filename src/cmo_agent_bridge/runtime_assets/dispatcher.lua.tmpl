@@ -1314,6 +1314,10 @@ local UNIT_FIELDS = {
     "loadout_dbid",
 }
 
+-- Unit wrappers are expensive to hydrate in CMO. Keep each paged request bounded even
+-- when the side contains hundreds of units or a selective filter matches very little.
+local UNIT_LIST_CANDIDATE_SCAN_LIMIT = 20
+
 local function unit_full_result(unit, fallback_guid)
     local mission = safe_get(unit, { "mission", "Mission" })
     local mission_guid = Json.null
@@ -1395,9 +1399,55 @@ end
 
 local function unit_list_result(arguments)
     local side = resolve_side(arguments)
-    local normalized = {}
+    local wanted_name = nil
+    if arguments.name_contains ~= nil and arguments.name_contains ~= Json.null then
+        wanted_name = lower_text(arguments.name_contains)
+    end
+    local candidates = {}
     for _, reference in ipairs(collect(safe_get(side, { "units", "Units" }))) do
-        local guid = object_guid(reference)
+        local reference_name = object_name(reference)
+        if wanted_name == nil
+            or reference_name == ""
+            or string.find(lower_text(reference_name), wanted_name, 1, true) ~= nil
+        then
+            candidates[#candidates + 1] = {
+                reference = reference,
+                guid = object_guid(reference),
+                name = reference_name,
+            }
+        end
+    end
+    table.sort(candidates, function(left, right)
+        if left.guid == right.guid then
+            return left.name < right.name
+        end
+        return left.guid < right.guid
+    end)
+
+    local cursor = arguments.cursor
+    local offset = 0
+    if cursor ~= nil and cursor ~= Json.null then
+        if type(cursor) ~= "string" or string.match(cursor, "^%d+$") == nil then
+            error("unit.list cursor must be a non-negative decimal offset")
+        end
+        offset = tonumber(cursor) or 0
+    end
+    local page_size = math.max(1, math.floor(number_or(arguments.page_size, 100)))
+    local final_candidate_index = math.min(
+        #candidates,
+        offset + UNIT_LIST_CANDIDATE_SCAN_LIMIT
+    )
+    local wanted_type = nil
+    if arguments.unit_type ~= nil and arguments.unit_type ~= Json.null then
+        wanted_type = lower_text(arguments.unit_type)
+    end
+    local normalized = {}
+    local candidate_index = offset
+    while candidate_index < final_candidate_index and #normalized < page_size do
+        candidate_index = candidate_index + 1
+        local candidate = candidates[candidate_index]
+        local reference = candidate.reference
+        local guid = candidate.guid
         local unit = reference
         if guid ~= "" then
             local ok, wrapper = pcall(ScenEdit_GetUnit, { guid = guid })
@@ -1406,22 +1456,36 @@ local function unit_list_result(arguments)
             end
         end
         local result = unit_full_result(unit, guid)
-        local type_matches = arguments.unit_type == nil
-            or arguments.unit_type == Json.null
-            or lower_text(result.type) == lower_text(arguments.unit_type)
-        local name_matches = arguments.name_contains == nil
-            or arguments.name_contains == Json.null
-            or string.find(
-                lower_text(result.name),
-                lower_text(arguments.name_contains),
-                1,
-                true
-            ) ~= nil
+        local type_matches = wanted_type == nil or lower_text(result.type) == wanted_type
+        local name_matches = wanted_name == nil
+            or string.find(lower_text(result.name), wanted_name, 1, true) ~= nil
         if type_matches and name_matches then
             normalized[#normalized + 1] = result
         end
     end
-    return page_and_project(normalized, arguments, UNIT_FIELDS, "unit.list")
+
+    local wanted = nil
+    if arguments.fields ~= nil and arguments.fields ~= Json.null then
+        wanted = {}
+        for _, field in ipairs(arguments.fields) do
+            wanted[field] = true
+        end
+    end
+    local items = Json.array()
+    for _, source in ipairs(normalized) do
+        local item = Json.object({ guid = source.guid })
+        for _, field in ipairs(UNIT_FIELDS) do
+            if wanted == nil or wanted[field] then
+                item[field] = source[field]
+            end
+        end
+        items[#items + 1] = item
+    end
+    local next_cursor = Json.null
+    if candidate_index < #candidates then
+        next_cursor = tostring(candidate_index)
+    end
+    return Json.object({ items = items, next_cursor = next_cursor })
 end
 
 local function unit_get_result(arguments)

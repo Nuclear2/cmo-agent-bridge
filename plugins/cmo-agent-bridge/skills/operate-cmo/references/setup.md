@@ -4,7 +4,7 @@ Use this reference when the plugin or Skill is installed but the MCP tools are a
 `cmo_bridge_diagnose` reports incomplete setup, `cmo_bridge_status` times out, or the polling event
 must be mounted or repaired.
 
-`v0.3.0` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.3.1` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Identify the failed layer
@@ -99,7 +99,7 @@ permissions block the command.
 Get-Command uv, uvx
 uv --version
 
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.1/cmo_agent_bridge-0.3.1-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge version
 ```
 

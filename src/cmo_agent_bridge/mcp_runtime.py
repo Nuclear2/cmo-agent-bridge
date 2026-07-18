@@ -28,6 +28,7 @@ from cmo_agent_bridge.bootstrap import (
 )
 from cmo_agent_bridge.config import BridgeConfigStore
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.operations.kinds import ExecutionTarget
 from cmo_agent_bridge.operations.models import (
     BridgeStatusResult,
     ScenarioContextResult,
@@ -35,6 +36,7 @@ from cmo_agent_bridge.operations.models import (
     ScenarioResult,
     ScenarioScoringThresholds,
 )
+from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot, render_dispatcher
 from cmo_agent_bridge.scenario_context import (
     ScenarioContext,
@@ -534,6 +536,7 @@ class McpRuntimeManager:
     ) -> InvocationOutcome:
         try:
             runtime = await self._ensure_runtime()
+            await self._fail_fast_when_cmo_is_paused(runtime, operation)
             return await runtime.application.execute(
                 operation,
                 arguments,
@@ -541,6 +544,47 @@ class McpRuntimeManager:
             )
         except BridgeError as error:
             return _failure_outcome(error)
+
+    async def _fail_fast_when_cmo_is_paused(
+        self,
+        runtime: ApplicationRuntime,
+        operation: str,
+    ) -> None:
+        """Avoid publishing Lua-backed synchronous work that cannot poll while paused."""
+
+        contract = OPERATION_REGISTRY.resolve(operation)
+        if contract.target is not ExecutionTarget.CMO:
+            return
+
+        observed: UiTimeState | None = None
+        try:
+            async with self._ui_gate:
+                async with self._new_ui_lock(runtime):
+                    observed = await self._require_ui_controller().get_state()
+        except BridgeError:
+            # UI Automation is an advisory preflight. If it is unavailable, preserve the
+            # existing bridge path so a UI limitation cannot disable otherwise valid reads.
+            return
+
+        if observed is None or observed.state is not SimulationRunState.PAUSED:
+            return
+        raise BridgeError(
+            ErrorCode.SCENARIO_NOT_ADVANCING,
+            "CMO is paused; the Lua-backed operation was not published or retried",
+            {
+                "operation": operation,
+                "observed_state": observed.state.value,
+                "rate_code": observed.rate.value,
+                "requires_lua_poll": True,
+                "retry_suppressed": True,
+                "next_tool": "cmo_time_get_state",
+                "next_step": (
+                    "Do not retry while CMO is paused. If fresh state is required, preserve "
+                    "the current rate, open an explicit 1x read window with cmo_time_set, "
+                    "complete the planned read batch, and restore pause in cleanup."
+                ),
+            },
+        )
 
     async def submit(
         self,
@@ -884,8 +928,8 @@ class McpRuntimeManager:
             warnings=warnings,
         )
 
-    @staticmethod
-    async def _live_scenario(runtime: ApplicationRuntime) -> ScenarioResult:
+    async def _live_scenario(self, runtime: ApplicationRuntime) -> ScenarioResult:
+        await self._fail_fast_when_cmo_is_paused(runtime, "scenario.get")
         outcome = await runtime.application.execute("scenario.get", {})
         if not outcome.ok:
             error = outcome.error or {}

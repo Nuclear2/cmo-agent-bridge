@@ -278,6 +278,8 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             "Read and update the running Command: Modern Operations scenario through a local "
             "file-backed bridge. Use cmo_bridge_diagnose and cmo_bridge_prepare when the "
             "release-bound runtime is not ready. Live CMO calls require the polling event. "
+            "Before each Lua-backed synchronous read batch, check cmo_time_get_state; verified "
+            "pause returns SCENARIO_NOT_ADVANCING without publishing or retrying the call. "
             "Ordinary CMO mutation tools submit durable requests; use cmo_request_get or "
             "cmo_request_wait to retrieve the eventual result."
         ),
@@ -637,7 +639,8 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         title="List CMO units",
         description=(
             "List units for exactly one side, optionally filtering by unit type or a "
-            "case-insensitive name fragment."
+            "case-insensitive name fragment. Large-side scans are bounded, so keep "
+            "following every non-null next_cursor even when a page has no items."
         ),
         annotations=_read_only_annotations(),
         structured_output=True,

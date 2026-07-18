@@ -530,7 +530,7 @@ async def test_status_timeout_reports_paused_or_inactive_polling_recovery(
             "polling_event_inactive_or_unloaded",
         ],
         "next_steps": [
-            "If CMO is paused, resume at 1x until the tool returns or repeat Alt+1 time steps as needed.",
+            "Call cmo_time_get_state before retrying. If CMO is paused and fresh state is required, use cmo_time_set to open one explicit 1x read window and restore pause in cleanup.",
             "If time is already advancing, repair the enabled repeatable Regular Time polling event.",
         ],
     }

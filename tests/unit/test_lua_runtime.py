@@ -631,6 +631,44 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
     )
 
 
+def _replace_with_large_unit_fixture(
+    lua: LuaRuntime,
+    fixture: _CmoFixture,
+    *,
+    count: int,
+) -> None:
+    references: list[Any] = []
+    units_by_guid: dict[str, Any] = {}
+    units_by_name: dict[str, Any] = {}
+    for index in range(count):
+        guid = f"UNIT-BLUE-{index:04d}"
+        is_filter_target = index % 120 == 0
+        name = f"Target {index:04d}" if is_filter_target else f"Unit {index:04d}"
+        unit_type = "Aircraft" if index % 2 == 0 else "Ship"
+        unit = _lua_table(
+            lua,
+            {
+                "guid": guid,
+                "dbid": 10_000 + index,
+                "name": name,
+                "side": "Blue",
+                "type": unit_type,
+                "isOperating": True,
+            },
+        )
+        units_by_guid[guid] = unit
+        units_by_name[name] = unit
+        references.append(_lua_table(lua, {"guid": guid, "name": name}))
+
+    blue = fixture.sides[2]
+    assert blue["guid"] == "SIDE-BLUE"
+    blue["units"] = lua.table_from(list(reversed(references)))
+    fixture.units_by_guid.clear()
+    fixture.units_by_guid.update(units_by_guid)
+    fixture.units_by_name.clear()
+    fixture.units_by_name.update(units_by_name)
+
+
 def _invocation(
     operation: str,
     public_arguments: dict[str, object],
@@ -661,10 +699,9 @@ def _run_lua(
     remove_g_table_before_dispatch: bool = False,
     export_failures_before_success: int = 0,
     zero_export_results_before_success: int = 0,
+    large_unit_count: int | None = None,
 ) -> _LuaRun:
-    assert not (
-        export_failures_before_success and zero_export_results_before_success
-    )
+    assert not (export_failures_before_success and zero_export_results_before_success)
     snapshot = create_runtime_snapshot()
     activation_id = uuid4()
     invocation = _invocation(operation, public_arguments, activation_id)
@@ -696,11 +733,14 @@ def _run_lua(
     globals_ = cast(Any, lua.globals())
     scenario = _scenario(lua, player_side=player_side)
     fixture = _cmo_fixture(lua)
+    if large_unit_count is not None:
+        _replace_with_large_unit_fixture(lua, fixture, count=large_unit_count)
     captured: dict[str, object] = {
         "score_sides": [],
         "set_unit_calls": [],
         "assign_mission_calls": [],
         "api_calls": {
+            "get_unit": [],
             "add_unit": [],
             "delete_unit": [],
             "get_reference_points": [],
@@ -773,6 +813,7 @@ def _run_lua(
         return value in {"SIDE-BLUE", "Blue"}
 
     def get_unit(selector: Any) -> Any | None:
+        capture_call("get_unit", table_dict(selector))
         guid = cast(str | None, selector["guid"])
         if guid is not None:
             return fixture.units_by_guid.get(guid)
@@ -807,6 +848,7 @@ def _run_lua(
         return fixture.missions_by_guid.get(value) or fixture.missions_by_name.get(value)
 
     score_state = {"Blue": 42, "SIDE-BLUE": 42}
+
     def get_score(side: object) -> int:
         score_sides = cast(list[str], captured["score_sides"])
         selector = str(side)
@@ -1422,9 +1464,7 @@ def _run_lua(
         if mission is None:
             return None
         existing = (
-            []
-            if mission["flightlist"] is None
-            else ordered_table_values(mission["flightlist"])
+            [] if mission["flightlist"] is None else ordered_table_values(mission["flightlist"])
         )
         flight_number = len(existing) + 1
         flight = _lua_table(
@@ -2011,10 +2051,7 @@ def _run_lua(
             )
             if replacement is None:
                 return None
-            linked = [
-                replacement if item is component else item
-                for item in linked
-            ]
+            linked = [replacement if item is component else item for item in linked]
         event[event_field] = lua.table_from(linked)
         return event
 
@@ -2195,9 +2232,7 @@ def _run_lua(
     dispatcher = render_dispatcher(snapshot).decode("utf-8")
     if remove_g_table_before_dispatch:
         globals_._G = None
-    failed_export_attempts = (
-        export_failures_before_success + zero_export_results_before_success
-    )
+    failed_export_attempts = export_failures_before_success + zero_export_results_before_success
     for index in range(repeat_dispatches):
         if index > 0 and clear_session_cache_between_dispatches:
             globals_.CMO_AGENT_BRIDGE_RESPONSE_CACHE = None
@@ -2347,6 +2382,69 @@ def test_lua_unit_list_round_trip_filters_projects_and_pages(
         assert items[0]["mission_guid"] == "MISSION-BLUE-1"
         assert items[0]["mission_name"] == "Blue CAP"
         assert items[0]["loadout_dbid"] == 501
+
+
+def test_lua_unit_list_bounds_large_fixture_hydration_and_traverses_filtered_pages() -> None:
+    first = _run_lua(
+        "unit.list",
+        {"side_guid": "SIDE-BLUE", "page_size": 500},
+        large_unit_count=425,
+    )
+    first_result = cast(dict[str, JsonValue], first.result)
+    first_items = cast(list[dict[str, JsonValue]], first_result["items"])
+    assert [item["guid"] for item in first_items] == [
+        f"UNIT-BLUE-{index:04d}" for index in range(20)
+    ]
+    assert first_result["next_cursor"] == "20"
+    assert len(first.api_calls["get_unit"]) == 20
+
+    cursor: str | None = None
+    all_guids: list[str] = []
+    calls_per_page: list[int] = []
+    for _ in range(22):
+        arguments: dict[str, object] = {"side_name": "Blue", "page_size": 500}
+        if cursor is not None:
+            arguments["cursor"] = cursor
+        run = _run_lua(
+            "unit.list",
+            arguments,
+            large_unit_count=425,
+        )
+        result = cast(dict[str, JsonValue], run.result)
+        items = cast(list[dict[str, JsonValue]], result["items"])
+        all_guids.extend(cast(str, item["guid"]) for item in items)
+        calls_per_page.append(len(run.api_calls["get_unit"]))
+        cursor = cast(str | None, result["next_cursor"])
+        if cursor is None:
+            break
+    else:
+        pytest.fail("large unit.list traversal did not terminate")
+
+    assert all_guids == [f"UNIT-BLUE-{index:04d}" for index in range(425)]
+    assert len(all_guids) == len(set(all_guids))
+    assert calls_per_page == [20] * 21 + [5]
+    assert sum(calls_per_page) == 425
+
+    filtered = _run_lua(
+        "unit.list",
+        {
+            "side_name": "Blue",
+            "page_size": 500,
+            "unit_type": "aIrCrAfT",
+            "name_contains": "tArGeT",
+        },
+        large_unit_count=425,
+    )
+    filtered_result = cast(dict[str, JsonValue], filtered.result)
+    filtered_items = cast(list[dict[str, JsonValue]], filtered_result["items"])
+    assert [item["guid"] for item in filtered_items] == [
+        "UNIT-BLUE-0000",
+        "UNIT-BLUE-0120",
+        "UNIT-BLUE-0240",
+        "UNIT-BLUE-0360",
+    ]
+    assert filtered_result["next_cursor"] is None
+    assert len(filtered.api_calls["get_unit"]) == 4
 
 
 @pytest.mark.parametrize(
@@ -2808,9 +2906,7 @@ def test_lua_call_side_posture_and_score_mutations_verify_readback() -> None:
             },
         },
     )
-    assert posture.api_calls["set_side_posture"] == (
-        ("SIDE-BLUE", "SIDE-RED", "U"),
-    )
+    assert posture.api_calls["set_side_posture"] == (("SIDE-BLUE", "SIDE-RED", "U"),)
     assert posture.result == {
         "side_a_guid": "SIDE-BLUE",
         "side_b_guid": "SIDE-RED",
@@ -2880,9 +2976,7 @@ def test_lua_call_event_component_normalizes_lua_script_to_crlf() -> None:
                 "mode": "add",
                 "component_id_or_name": "Notify Blue",
                 "component_type": "LuaScript",
-                "parameters_json": json.dumps(
-                    {"ScriptText": "line one\nline two\rline three\r\n"}
-                ),
+                "parameters_json": json.dumps({"ScriptText": "line one\nline two\rline three\r\n"}),
             },
         },
     )

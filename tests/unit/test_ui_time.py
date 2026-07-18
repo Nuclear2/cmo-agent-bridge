@@ -407,7 +407,7 @@ def test_packaged_helper_uses_semantic_controls_without_input_injection() -> Non
         "root.Current.IsEnabled",
         "GetForegroundWindow",
         "SetForegroundWindow",
-        "$currentForeground -ne $CmoWindow",
+        "TrySetForegroundWindowFromProcess",
     ):
         assert required in script
     for forbidden in (
@@ -416,5 +416,37 @@ def test_packaged_helper_uses_semantic_controls_without_input_injection() -> Non
         "mouse_event",
         "keybd_event",
         "Cursor.Position",
+        "SetFocus()",
     ):
         assert forbidden not in script
+
+
+def test_packaged_helper_restores_only_from_cmo_with_detached_input_fallback() -> None:
+    script = (
+        Path(__file__).parents[2]
+        / "src"
+        / "cmo_agent_bridge"
+        / "host_assets"
+        / "ui_time_controller.ps1"
+    ).read_text(encoding="utf-8")
+    restore_start = script.index("function Restore-OriginalForeground")
+    restore_end = script.index("$originalForeground = [IntPtr]::Zero")
+    restore = script[restore_start:restore_end]
+
+    for required in (
+        "GetWindowThreadProcessId",
+        "GetWindowProcessId",
+        "GetCurrentThreadId",
+        "IsWindowOwnedByProcess",
+        "TrySetForegroundWindowFromProcess",
+        "AttachThreadInput",
+        "$currentProcessId -ne $ProcessId",
+        "finally",
+    ):
+        assert required in script
+
+    assert "$currentForeground -ne $CmoWindow" not in script
+    assert restore.count("AttachThreadInput(") == 4
+    assert restore.count("$false") >= 2
+    assert restore.index("finally") < restore.rindex("$false")
+    assert "AutomationElement]::FromHandle($OriginalForeground)" not in restore

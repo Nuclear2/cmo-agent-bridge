@@ -64,8 +64,12 @@ operation, complex strike package, unclear end state, or high-risk force commitm
 
 ## Protect the decision window
 
-Call `cmo_time_get_state` only when time control may be needed, then choose the least intrusive
-procedure:
+Before every planned batch of CMO-backed synchronous reads, require a fresh
+`cmo_time_get_state` result unless the immediately preceding verified `cmo_time_set` already
+establishes the state. User interaction, extended reasoning, another time-control action, or a
+failed CMO call invalidates that observation. If CMO is paused, never start or retry the read batch:
+either use an explicitly stale prior snapshot or open the controlled 1x acquisition window below.
+Then choose the least intrusive procedure:
 
 - **Routine order:** keep the observed state and compression. Submit and resolve the order normally.
   High compression alone is not a reason to slow down when the decision horizon safely exceeds
@@ -353,14 +357,19 @@ authority, expected gain, and a recovery path.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
+- `SCENARIO_NOT_ADVANCING`: the runtime verified pause and intentionally did not publish or retry
+  the synchronous CMO call. Do not repeat it. Use local queue/time tools while paused, or preserve
+  the selected rate, inspect non-terminal durable work, open one explicit 1x read window, complete
+  the preselected reads without deliberation, and restore verified pause in cleanup.
 - `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: call `cmo_time_get_state`. If CMO is
   paused, list the durable queue, include every non-terminal request UUID in
   `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the pause. If
   CMO is already running, do not change speed; repair the repeatable Regular Time polling event.
   Ask the user to operate time manually only when host UI control is unavailable or cannot verify
   state.
-- Other synchronous read `REQUEST_TIMEOUT`: inspect UI state and polling health. Use the shortest
-  justified 1x run window for a paused read; if time already advances, repair the polling event.
+- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Inspect UI state and polling health.
+  Use the shortest justified 1x run window for a paused read; if time already advances, repair the
+  polling event.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the

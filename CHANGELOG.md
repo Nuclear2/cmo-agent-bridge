@@ -4,6 +4,30 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-18 (Preview)
+
+这一版修复了暂停想定中的同步读取等待、大型兵力列表超时，以及时间控制后前台窗口恢复不可靠的问题。
+
+### Changed
+
+- `unit.list` 改为有界候选扫描与按页水合，不再在返回第一页之前读取阵营中的全部单位；`page_size`
+  是返回上限，调用方必须继续跟随所有非空 `next_cursor`，包括当前页较短或为空的情况。
+- `operate-cmo` 在每批 Lua 同步读取前检查主机侧时间状态；暂停状态、用户交互、长时间分析或失败调用后
+  不再盲目重试，而是显式建立受控的 1× 读取窗口并在清理阶段恢复暂停。
+- 项目版本升级到 `0.3.1`。
+
+### Fixed
+
+- CMO 已暂停时，所有 Lua-backed 同步操作会在发布请求前返回 `SCENARIO_NOT_ADVANCING`，不会写入
+  inbox 或触发传输层重试；想定介绍读取的两次专用身份核验也遵循同一门禁。
+- UI 时间控制现在核验实际前台窗口，并在 Windows 拒绝直接恢复时使用受控线程输入附加作为后备；
+  若用户已主动切换到第三个应用则不会抢夺焦点。
+
+### Compatibility
+
+- 已在 CMO Build 1868 实机验证：暂停读取快速失败、425 个我方单位的有界分页，以及 CMO 临时前置后
+  返回原窗口。
+
 ## [0.3.0] - 2026-07-18 (Preview)
 
 这一版让 Agent 能直接读取和控制 CMO 的暂停、运行与时间倍率，并在暂停期间安全地执行已经排队的作战部署。
@@ -180,12 +204,13 @@
 
 ### Known limitations
 
-- 当前不提供确定性的暂停、启动或单步推进；复杂操作使用 1x 时间倍率。
+- 支持主机侧暂停、运行和倍率控制，但不提供零时间或固定仿真时长的确定性单步推进。
 - 不提供单调用的通用 `lua.eval`/`lua.call`；想定作者的 Lua-bearing event/Special Action 仍可组合
   执行任意 CMO Lua，必须逐行审查、保存副本、默认 inactive、读回核对后再启用。
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.3.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.0

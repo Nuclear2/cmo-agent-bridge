@@ -48,6 +48,33 @@ needed reads without extended deliberation between them, and pause again before 
 opening plan. At scenario start this small time advance is normally preferable to asking the user
 to release and re-pause manually.
 
+## Gate every Lua-backed synchronous read batch
+
+CMO's Regular Time trigger does not run while scenario time is paused. Therefore **before every
+batch of Lua-backed synchronous calls**, not merely at task startup or after a timeout, require a
+fresh host UI state from `cmo_time_get_state` or the immediately preceding verified
+`cmo_time_set` result. Treat the state as unknown again after user interaction, extended reasoning,
+any time-control action, or any failed CMO-backed call.
+
+- If the verified state is `running`, perform the already planned read batch at the current speed.
+  Slow to 1x only when the decision horizon requires it.
+- If the verified state is `paused`, do **not** call or retry `cmo_bridge_status`, scenario/context,
+  side, unit, contact, mission, doctrine, event, weather, delete-preview/confirm, or any other
+  synchronous tool that contacts CMO. The bridge returns `SCENARIO_NOT_ADVANCING` before publishing
+  such a call, but the Agent must prevent the invalid call rather than use that error as a loop.
+- Host-only diagnose/prepare and UI time tools remain available while paused. So do
+  `cmo_request_get`, `cmo_request_wait`, `cmo_request_list`, `cmo_queue_status`, and cancellation of
+  work that is still `queued`, because these use local state rather than the Lua poll.
+- If the last snapshot is sufficient, keep CMO paused and state explicitly that the snapshot may be
+  stale. If fresh state is required, preserve the selected rate, inspect every non-terminal durable
+  request that will also execute when time is released, call
+  `cmo_time_set(state="running", rate_code=0)`, immediately complete the preselected read batch,
+  then restore `cmo_time_set(state="paused", rate_code=<preserved>)` in cleanup and verify it. Do
+  not deliberate between reads while this acquisition window is open.
+
+Never blindly retry `SCENARIO_NOT_ADVANCING` or a paused-read timeout. Re-check the host UI state,
+then either use a stale snapshot deliberately or open one explicit controlled read window.
+
 ## Select one operating mode
 
 Start every workflow in `LIVE_PLAYER`.
@@ -209,10 +236,11 @@ request; restart and query the same
 `request_id`. If the CMO process, runtime, or scenario binding no longer matches, expect rejection
 or quarantine rather than execution in a different scenario.
 
-Reads, `cmo_bridge_status`, and other synchronous CMO calls do not use this queue. They still need
-the polling event and advancing scenario time and retain their bounded timeout behavior. Host-only
-diagnose/prepare, UI time control, and destructive delete preview/confirm also retain their
-documented synchronous contracts.
+Reads, `cmo_bridge_status`, destructive delete preview/confirm, and other synchronous CMO calls do
+not use this queue. They still need the polling event and advancing scenario time. The MCP runtime
+checks host UI state first and returns `SCENARIO_NOT_ADVANCING` without publishing or retrying when
+pause is verified. Host-only diagnose/prepare and UI time control retain their documented
+synchronous contracts.
 
 ## Protect consequential decision windows
 
@@ -261,7 +289,9 @@ and never resubmit a durable request because a pulse or local wait timed out.
    read the resulting state.
 6. Send only fields that should change. Preserve ordered zones and courses. An empty ordered list
    is an explicit clear when the tool contract permits it.
-7. Follow every list tool's `next_cursor` until null when completeness matters.
+7. Follow every list tool's `next_cursor` until null when completeness matters. On large sides,
+   `cmo_unit_list.page_size` is an upper bound: a filtered page may be short or empty while a
+   non-null cursor still means more candidates remain.
 8. Do not resubmit a mutation because `cmo_request_wait` timed out. Query the same request ID until
    it is terminal. After a synchronous read timeout, recover polling and read again without
    duplicating any already submitted mutation.

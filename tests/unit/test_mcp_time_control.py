@@ -227,6 +227,48 @@ class _FakeBridgeApplication:
         )
 
 
+class _ScenarioBridgeApplication:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, JsonValue], str | None]] = []
+
+    async def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+        *,
+        confirmation_token: str | None = None,
+    ) -> InvocationOutcome:
+        self.calls.append((operation, dict(arguments), confirmation_token))
+        result: dict[str, JsonValue] = {
+            "guid": "SCENARIO-1",
+            "title": "Test Scenario",
+            "file_name": "test.scen",
+            "file_name_path": "Scenarios\\Test",
+            "current_time": "2026/7/18 12:00:00",
+            "current_time_seconds": 1.0,
+            "start_time": "2026/7/18 11:00:00",
+            "start_time_seconds": 0.0,
+            "duration": "01:00:00",
+            "duration_seconds": 3600.0,
+            "complexity": 1,
+            "difficulty": 1,
+            "setting": "Test",
+            "database": "DB3000",
+            "save_version": "1868",
+            "started": True,
+            "player_side_guid": "SIDE-BLUE",
+            "time_compression": 15.0,
+            "campaign_score": 0,
+        }
+        return InvocationOutcome(
+            protocol="cmo-agent-bridge/1",
+            request_id=None,
+            ok=True,
+            result=result,
+            error=None,
+        )
+
+
 def _manager(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -278,6 +320,127 @@ def _manager(
         ui_time_controller=controller,
     )
     return manager, queue, bridge_application
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments"),
+    [
+        ("bridge.status", {}),
+        ("scenario.get", {}),
+        ("unit.list", {"side_guid": "SIDE-BLUE"}),
+    ],
+)
+@pytest.mark.asyncio
+async def test_paused_cmo_backed_execute_fails_before_publish_or_retry(
+    operation: str,
+    arguments: dict[str, JsonValue],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(
+        _ui_state(SimulationRunState.PAUSED, TimeRate.X15)
+    )
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+
+    outcome = await manager.execute(operation, arguments)
+
+    assert outcome.ok is False
+    assert outcome.error is not None
+    assert outcome.error["code"] == ErrorCode.SCENARIO_NOT_ADVANCING.value
+    assert outcome.error["details"] == {
+        "operation": operation,
+        "observed_state": "paused",
+        "rate_code": TimeRate.X15.value,
+        "requires_lua_poll": True,
+        "retry_suppressed": True,
+        "next_tool": "cmo_time_get_state",
+        "next_step": (
+            "Do not retry while CMO is paused. If fresh state is required, preserve "
+            "the current rate, open an explicit 1x read window with cmo_time_set, "
+            "complete the planned read batch, and restore pause in cleanup."
+        ),
+    }
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_paused_scenario_context_get_fails_before_its_direct_live_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(
+        _ui_state(SimulationRunState.PAUSED, TimeRate.X15)
+    )
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await manager.scenario_context_get()
+
+    assert caught.value.code is ErrorCode.SCENARIO_NOT_ADVANCING
+    assert caught.value.details is not None
+    assert caught.value.details["operation"] == "scenario.get"
+    assert caught.value.details["retry_suppressed"] is True
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_running_cmo_backed_execute_reaches_bridge_application(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(
+        _ui_state(SimulationRunState.RUNNING, TimeRate.X15)
+    )
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+
+    outcome = await manager.execute("bridge.status", {})
+
+    assert outcome.ok is True
+    assert application.calls == [("bridge.status", {}, None)]
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_running_scenario_context_get_checks_each_live_identity_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(
+        _ui_state(SimulationRunState.RUNNING, TimeRate.X15)
+    )
+    application = _ScenarioBridgeApplication()
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        application=cast(_FakeBridgeApplication, application),
+    )
+
+    result = await manager.scenario_context_get()
+
+    assert result.status == "file_missing"
+    assert application.calls == [
+        ("scenario.get", {}, None),
+        ("scenario.get", {}, None),
+    ]
+    assert controller.calls == [
+        ("get_state", None),
+        ("get_state", None),
+    ]
 
 
 @pytest.mark.asyncio

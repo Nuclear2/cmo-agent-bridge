@@ -37,6 +37,8 @@ Never infer `CURRENT` from an official Lua function. Never call a proposed tool 
   name.
 - Contact GUIDs belong to the observing side and are not interchangeable with actual unit GUIDs.
 - Follow `next_cursor` until null when a complete list matters. Reuse the same `page_size`.
+  `cmo_unit_list` bounds expensive candidate hydration, so its page may be short or empty while a
+  non-null cursor still requires another call.
 - Ordinary mutation tools return `QueuedOperationReceipt` with `request_id`, operation, FIFO
   sequence, `queued` state, and submission time. They do not return CMO's eventual result.
 - Use `cmo_request_get` or `cmo_request_wait` to obtain the terminal queue status and result. Treat
@@ -70,9 +72,11 @@ execution timeout while CMO is paused. MCP/client shutdown detaches the worker r
 cancelling it; restart and query the original request. Process, runtime, or scenario binding
 mismatches produce rejection or quarantine instead of cross-scenario execution.
 
-Reads, `cmo_bridge_status`, `cmo_bridge_prepare`, host UI time tools, and destructive delete
-preview/confirm use their existing synchronous contracts rather than this queue. CMO-backed reads
-and status still require the polling event and retain their bounded timeout behavior.
+Reads, `cmo_bridge_status`, and destructive delete preview/confirm use synchronous contracts rather
+than this queue. CMO-backed synchronous tools require the polling event and advancing scenario
+time. Before each read batch, use a fresh host UI observation; verified pause produces
+`SCENARIO_NOT_ADVANCING` before request publication or retry. `cmo_bridge_prepare` and host UI time
+tools are host-side and remain callable while paused.
 
 ## Current read and control tools
 
@@ -91,7 +95,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
-| `cmo_unit_list` | one side selector, filters, paging | Browse one side's units; adversary use is author or umpire only |
+| `cmo_unit_list` | one side selector, filters, paging | Browse one side's units; continue every non-null cursor even after a short or empty filtered page; adversary use is author or umpire only |
 | `cmo_unit_get` | GUID, or side plus name | Read full projected unit detail |
 | `cmo_unit_combat_status_get` | unit GUID | Read actual damage, fuel quantities, readiness or airborne time, loadout ID, and engagement state |
 | `cmo_unit_loadout_get` | unit GUID | Read current aircraft loadout and carried weapon quantities |
@@ -106,6 +110,11 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_doctrine_wra_get` | doctrine scope, weapon, target type | Read WRA salvo, shooters, firing range, and self-defence range |
 | `cmo_special_action_list` | side, paging | List existing player-facing special actions |
 | `cmo_score_get` | side | Read the side's current victory-point score |
+
+For all CMO-backed synchronous rows in this table, a handshake pulse is not a read window: it
+returns to pause before it returns. If fresh reads are needed from a paused scenario, inspect the
+durable queue, explicitly run at 1x, execute the preselected batch, and restore verified pause and
+the preserved rate in cleanup. Never retry `SCENARIO_NOT_ADVANCING` while still paused.
 
 In `LIVE_PLAYER`, unit, mission, inventory, doctrine, and score reads apply to the commanded side.
 Read adversaries through `cmo_contact_*`. In author or umpire mode, omniscient reads are permitted
