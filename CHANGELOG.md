@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-07-18 (Preview)
+
+这一版让 Agent 能直接读取和控制 CMO 的暂停、运行与时间倍率，并在暂停期间安全地执行已经排队的作战部署。
+
+### Added
+
+- 新增 `cmo_time_get_state` 和 `cmo_time_set`，通过 Windows UI Automation 读取及控制暂停、运行和六档时间倍率。
+- 新增 `cmo_simulation_pulse`：在 CMO 已暂停时短暂以 1× 释放时间，等待队列中全部非终态请求或握手完成，然后自动复停并恢复原倍率。
+- UI helper 随 Python wheel 一同发行；它使用 CMO 的语义控件，不发送全局键鼠或坐标输入，并尽力恢复操作前的前台窗口。
+
+### Changed
+
+- `operate-cmo` 默认保持当前时间倍率；普通指令不例行暂停或降到 1×，只有复杂全局规划、阶段转换、多项依赖部署或临界不可逆窗口才暂停。
+- 暂停期间的部署流程统一为“持久化排队 → 1× pulse → 核验复停与结果 → 按计划恢复时间”。
+- 项目版本升级到 `0.3.0`。
+
+### Fixed
+
+- 时间控件切换后会重新发现 WPF 控件，兼容暂停态 `PlayButton` 与运行态 `PauseButton` 的替换，避免复用失效控件或重复切换。
+- `play-1x` 结果不确定、超时或取消时会尝试安全复停；无法确认复停时返回明确的高严重度错误。
+
+### Compatibility
+
+- 已在 CMO Build 1868 实机验证暂停握手 pulse、自动复停、倍率恢复和前台窗口恢复；其他 build 仍需单独验证。
+
 ## [0.2.1] - 2026-07-18 (Preview)
 
 这一版让 Agent 在首次部署前读取保存的想定介绍和当前玩家方简报，先确认战役目标与已知态势，
@@ -161,6 +186,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.3.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.4

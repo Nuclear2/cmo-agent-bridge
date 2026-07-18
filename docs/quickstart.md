@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.2.1` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.3.0` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -40,8 +40,9 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 把 trigger 和 action 关联到 event，然后保存想定。普通玩家模式不能创建该 event，因此普通推演
 要使用已经由作者预置事件的想定。
 
-同步读取和首次状态握手时，保持想定时间至少以 1x 推进。暂停时 Regular Time 不触发；普通写操作
-可以先进入本地持久队列，并在时间恢复后执行。
+暂停时 Regular Time 不触发；普通写操作可以先进入本地持久队列。使用 MCP 时，Agent 会先读取
+主机侧时间状态：想定正在运行就直接握手，不改变当前倍率；想定已经暂停则用 handshake pulse 以
+1x 短暂释放，握手完成后自动重新暂停并恢复原倍率。
 
 ## 4. CLI 冒烟测试
 
@@ -86,8 +87,9 @@ cmo-bridge serve
   server 本身不会分发 Skill。
 
 重启 Agent 并新建会话，然后先要求它调用 `cmo_bridge_diagnose`；需要时由它在当前会话调用
-`cmo_bridge_prepare`，再调用 `cmo_bridge_status`。当前 MCP surface 提供 76 个有类型
-工具。CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*` tools。
+`cmo_bridge_prepare`。接着调用 `cmo_time_get_state`：想定正在运行时直接调用 `cmo_bridge_status`；
+想定已经暂停时调用 `cmo_simulation_pulse`，设置 `handshake=true`，由 Agent 自动短暂释放和复停。
+CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*` tools。
 
 ## 6. 处理写操作回执
 
@@ -101,7 +103,12 @@ cmo-bridge serve
 
 独立修改可连续提交，并按 FIFO 顺序执行。需要上一步返回 GUID 的操作必须等上一步
 `completed` 后再提交。CMO 暂停时 mutation 会持续保留；恢复时间后自动执行。读取和 status 仍是
-同步 CMO 调用，暂停时可能超时。MCP 客户端退出不会取消 `active` 请求，重启后会继续恢复；如果
+同步 CMO 调用；handshake pulse 只负责连接状态检查。暂停期间若还要刷新其他态势，先用
+`cmo_time_set(state="running", rate_code=0)` 以 1x 运行，完成读取后再暂停。需要让已排队操作在暂停
+规划窗口内生效时，先用 `cmo_request_list` 列出队列，再把所有 `queued`/`active` 的 `request_id`
+传给 `cmo_simulation_pulse`。它会以 1x 放行，等待这些请求进入终态，然后重新暂停并恢复原倍率；
+遗漏任何非终态请求时，pulse 会在释放时间前拒绝执行。MCP 客户端退出不会取消 `active` 请求，
+重启后会继续恢复；如果
 进程或想定 binding 已变化，旧请求会被拒绝或隔离，而不会跨想定执行。
 
 ## 7. 选择正确模式
@@ -110,9 +117,12 @@ cmo-bridge serve
 - 用户明确要求制作想定时才切换 `SCENARIO_AUTHOR`；
 - 明确的测试、注入或裁决使用 `UMPIRE`。
 
-复杂多步操作前先降至 1x、刷新态势、提交写操作并取得最终结果，再读回校验和恢复原时间倍率。
-如果用户主动暂停，也可先排入独立写操作，待时间释放后完成。不要因为 MCP 技术上
-可以读取全知信息，就把敌方真实单位状态用于 `LIVE_PLAYER` 决策。
+正常推演保持当前倍率，普通命令不需要暂停；如果 Agent 判断当前时间颗粒度足够，连 1x 都不必降。
+有一定时效风险但无需重新规划全局时，可以临时降到 1x，完成后恢复原倍率。只有想定开局制定全局
+计划、阶段转换、复杂协同部署或其他需要较长推理且态势可能失效的场景，才应先用
+`cmo_time_set(state="paused")` 暂停，排入修改，再用 `cmo_simulation_pulse` 让全部非终态队列请求生效并复停。
+该 pulse 会短暂推进想定，不是零时间单步。不要因为 MCP 技术上可以读取全知信息，就把敌方真实
+单位状态用于 `LIVE_PLAYER` 决策。
 
 ## 一个安全的首次任务
 

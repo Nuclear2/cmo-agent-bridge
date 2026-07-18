@@ -61,8 +61,9 @@ claude mcp list
 ## 验证
 
 在 Claude Code 中执行 `/mcp`，确认 `cmo` 已连接；然后新建会话并要求调用
-`cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`，再调用 `cmo_bridge_status`。如果会话在
-安装前已经打开，运行 `/reload-plugins` 或重启。
+`cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`。接着调用 `cmo_time_get_state`：想定正在运行
+就直接调用 `cmo_bridge_status`；想定已经暂停则调用 `cmo_simulation_pulse(handshake=true)`，让 Agent
+短暂释放、完成握手并自动复停。如果会话在安装前已经打开，运行 `/reload-plugins` 或重启。
 
 官方参考：[Claude Code MCP](https://code.claude.com/docs/en/mcp)、
 [Plugins](https://code.claude.com/docs/en/discover-plugins)、

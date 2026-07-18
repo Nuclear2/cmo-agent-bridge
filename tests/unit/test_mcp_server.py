@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID
 
 import pytest
@@ -19,9 +19,16 @@ from cmo_agent_bridge.application.queue_models import (
     QueuedOperationState,
     QueuedOperationStatus,
 )
-from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
+from cmo_agent_bridge.mcp_runtime import (
+    McpBridgeDiagnostic,
+    McpBridgePrepareResult,
+    McpSimulationPulseResult,
+    McpTimeSetResult,
+    McpTimeState,
+)
 from cmo_agent_bridge.mcp_server import create_mcp_server
 from cmo_agent_bridge.operations.models import ScenarioContextResult
+from cmo_agent_bridge.ui_time import SimulationRunState
 
 
 _ERROR_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(
@@ -45,6 +52,15 @@ class _FakeApplication:
         self._submitted: dict[UUID, QueuedOperationStatus] = {}
         self.worker_start_count = 0
         self.worker_stop_count = 0
+        self.time_state = McpTimeState(
+            state=SimulationRunState.PAUSED,
+            rate_code=3,
+            multiplier=15,
+            process_pid=123,
+            process_create_time=1.0,
+            window_handle=456,
+            window_title="CMO",
+        )
 
     async def start_queue_worker(self) -> None:
         self.worker_start_count += 1
@@ -151,6 +167,55 @@ class _FakeApplication:
 
     async def scenario_context_get(self) -> ScenarioContextResult:
         return ScenarioContextResult.model_validate(_scenario_context_result())
+
+    async def time_get_state(self) -> McpTimeState:
+        return self.time_state
+
+    async def time_set(
+        self,
+        *,
+        state: Literal["paused", "running"],
+        rate_code: int | None = None,
+    ) -> McpTimeSetResult:
+        before = self.time_state
+        code = before.rate_code if rate_code is None else rate_code
+        self.time_state = before.model_copy(
+            update={
+                "state": SimulationRunState(state),
+                "rate_code": code,
+                "multiplier": (1, 2, 5, 15, 30, 150)[code],
+            }
+        )
+        return McpTimeSetResult(
+            before=before,
+            after=self.time_state,
+            changed=before != self.time_state,
+        )
+
+    async def simulation_pulse(
+        self,
+        *,
+        request_ids: tuple[UUID, ...] = (),
+        handshake: bool = False,
+        accept_lineage_id: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> McpSimulationPulseResult:
+        del accept_lineage_id, handshake, timeout_seconds
+        return McpSimulationPulseResult(
+            ok=True,
+            released=True,
+            before=self.time_state,
+            after=self.time_state,
+            requests=tuple(self._submitted[item] for item in request_ids),
+            handshake=None,
+            timed_out=False,
+            final_pause_verified=True,
+            prior_rate_restored=True,
+            work_error=None,
+            pause_error=None,
+            rate_restore_error=None,
+            elapsed_seconds=0.1,
+        )
 
 
 def _success(result: JsonValue) -> InvocationOutcome:
@@ -864,6 +929,9 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_bridge_diagnose",
         "cmo_bridge_prepare",
         "cmo_bridge_status",
+        "cmo_time_get_state",
+        "cmo_time_set",
+        "cmo_simulation_pulse",
         "cmo_request_get",
         "cmo_request_wait",
         "cmo_request_list",
@@ -940,6 +1008,8 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     }
     mutation_tools = {
         "cmo_bridge_prepare",
+        "cmo_time_set",
+        "cmo_simulation_pulse",
         "cmo_request_cancel",
         "cmo_scenario_time_compression_set",
         "cmo_unit_sensor_set",
@@ -986,6 +1056,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_mission_delete_confirm",
     }
     non_idempotent_tools = {
+        "cmo_simulation_pulse",
         "cmo_unit_add",
         "cmo_unit_magazine_adjust",
         "cmo_unit_mount_reload_adjust",

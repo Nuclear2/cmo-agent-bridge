@@ -11,14 +11,14 @@ import typer
 from pydantic import JsonValue
 
 from cmo_agent_bridge import __version__
-from cmo_agent_bridge.application.queue_models import QueueWaitResult
+from cmo_agent_bridge.application.queue_models import QueueWaitResult, QueuedOperationReceipt
 from cmo_agent_bridge.bootstrap import (
     POLL_ACTION_SCRIPT,
     build_application_runtime,
     prepare_bridge,
 )
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
-from cmo_agent_bridge.mcp_runtime import McpRuntimeManager
+from cmo_agent_bridge.mcp_runtime import McpRuntimeManager, new_ui_coordination_lock
 from cmo_agent_bridge.mcp_server import run_stdio
 from cmo_agent_bridge.operations.kinds import ExecutionTarget, OperationClass
 from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
@@ -218,7 +218,13 @@ def submit_operation(
     try:
         decoded = _decode_arguments(arguments_json)
         runtime = build_application_runtime(game_root=game_root)
-        receipt = runtime.queue_service.submit(operation=operation, arguments=decoded)
+
+        async def persist() -> QueuedOperationReceipt:
+            async with new_ui_coordination_lock(runtime):
+                return runtime.queue_service.submit(operation=operation, arguments=decoded)
+            raise RuntimeError("UI coordination lock unexpectedly suppressed CLI submission")
+
+        receipt = asyncio.run(persist())
     except BridgeError as error:
         _fail(error, exit_code=2)
         return

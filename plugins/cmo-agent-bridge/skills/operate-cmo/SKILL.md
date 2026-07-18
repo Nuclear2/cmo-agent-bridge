@@ -17,9 +17,10 @@ in the registered tool set.
 - If `cmo_bridge_diagnose` is present, call it first. If it reports `unconfigured` or
   `not_prepared`, call `cmo_bridge_prepare`; omit `game_root` when the reported saved root is the
   intended installation, otherwise pass a user-confirmed root. The same MCP session becomes ready
-  without a client restart. Then call `cmo_bridge_status`; guide the user through the polling event
-  only if status times out. A successful status call establishes the process/runtime/scenario
-  binding required before the first queued mutation.
+  without a client restart. Then inspect host UI time state. If CMO is running, call
+  `cmo_bridge_status` without changing speed. If CMO is paused, use one controlled 1x handshake
+  pulse that restores the pause. A successful status call or handshake pulse establishes the
+  process/runtime/scenario binding required before the first queued mutation.
 - Before any upgrade or prepare over an existing installation, read the idle-bridge gate in
   [references/setup.md](references/setup.md): require `queued=0`, `active=0`, and no pending journal.
   If prepare returns `STATE_CONFLICT`, do not delete recovery files or switch releases again; use
@@ -33,13 +34,19 @@ in the registered tool set.
 - After repairing a missing-tool startup failure, have the user fully restart the Agent client and
   open a new task. This restart is needed only when the tools themselves were absent; MCP-side
   `cmo_bridge_prepare` hot-activates an already registered tool set.
-- If `cmo_bridge_diagnose` reports ready, call `cmo_bridge_status` before other live CMO tools. If
-  status times out, recover the polling event and advancing scenario time as described in the setup
-  reference.
+- If `cmo_bridge_diagnose` reports ready, inspect host UI time state before the first CMO-backed
+  call. Use `cmo_bridge_status` while running or the handshake-pulse path while paused. If either
+  path fails, recover the polling event as described in the setup reference.
 
 Do not mistake these layers: absent tools mean the MCP server did not initialize; a diagnostic
 `not_prepared` result is repaired in-session; status timeouts usually mean the CMO-side polling
 event is not servicing requests.
+
+A handshake pulse intentionally returns an initially paused scenario to pause. Before the first
+CMO-backed context and battlespace reads, open a controlled 1x acquisition window, perform the
+needed reads without extended deliberation between them, and pause again before building a complex
+opening plan. At scenario start this small time advance is normally preferable to asking the user
+to release and re-pause manually.
 
 ## Select one operating mode
 
@@ -145,7 +152,7 @@ Treat the following as unavailable until the tool catalog marks them `CURRENT`:
 - operation-planner phase, H/L-hour, and mission dependency editing;
 - automatic multi-mission assignment queues and dynamic reassignment;
 - mutation of generated flight-plan waypoints;
-- deterministic pause/start/single-step simulation control;
+- deterministic single-step simulation control;
 - zone-object creation or editing outside mission areas built from reference points.
 
 Some of these are supported by official CMO Lua and are bridge targets. `EXPERIMENTAL` means a
@@ -204,34 +211,39 @@ or quarantine rather than execution in a different scenario.
 
 Reads, `cmo_bridge_status`, and other synchronous CMO calls do not use this queue. They still need
 the polling event and advancing scenario time and retain their bounded timeout behavior. Host-only
-diagnose/prepare and destructive delete preview/confirm also retain their documented synchronous
-contracts.
+diagnose/prepare, UI time control, and destructive delete preview/confirm also retain their
+documented synchronous contracts.
 
 ## Protect consequential decision windows
 
-Before a multi-step assessment, mission build,
-force assignment, strike plan, doctrine/WRA/EMCON change, scenario-authoring batch, or other work
-where high time compression could invalidate the plan:
+Intervene in scenario time only as much as the decision requires:
 
-1. Call `cmo_scenario_get` and preserve its exact `time_compression` multiplier. Convert it back to
-   a setter code with `1->0`, `2->1`, `5->2`, `15->3`, `30->4`, or `150->5`.
-2. Submit `cmo_scenario_time_compression_set(code=0)`, wait for that request to complete, and
-   require `accepted=true` plus `observed_time_compression=1` in its eventual result.
-3. Refresh the decision-relevant scenario, contact, mission, and unit state after the slowdown.
-4. Submit independent bounded changes in FIFO order. Wait at every result dependency, then read the
-   affected CMO state back while the scenario is at 1x.
-5. After successful verification, submit the mapped restore code and verify its eventual result
-   unless the user asks to remain at 1x. If a request is rejected, quarantined, or otherwise
-   unresolved, do not queue a dependent restore; report the request ID and blocker.
+1. **Keep the current speed by default.** Issue routine bounded orders at the current compression
+   when the decision horizon safely exceeds Agent and bridge latency. Do not pause or slow merely
+   because a mutation is queued or because a read is convenient.
+2. **Use temporary 1x for moderate timing risk.** Slow down when several seconds of Agent or bridge
+   latency could matter but the task does not require a new operational plan. Refresh the relevant
+   state, act, verify, and restore the preserved speed explicitly.
+3. **Pause only for a complex decision window.** Appropriate cases include the initial global plan,
+   a phase or objective transition, a multi-mission or multi-domain deployment with dependencies,
+   or an imminent irreversible event whose outcome could change during extended assessment. The
+   Agent must judge this from the decision horizon and consequences; ordinary mission adjustments,
+   assignments, doctrine changes, and isolated orders do not justify pausing by themselves.
 
-Do not cycle compression around isolated reads or trivial bounded orders when delay cannot affect
-the outcome. A fully paused retail CMO instance does not schedule the Regular Time Lua action, but
-mutation submission itself does not require immediate polling after a valid session binding exists.
-The user may pause during a planning or authoring batch, let the Agent enqueue independent changes,
-and resume at 1x to execute them. Use `cmo_request_wait` only when a result dependency or final
-verification requires it; its timeout never cancels the request. For synchronous reads or status,
-resume at 1x or use repeated `Alt+1` 15-second time steps, and repair the polling event if those
-calls still time out while scenario time is advancing.
+For a deliberate pause, preserve the observed run/pause state and compression, collect the fresh
+state needed for planning, then pause. Plan and enqueue independent mutations while time is stopped.
+Before a controlled 1x pulse, list the durable queue and include every current non-terminal
+`queued` or `active` request UUID; the pulse rejects an incomplete set before releasing time. Use
+the pulse to service that bounded FIFO set and restore the pause, then inspect terminal results and
+perform any required readback before submitting dependent work. When the decision gate is
+satisfied, explicitly restore the state and compression that the Agent changed. Never leave CMO
+paused merely because an Agent workflow ended or failed.
+
+The UI time tools and exact pulse contract are documented in
+[references/tool-catalog.md](references/tool-catalog.md); the live execution sequence is in
+[references/live-operations.md](references/live-operations.md). A pulse advances some scenario
+time because the Regular Time trigger cannot run at absolute zero simulation time. Use it narrowly,
+and never resubmit a durable request because a pulse or local wait timed out.
 
 ## Preserve these universal invariants
 

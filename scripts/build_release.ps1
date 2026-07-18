@@ -168,6 +168,20 @@ try {
         throw "Expected one wheel and one sdist; found $($wheel.Count) wheel(s) and $($sdist.Count) sdist(s)."
     }
 
+    $wheelArchive = [IO.Compression.ZipFile]::OpenRead($wheel[0].FullName)
+    try {
+        $uiHelperEntries = @(
+            $wheelArchive.Entries |
+                Where-Object FullName -eq 'cmo_agent_bridge/host_assets/ui_time_controller.ps1'
+        )
+        if ($uiHelperEntries.Count -ne 1) {
+            throw "Release wheel must contain exactly one packaged UI time helper."
+        }
+    }
+    finally {
+        $wheelArchive.Dispose()
+    }
+
     Copy-Item -LiteralPath $wheel[0].FullName -Destination $OutputDirectory
     Copy-Item -LiteralPath $sdist[0].FullName -Destination $OutputDirectory
     Copy-Item -LiteralPath $desktopInstallerSource -Destination $OutputDirectory

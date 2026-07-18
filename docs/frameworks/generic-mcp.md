@@ -41,7 +41,7 @@ cmo-bridge serve
         "--python",
         "3.12",
         "--from",
-        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl",
+        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl",
         "cmo-bridge",
         "serve"
       ]
@@ -54,10 +54,17 @@ cmo-bridge serve
 `cmo_bridge_diagnose` 与所需的 `cmo_bridge_prepare`，并在想定内挂载轮询事件。CLI `prepare`
 只作为 MCP 工具无法加载时的备用入口。
 
+连接想定时先调用 `cmo_time_get_state`。如果想定正在运行，直接调用 `cmo_bridge_status`；如果已经
+暂停，调用 `cmo_simulation_pulse(handshake=true)`，由 Agent 以 1x 短暂释放、完成握手并自动复停。
+客户端不需要为暂停状态设计额外的玩家确认流程。
+如果本地队列已有未完成请求，先调用 `cmo_request_list`，并在 pulse 的 `request_ids` 中包含全部
+`queued`/`active` UUID；不完整的列表会在释放时间前被拒绝。
+
 ## 客户端能力要求
 
 - 支持 MCP `tools/list` 和 `tools/call`；
 - 能启动本机进程并保持双向 stdio；
+- MCP server 与 CMO 运行在同一交互式 Windows 会话；
 - 工具超时建议至少 120 秒；
 - server 启动超时建议至少 30 秒；
 - 一次会话只启动一个 bridge server，避免相同工具重复注册。
@@ -70,11 +77,11 @@ cmo-bridge serve
 下载并解压独立 Skill 包：
 
 ```powershell
-$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.2.1.zip"
-$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.2.1"
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.3.0.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.3.0"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/operate-cmo-skill-0.2.1.zip" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/operate-cmo-skill-0.3.0.zip" `
   -OutFile $skillZip
 Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 ```

@@ -70,9 +70,9 @@ execution timeout while CMO is paused. MCP/client shutdown detaches the worker r
 cancelling it; restart and query the original request. Process, runtime, or scenario binding
 mismatches produce rejection or quarantine instead of cross-scenario execution.
 
-Reads, `cmo_bridge_status`, `cmo_bridge_prepare`, and destructive delete preview/confirm use their
-existing synchronous contracts rather than this queue. CMO-backed reads and status still require
-the polling event and retain their bounded timeout behavior.
+Reads, `cmo_bridge_status`, `cmo_bridge_prepare`, host UI time tools, and destructive delete
+preview/confirm use their existing synchronous contracts rather than this queue. CMO-backed reads
+and status still require the polling event and retain their bounded timeout behavior.
 
 ## Current read and control tools
 
@@ -82,9 +82,12 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 |---|---|---|
 | `cmo_bridge_diagnose` | none | Inspect saved game root and release-runtime readiness without contacting CMO |
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage; success establishes the session binding required for queued mutations |
+| `cmo_time_get_state` | none | Host-only read of the uniquely matched CMO window's paused/running state and selected compression; does not require Lua polling or an established session binding |
+| `cmo_time_set` | `state=paused|running`; optional `rate_code=0..5` | Idempotently set UI run state and optionally compression, then verify readback; use only the configured unique CMO process and fail closed on ambiguous or unverifiable UI state |
+| `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require every current non-terminal durable request UUID, force 1x, wait for that complete set and/or the bridge handshake, then attempt to re-pause and restore prior compression with explicit verification |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, actual compression multiplier, and projected score state |
 | `cmo_scenario_context_get` | none | Read the saved scenario description, only the live current player's side briefing, plain-text projections, and that side's five victory-score thresholds; reports unsaved/missing/incompatible sources instead of exposing another side |
-| `cmo_scenario_time_compression_set` | code `0..5` | Queued mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; its eventual result echoes the requested code and actual multiplier |
+| `cmo_scenario_time_compression_set` | code `0..5` | Queued Lua mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; it cannot execute while polling is frozen and is not a way to release a paused scenario |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
@@ -108,12 +111,31 @@ In `LIVE_PLAYER`, unit, mission, inventory, doctrine, and score reads apply to t
 Read adversaries through `cmo_contact_*`. In author or umpire mode, omniscient reads are permitted
 only within the requested scope.
 
-For consequential multi-step work, preserve the multiplier from `cmo_scenario_get` and map it back
-to a setter code with `1->0`, `2->1`, `5->2`, `15->3`, `30->4`, or `150->5`. Submit code `0`, wait
-for completion, require `observed_time_compression=1`, refresh decision-relevant state, execute and
-verify at 1x, then submit and verify the mapped restore code. Do not restore while a prerequisite
-request is unresolved. Regular Time polling continues at 1x, so this workflow requires neither
-simulation pause control nor a Special Action pump.
+The UI time tools are specialized semantic Windows UI Automation, not Lua mutations or
+keyboard/mouse/coordinate macros. They match the configured `Command.exe`, require the MCP server
+and one unambiguous CMO window in the same interactive Windows session, fail closed when a modal
+disables the main window or state cannot be verified, and verify the resulting state. CMO does not
+need to start in the foreground. A WPF button invoke may surface it briefly; restoring the previous
+foreground window is best-effort and must not be described as guaranteed invisible background
+operation. Never use a pulse while CMO is already running: a running handshake or routine order
+should proceed at the current compression unless its decision horizon justifies a temporary
+slowdown or deliberate pause.
+
+`cmo_simulation_pulse` accepts only a verified paused start. Before release, call
+`cmo_request_list` and include every current non-terminal `queued` or `active` UUID in `request_ids`.
+The default empty list is valid only when no non-terminal durable work exists. An incomplete set is
+rejected before time advances because the FIFO worker would also service omitted work.
+`handshake=true` performs the initial bridge handshake, with `accept_lineage_id` only when the caller
+deliberately accepts that lineage.
+
+The pulse forces 1x. `timeout_seconds` bounds the work wait after the 1x release is verified; UI
+verification plus final pause/rate-restoration cleanup can extend total tool duration, and no value
+guarantees an exact amount of simulated time. The UI action itself is host-side, but handshake and
+queue completion still require the mounted Regular Time polling event. On timeout or work failure,
+the tool attempts to pause and restore the prior rate, reports whether both were verified, and never
+cancels or resubmits a durable request. Treat inability to verify the final pause as a high-severity
+condition requiring immediate user attention. The registered schema and returned state model remain
+authoritative.
 
 ## Current mutation tools
 
@@ -217,6 +239,7 @@ Some current tools are valid in both modes but contain author-only shortcuts:
 | Enemy `cmo_unit_*`, `cmo_mission_*`, `cmo_doctrine_*`, inventories | Forbidden | Permitted within explicit omniscient scope |
 | `cmo_contact_posture_set` | Identification/ROE decision only | May be used to prepare or correct observer-side perception |
 | `cmo_scenario_time_compression_set` | Normal simulation control | May be used for test acceleration but never as deterministic single-step |
+| `cmo_time_get_state`, `cmo_time_set`, `cmo_simulation_pulse` | Normal host UI time control under the decision-window policy | May also be used for authoring/test control; a pulse remains a bounded 1x run, not a zero-time or deterministic single step |
 | Relative RPs, task pools/packages, flight plans/TOT, mission AAR | Friendly-side operational use is permitted | May also be used to construct or instrument the scenario |
 | The 19 tools in [Current scenario-authoring tools](#current-scenario-authoring-tools) | Forbidden | Permitted only within the explicit author/umpire scope |
 | Lua-bearing event components and special-action definitions | Forbidden; only execute an existing legitimate player-facing special action | Trusted code authoring only after line-by-line review, inactive creation, exact readback, saved-copy testing, and explicit activation |
@@ -233,7 +256,7 @@ are now callable.
 | Generated-flight waypoint insert/update/delete and timing refresh | `EXPERIMENTAL` | Current tools create and inspect flight plans; do not claim route mutation |
 | Exclusion, no-nav, standard, and custom-environment zone objects | `EXPERIMENTAL` | Mission areas made from reference points are current; independent zone objects are not |
 | Remaining writable scenario metadata such as briefing text, database selection, complexity/difficulty, and every environment field | `MANUAL LUA` or editor | Saved description/current-side briefing are readable through `cmo_scenario_context_get`; writing them and the other fields still requires the editor or a separately reviewed author workflow |
-| Agent-driven deterministic pause/start/single-step simulation control | `UNSUPPORTED` | Retail Lua time compression cannot pause; the user can press `Alt+1` while paused for CMO's built-in 15-second time step |
+| Deterministic zero-time or fixed-simulation-duration single-step control | `UNSUPPORTED` | UI pause/run is current, but the Regular Time trigger requires scenario time to advance and a pulse may cross more than one CMO tick |
 
 Current complex-planning tools are deliberately narrower than complete GUI parity:
 
@@ -277,7 +300,7 @@ The current MCP surface does not provide:
   LuaScript event components and special actions can still store and execute arbitrary CMO Lua
   when deliberately composed;
 - reference-point or side deletion through dedicated tools;
-- deterministic pause/start/single-step simulation control;
+- deterministic zero-time or fixed-simulation-duration single-step control;
 - automatic multi-mission assignment queues or generated-flight waypoint mutation;
 - complete airbase runway, taxi, launch-queue, diversion, quick-turn-history, message-log,
   losses/expenditures-log, scoring-log, or refueling-history projections;

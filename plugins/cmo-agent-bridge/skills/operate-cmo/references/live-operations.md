@@ -64,29 +64,36 @@ operation, complex strike package, unclear end state, or high-risk force commitm
 
 ## Protect the decision window
 
-Use the 1x planning guard before any multi-step read-plan-mutate sequence whose result could become
-stale while CMO is running at high compression:
+Call `cmo_time_get_state` only when time control may be needed, then choose the least intrusive
+procedure:
 
-1. Read `cmo_scenario_get`; preserve the exact `time_compression` multiplier, map it back to a
-   setter code using [tool-catalog.md](tool-catalog.md), and note scenario time.
-2. Submit `cmo_scenario_time_compression_set(code=0)`, retain its request ID, wait for completion,
-   and verify the eventual observed multiplier is `1`.
-3. Refresh all decision-relevant reads. Do not plan from the pre-slowdown snapshot.
-4. Submit independent orders in FIFO order. Wait before any step that needs an earlier returned
-   GUID or result, then verify the affected CMO state at 1x.
-5. Restore the preserved compression only after successful queue completion and readback. A
-   `cmo_request_wait` timeout does not cancel the request; query the same request instead of
-   resubmitting it. On rejection, quarantine, scenario change, or an unresolved result, do not
-   submit a dependent restore.
+- **Routine order:** keep the observed state and compression. Submit and resolve the order normally.
+  High compression alone is not a reason to slow down when the decision horizon safely exceeds
+  Agent and bridge latency.
+- **Moderate timing risk:** preserve the running compression, call
+  `cmo_time_set(state="running", rate_code=0)`, refresh the state, act and verify at 1x, then restore
+  the preserved rate explicitly. Do not pause merely to change one mission, assignment, doctrine
+  field, or other bounded order.
+- **Complex decision window:** use a pause for an initial global plan, a phase/objective transition,
+  a multi-part deployment with dependencies, or an imminent irreversible event that could overtake
+  extended planning. Collect a fresh decision snapshot immediately before pausing when practical,
+  preserve the observed run state and rate, then call `cmo_time_set(state="paused")` and verify it.
 
-Use this guard for mission construction or restructuring, coordinated assignments, strike packages,
-target and weapon planning, doctrine/WRA/EMCON batches, and other consequential commitments. Do not
-toggle compression for an isolated read or a trivial bounded order unless the decision horizon
-requires it. After `cmo_bridge_status` establishes the current process/runtime/scenario binding,
-mutation submission remains available while CMO is paused: requests stay in the durable FIFO queue
-and execute when the Regular Time trigger resumes. `cmo_request_get`, `cmo_request_list`,
-`cmo_queue_status`, and cancellation of still-queued work remain available during the pause.
-Synchronous reads still require polling.
+While deliberately paused, plan first and submit independent mutations in intended FIFO order. Use
+`cmo_request_list` to collect every current non-terminal `queued` or `active` UUID, then pass that
+complete set to `cmo_simulation_pulse(request_ids=[...])`. The pulse rejects an omitted non-terminal
+request before releasing time because a 1x window would also advance that FIFO work. Use the pulse
+only long enough to service the complete bounded set and return to a verified pause. Inspect each
+terminal result locally before submitting a dependent step. A pulse timeout never cancels or
+changes a request; query the same UUID and never resubmit it. If a full CMO-backed readback is
+required before the next dependency, open the shortest controlled 1x read window and re-pause
+before further analysis.
+
+When the decision gate and required readback are satisfied, explicitly restore the state and rate
+the Agent changed. If execution, binding, or final-pause verification fails, choose and report the
+safest verified state rather than blindly resuming. A pulse advances some scenario time because the
+Regular Time trigger cannot run at absolute zero time. See [tool-catalog.md](tool-catalog.md) for the
+host UI tool contracts.
 
 ## Build the operating picture
 
@@ -325,14 +332,14 @@ Do not create or edit special actions in `LIVE_PLAYER`.
 
 ## Run the engagement loop
 
-1. Enter the 1x planning guard when the next assessment or order set is consequential.
+1. Assess the decision horizon and keep the current speed by default. Use temporary 1x for moderate
+   timing risk; reserve a pause for a genuinely complex decision window.
 2. Read contacts, missions, assigned units, combat status, inventories, sensors, allocations, and
    decision indicators relevant to the next action.
 3. Compare observations with assumptions, adversary courses, objective, MOPs, and MOEs.
 4. Submit one bounded set of orders, resolve required dependencies, and retain all request IDs.
-5. Restore or raise compression long enough for queued commands and asynchronous effects to
-   develop, then re-enter the
-   1x planning guard before the next consequential assessment.
+5. Restore or raise compression as explicitly chosen for execution and let asynchronous effects
+   develop. Do not automatically slow or pause again before a routine follow-up order.
 6. Reread fuel, damage, readiness, weapons, sensors, allocations, mission coverage, contact
    uncertainty, BDA, and score.
 7. Choose explicitly: continue, adjust locally, execute a branch, replenish, pause, disengage, or
@@ -346,10 +353,14 @@ authority, expected gain, and a recovery path.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
-- `BRIDGE_UNRESPONSIVE` or a status-handshake/read `REQUEST_TIMEOUT`: the bridge cannot distinguish a
-  paused scenario from an inactive or unloaded polling event. If paused, resume at 1x until the
-  read returns, or repeat `Alt+1` 15-second time steps as needed. If time is already advancing,
-  repair the repeatable Regular Time polling event.
+- `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: call `cmo_time_get_state`. If CMO is
+  paused, list the durable queue, include every non-terminal request UUID in
+  `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the pause. If
+  CMO is already running, do not change speed; repair the repeatable Regular Time polling event.
+  Ask the user to operate time manually only when host UI control is unavailable or cannot verify
+  state.
+- Other synchronous read `REQUEST_TIMEOUT`: inspect UI state and polling health. Use the shortest
+  justified 1x run window for a paused read; if time already advances, repair the polling event.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the

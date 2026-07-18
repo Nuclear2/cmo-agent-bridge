@@ -43,8 +43,10 @@ Qoder 的用户配置位于 `~/.qoder/settings.json`，local 项目配置位于
 ## 验证
 
 如果 Qoder CLI 已经在运行，执行 `/mcp reload`；否则新建会话。运行 `qodercli mcp list` 并要求
-Agent 调用 `cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`，再调用 `cmo_bridge_status`。
-默认权限模式可能要求确认第一次 MCP tool call。
+Agent 调用 `cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`。接着调用 `cmo_time_get_state`：想定
+运行中直接调用 `cmo_bridge_status`；想定已经暂停则调用
+`cmo_simulation_pulse(handshake=true)`，自动短暂释放并复停。默认权限模式可能要求确认第一次 MCP
+tool call。
 
 官方参考：[Qoder MCP Servers](https://docs.qoder.com/en/cli/mcp-servers)、
 [Qoder Skills](https://docs.qoder.com/en/cli/Skills)。

@@ -90,6 +90,17 @@ class _FakeQueueService:
         )
 
 
+class _FakeUiCoordinationLock:
+    def __init__(self, events: list[str]) -> None:
+        self._events = events
+
+    async def __aenter__(self) -> None:
+        self._events.append("enter")
+
+    async def __aexit__(self, *_args: object) -> None:
+        self._events.append("exit")
+
+
 class _FakeQueueWorker:
     def __init__(self) -> None:
         self.start_count = 0
@@ -184,12 +195,21 @@ def test_submit_persists_typed_arguments_and_prints_receipt(
 ) -> None:
     queue = _FakeQueueService()
     build_calls: list[object] = []
+    lock_events: list[str] = []
 
     def fake_build(**kwargs: object) -> object:
         build_calls.append(kwargs["game_root"])
         return SimpleNamespace(queue_service=queue)
 
+    def fake_lock(_runtime: object) -> _FakeUiCoordinationLock:
+        return _FakeUiCoordinationLock(lock_events)
+
     monkeypatch.setattr(cli_module, "build_application_runtime", fake_build)
+    monkeypatch.setattr(
+        cli_module,
+        "new_ui_coordination_lock",
+        fake_lock,
+    )
 
     result = CliRunner().invoke(
         app,
@@ -203,6 +223,7 @@ def test_submit_persists_typed_arguments_and_prints_receipt(
 
     assert result.exit_code == 0
     assert build_calls == [None]
+    assert lock_events == ["enter", "exit"]
     assert queue.submissions == [("mission.create", {"side": "Blue", "name": "CAP"})]
     assert json.loads(result.stdout) == {
         "request_id": str(_REQUEST_ID),

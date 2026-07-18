@@ -209,13 +209,17 @@ manual implementation, approximation, or blocker.
 
 ### 7. Execute in bounded decision windows
 
-Before each consequential decision window, preserve the current time-compression multiplier and
-map it to a setter code with [tool-catalog.md](tool-catalog.md). Submit
-`cmo_scenario_time_compression_set(code=0)`, wait for completion, verify multiplier `1`, and refresh
-the relevant state. Keep CMO at 1x through synchronous reads and queue execution. Restore the mapped
-code after all required requests complete and readback succeeds. If the user pauses during planning,
-independent mutations may remain in the durable FIFO queue until time resumes; do not submit a
-dependent action before its prerequisite result exists.
+An initial global plan, phase or objective transition, or multi-domain deployment with substantial
+dependencies normally justifies a deliberate pause. Apply the least-intervention time policy and
+paused planning sequence in [live-operations.md](live-operations.md): preserve observed UI state and
+compression, obtain a fresh decision snapshot, pause, enqueue independent work, list the queue, and
+service every current non-terminal request ID through a bounded 1x pulse. Verify terminal results
+and explicitly restore the state and rate the Agent changed. Do not submit a dependent action before
+its prerequisite result exists.
+
+Do not turn every subsequent decision cycle into a pause. Keep the current compression for routine
+execution and local adjustment when the decision horizon permits; use temporary 1x for moderate
+timing risk that does not require extended replanning.
 
 Scale real-world battle rhythms into three rolling CMO windows: current execution, the next
 prepared phase, and a follow-on branch or sequel. Do not build a fixed 24-hour cycle when the
@@ -227,8 +231,8 @@ For each window:
    allocations relevant to the next decision;
 2. compare observed indicators with the decision-support matrix;
 3. submit one bounded set of orders, retaining request IDs and resolving dependencies;
-4. restore or raise compression long enough for asynchronous actions to develop;
-5. return to 1x, refresh the state, and begin the next decision window.
+4. explicitly select the execution compression and let asynchronous actions develop;
+5. refresh the state at the next decision point, intervening in time only when its risk warrants it.
 
 Do not let a target of opportunity automatically displace the campaign objective. Divert forces
 only when identification and authority are sufficient, the expected gain is worth the disruption,
@@ -481,8 +485,11 @@ conservative time advancement, author-created event gates where authorized, and 
 readback. Anchored mission geometry should move without periodic coordinate rewriting, but it must
 still be checked after anchor movement or loss. After a successful `cmo_bridge_status` establishes
 the session binding, independent mutations can be durably queued while CMO is paused and will run
-FIFO when polling resumes. Synchronous reads and execution still require the polling event and
-advancing scenario time. There is no deterministic pause/start/single-step tool.
+FIFO when polling resumes. From a verified pause, list the queue and pass every non-terminal request
+UUID to `cmo_simulation_pulse`; it services that complete FIFO set at 1x and restores the pause.
+Synchronous CMO reads, the pulse handshake, and Lua queue execution still require the polling event
+and advancing scenario time; host UI pause/run does not provide deterministic zero-time or
+fixed-duration single stepping.
 
 If a dependency remains queued/active, wait or inspect the same request ID; a wait timeout does not
 cancel it. If it is rejected or quarantined, stop dependent orders, preserve the last verified

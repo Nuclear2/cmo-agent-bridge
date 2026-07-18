@@ -42,8 +42,9 @@ MCP 连接。
 ## 验证
 
 在 **Customize > MCP** 中确认 `cmo` 已连接，然后新建 Agent 对话并要求调用
-`cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`，再调用 `cmo_bridge_status`。Cursor 默认
-可能在首次工具调用时请求批准。
+`cmo_bridge_diagnose`，需要时调用 `cmo_bridge_prepare`。接着调用 `cmo_time_get_state`：想定运行中
+直接调用 `cmo_bridge_status`；想定已经暂停则调用 `cmo_simulation_pulse(handshake=true)`，由 Agent
+短暂释放并自动复停。Cursor 默认可能在首次工具调用时请求批准。
 
 官方参考：[Cursor MCP](https://cursor.com/docs/mcp.md)、
 [Cursor Skills](https://cursor.com/docs/skills.md)。

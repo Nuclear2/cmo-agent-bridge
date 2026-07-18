@@ -21,7 +21,13 @@ from cmo_agent_bridge.application.queue_models import (
     QueuedOperationStatus,
 )
 from cmo_agent_bridge.errors import BridgeError
-from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
+from cmo_agent_bridge.mcp_runtime import (
+    McpBridgeDiagnostic,
+    McpBridgePrepareResult,
+    McpSimulationPulseResult,
+    McpTimeSetResult,
+    McpTimeState,
+)
 from cmo_agent_bridge.operations.models import (
     BridgeStatusResult,
     CargoTransferItem,
@@ -109,6 +115,24 @@ class McpApplicationPort(ApplicationPort, Protocol):
     ) -> McpBridgePrepareResult: ...
 
     async def scenario_context_get(self) -> ScenarioContextResult: ...
+
+    async def time_get_state(self) -> McpTimeState: ...
+
+    async def time_set(
+        self,
+        *,
+        state: Literal["paused", "running"],
+        rate_code: int | None = None,
+    ) -> McpTimeSetResult: ...
+
+    async def simulation_pulse(
+        self,
+        *,
+        request_ids: tuple[UUID, ...] = (),
+        handshake: bool = False,
+        accept_lineage_id: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> McpSimulationPulseResult: ...
 
 
 ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
@@ -317,6 +341,81 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             "lineage ID to explicitly accept a newly loaded scenario."
         ),
         annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def time_get_state() -> McpTimeState:
+        try:
+            return await application.time_get_state()
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        time_get_state,
+        name="cmo_time_get_state",
+        title="Get CMO UI time state",
+        description=(
+            "Read the uniquely matched CMO window's paused/running state and selected time "
+            "compression through Windows UI Automation. This host-only read does not require "
+            "CMO Lua polling or an established scenario binding."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def time_set(
+        state: Literal["paused", "running"],
+        rate_code: Annotated[int | None, Field(ge=0, le=5)] = None,
+    ) -> McpTimeSetResult:
+        try:
+            return await application.time_set(state=state, rate_code=rate_code)
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        time_set,
+        name="cmo_time_set",
+        title="Set CMO UI time state",
+        description=(
+            "Idempotently pause or run the uniquely matched CMO simulation and optionally select "
+            "rate_code 0=1x, 1=2x, 2=5x, 3=15x, 4=30x, or 5=150x. Keep the current "
+            "speed for routine orders; pause only when a complex planning window justifies it."
+        ),
+        annotations=_mutation_annotations(),
+        structured_output=True,
+    )
+
+    async def simulation_pulse(
+        request_ids: tuple[UUID, ...] = (),
+        handshake: bool = False,
+        accept_lineage_id: str | None = None,
+        timeout_seconds: Annotated[float, Field(gt=0, le=120)] = 10.0,
+    ) -> McpSimulationPulseResult:
+        try:
+            return await application.simulation_pulse(
+                request_ids=request_ids,
+                handshake=handshake,
+                accept_lineage_id=accept_lineage_id,
+                timeout_seconds=timeout_seconds,
+            )
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        simulation_pulse,
+        name="cmo_simulation_pulse",
+        title="Pulse a paused CMO simulation",
+        description=(
+            "Only from an already paused simulation, require request_ids to include every current "
+            "non-terminal durable request, then run at 1x until that complete set is terminal "
+            "and/or a bridge handshake completes. timeout_seconds bounds the work wait after "
+            "verified release; final pause and rate-restoration cleanup may extend total duration. "
+            "Handshake and request completion still require the mounted Regular Time poll. "
+            "The result reports whether re-pause and prior compression restoration were verified. "
+            "The tool never cancels or resubmits a queued request. Use ordinary calls without this "
+            "pulse while CMO is already running."
+        ),
+        annotations=_non_idempotent_mutation_annotations(),
         structured_output=True,
     )
 

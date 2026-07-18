@@ -48,26 +48,33 @@ Keep an authoring ledger:
 
 Use stable, unique names. Search before every create. Record returned GUIDs immediately.
 
-Before the first mutation, require a successful `cmo_bridge_status` for the loaded scenario. Most
-authoring mutations return a durable queue receipt. Record its `request_id`, use
+Before the first mutation, require a successful running `cmo_bridge_status` or paused handshake
+pulse for the loaded scenario. Most authoring mutations return a durable queue receipt. Record its
+`request_id`, use
 `cmo_request_get`/`cmo_request_wait` for the eventual result, and never treat a wait timeout as
 cancellation. Independent changes may be submitted FIFO while CMO is paused, but a step that needs
 an earlier object GUID or result must wait for that request to complete. Local queue inspection and
 cancellation of a still-`queued` request remain available during the pause; active work survives
 MCP/client restart. A process/runtime/scenario binding mismatch must reject or quarantine old work,
 not carry it into the new authoring target. Unit/mission delete preview and confirm retain their
-separate synchronous confirmation contract; keep CMO polling through both calls so the short-lived
-token does not expire while paused.
+separate synchronous confirmation contract. Keep scenario time and polling advancing through both
+calls, or use one shortest justified controlled run window, so the short-lived token does not expire
+between preview and confirm.
 
 ## Use the authoring sequence
 
 Follow this order so later objects never depend on an unresolved earlier layer.
 
-Before each consequential authoring batch, preserve the scenario's current compression multiplier,
-map it to a setter code with [tool-catalog.md](tool-catalog.md), submit code `0`, wait for completion,
-verify multiplier `1`, and refresh the objects that batch will touch. Restore the mapped code only
-after all dependent requests and readback succeed. If the user pauses while composing a batch,
-enqueue only independent work and resume time to execute it before synchronous verification.
+Apply the same least-intervention time policy as live operations. Keep the current compression for
+routine bounded edits. Use temporary 1x only when several seconds of latency could invalidate the
+batch, and reserve a deliberate pause for a large dependent construction or a playtest decision
+window. For a paused batch, preserve state and rate, enqueue only independent work, list the queue,
+and pass every current non-terminal request UUID to a bounded 1x pulse. Verify results before each
+dependent create or link, then restore the state and rate the Agent changed.
+
+Use `cmo_time_set` for immediate host UI time control, including while polling is frozen.
+`cmo_scenario_time_compression_set` is a durable Lua mutation: it cannot execute while CMO is paused
+and must not be used as the mechanism that releases a paused authoring batch.
 
 ### 1. Scenario settings and authoring baseline
 
@@ -274,10 +281,11 @@ Run three distinct passes:
 2. **Player information pass:** reload a clean save, switch to the intended side, and verify that
    briefing, contacts, uncertainty, special actions, and available controls are sufficient without
    author knowledge.
-3. **Stress and recovery pass:** test manual pause/resume with queued mutations, MCP restart and
-   request recovery, cancellation before activation, high and low time compression, save/reload,
-   polling interruption, binding mismatch protection, mission completion, failed dependencies,
-   destroyed anchors, exhausted tankers, alternate outcomes, and scenario termination.
+3. **Stress and recovery pass:** test Agent UI pause/run, bounded 1x pulses, manual pause/resume,
+   queued mutations, MCP restart and request recovery, cancellation before activation, high and low
+   time compression, save/reload, polling interruption, binding mismatch protection, mission
+   completion, failed dependencies, destroyed anchors, exhausted tankers, alternate outcomes, and
+   scenario termination.
 
 Do not call a player playtest fair if the same agent retains author-only enemy information in its
 decision context. Use a fresh task or explicitly label the pass umpire-assisted.
@@ -390,7 +398,7 @@ Use a fresh save and, preferably, a fresh agent task for each player-side test. 
 - hostile reactions under likely and dangerous courses;
 - event and scoring behavior under success, failure, and partial outcomes;
 - no hidden dependency on editor mode or author-only actions;
-- bridge polling after save/reload and after resuming from a manual pause;
+- bridge polling after save/reload, a bounded Agent pulse, and resuming from a manual pause;
 - acceptable performance at intended time compression.
 
 Record defects by layer: data, geometry, mission, doctrine, event, scoring, bridge, or player

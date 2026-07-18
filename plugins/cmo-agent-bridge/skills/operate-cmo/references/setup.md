@@ -4,7 +4,7 @@ Use this reference when the plugin or Skill is installed but the MCP tools are a
 `cmo_bridge_diagnose` reports incomplete setup, `cmo_bridge_status` times out, or the polling event
 must be mounted or repaired.
 
-`v0.2.1` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.3.0` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Identify the failed layer
@@ -13,7 +13,8 @@ compatibility with an unverified CMO build.
 |---|---|---|
 | No `cmo_*` tools are registered | Agent client could not initialize the stdio MCP server | Run the host bootstrap below, then restart the client and open a new task |
 | `cmo_bridge_diagnose` reports `unconfigured` or `not_prepared` | MCP is running, but its game root or release-bound Lua runtime is not ready | Call `cmo_bridge_prepare` in the current task |
-| Diagnose reports `ready`, but `cmo_bridge_status` times out | CMO is paused or is not polling the file bridge | Resume for the handshake; if time already advances, repair the event |
+| Diagnose reports `ready`, but no binding exists | CMO may be paused or not polling the file bridge | Inspect `cmo_time_get_state`; handshake directly while running or use a paused 1x handshake pulse |
+| A running handshake or paused handshake pulse times out | The polling event is inactive, unloaded, or broken | Repair the event; do not keep toggling time or resubmit mutations |
 | `cmo_bridge_status` returns `ok: true` | Host and CMO are connected | Continue with the requested CMO workflow |
 
 The plugin includes the MCP configuration and complete Skill. It does not install `uv` or edit a
@@ -79,11 +80,12 @@ Do not silently replace a different saved root. Ask the user to confirm the inte
 then set `replace_saved_game_root` to `true`. A successful prepare hot-activates the ordinary tools
 in the same MCP session; no restart or manual `serve` process is needed.
 
-After prepare, call `cmo_bridge_status` while scenario time advances. Its successful result creates
+After prepare, call `cmo_time_get_state`. If CMO is running, call `cmo_bridge_status` without
+changing compression. If it is paused, call `cmo_simulation_pulse(handshake=true)`; the pulse forces
+1x only long enough to complete the handshake and restores the pause. Either successful path creates
 the process/runtime/scenario session binding that durable mutation submission requires. Once that
 binding exists, CMO may be paused while independent mutations are enqueued. Do not accept a stale
-binding after the process or loaded scenario changes; resume polling and establish the new binding
-explicitly.
+binding after the process or loaded scenario changes; establish the new binding explicitly.
 
 ## Recover when the MCP tools are absent
 
@@ -97,7 +99,7 @@ permissions block the command.
 Get-Command uv, uvx
 uv --version
 
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge version
 ```
 
@@ -141,22 +143,39 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 Normal player mode can use an event saved by the scenario author, but it cannot create a missing
 event on demand through an MCP server that has no CMO connection. No Special Action is required.
 
-Regular Time triggers run only while scenario time advances. Use 1x for the first status handshake,
-synchronous reads, and immediate execution. After a valid binding exists, ordinary mutation tools
-write to a local durable FIFO queue and return immediately even while CMO is paused. They remain
-pending until polling resumes. Use `cmo_request_get`, `cmo_request_list`, `cmo_queue_status`, or
-`cmo_request_cancel` for still-queued work without releasing time. A `cmo_request_wait` timeout
-does not cancel anything; only a request still in `queued` can be cancelled.
+Regular Time triggers run only while scenario time advances. For the first status handshake, leave
+a running scenario at its current compression. If CMO is paused, use
+`cmo_simulation_pulse(handshake=true)` instead of asking the user to release time; it briefly runs at
+1x and returns to a verified pause. After a valid binding exists, ordinary mutation tools write to
+a local durable FIFO queue and return immediately even while CMO is paused. They remain pending
+until polling resumes or a controlled pulse services them. Before any pulse, use `cmo_request_list`
+and include every current non-terminal `queued` or `active` UUID in `request_ids`; an incomplete set
+is rejected before time is released. Use `cmo_request_get`,
+`cmo_request_list`, `cmo_queue_status`, or `cmo_request_cancel` for still-queued work without
+releasing time. A `cmo_request_wait` timeout does not cancel anything; only a request still in
+`queued` can be cancelled.
 
-Status and reads remain synchronous. If the user wants to minimize time movement during one, tell
-them to resume at 1x or repeat `Alt+1` 15-second time steps until the read returns. If time is already
-advancing, repair the polling event. MCP/client shutdown does not cancel an active mutation, and
-restart recovery uses the original request ID. A process/runtime/scenario mismatch rejects or
-quarantines the old request rather than executing it in the new target.
+Status and reads remain synchronous. Use the shortest justified 1x run window when a paused read is
+necessary, then re-pause before extended analysis. If time is already advancing and a handshake or
+read still times out, repair the polling event rather than changing speed repeatedly. Ask the user
+to operate time manually only if `cmo_time_get_state` cannot identify or verify the CMO UI. MCP/client
+shutdown does not cancel an active mutation, and restart recovery uses the original request ID. A
+process/runtime/scenario mismatch rejects or quarantines the old request rather than executing it in
+the new target.
+
+The host UI state read and pause/run actions do not need Lua polling, but a pulse still needs the
+mounted Regular Time event to complete a handshake or execute queued Lua work. Run the MCP server
+and CMO in the same interactive Windows session with one unambiguous CMO main window. CMO need not
+start in the foreground: the helper uses semantic UI Automation rather than global keyboard, mouse,
+or coordinate input. CMO/WPF may nevertheless surface the window briefly during a button invoke;
+restoring the prior foreground window is best-effort. An enabled modal that disables the main
+window, an inaccessible UI, or ambiguous CMO instances makes the tool fail closed. Ask the user to
+clear that condition rather than guessing or toggling blindly.
 
 ## Verify both layers
 
-After diagnose reports ready, call `cmo_bridge_status`. A successful result reports the CMO build,
+After diagnose reports ready, use the running `cmo_bridge_status` or paused
+`cmo_simulation_pulse(handshake=true)` path above. A successful result reports the CMO build,
 runtime tag, and scenario lineage and establishes the mutation queue's session binding.
 
 For a direct CLI smoke test, keep CMO and the event running:

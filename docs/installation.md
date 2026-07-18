@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> `v0.2.1` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
+> `v0.3.0` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
 > 上验证当前 CMO build、任务流程和写操作。
 
 ## 推荐方案：安装 Release wheel
@@ -31,10 +31,10 @@ uv --version
 若 `uv` 安装后当前终端仍找不到它，关闭并重新打开 PowerShell。其他官方安装方式见
 [uv installation](https://docs.astral.sh/uv/getting-started/installation/)。
 
-### 安装 v0.2.1 Preview
+### 安装 v0.3.0 Preview
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -107,9 +107,29 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 - 想定作者应在发布前预置并测试事件；旧想定则需先用编辑器修改并另存。
 
 Regular Time trigger 只在想定时间推进时执行。游戏暂停时，普通 mutation 会留在本地持久 FIFO
-队列中；恢复到 1x 后，轮询会按提交顺序处理。读取和状态调用仍同步依赖轮询，暂停时可能按原有
-超时返回。复杂的多步规划应先用 `cmo_bridge_status` 建立 session binding，再按需要降到 1x、刷新
-态势、提交并验证修改，然后恢复原倍率。
+队列中。MCP server 提供三项 Windows 主机侧时间控制：
+
+- `cmo_time_get_state()`：读取暂停/运行状态和当前倍率；
+- `cmo_time_set(state, rate_code?)`：幂等地暂停、恢复或选择倍率；`rate_code` 0–5 对应 1x、2x、
+  5x、15x、30x、150x；
+- `cmo_simulation_pulse(request_ids?, handshake?, accept_lineage_id?, timeout_seconds?)`：仅在想定已经
+  暂停时，以 1x 短暂放行，等待队列中已列出的全部非终态请求和/或握手完成，然后自动重新
+  暂停并恢复原倍率。
+
+前两项的 UI 读取/操作不需要 Lua 轮询。pulse 也会在主机侧控制暂停和释放，但握手或队列请求
+要完成，Regular Time 事件仍必须在释放窗口中正常轮询。调用 pulse 前先用 `cmo_request_list`
+列出队列，将所有 `queued`/`active` UUID 一并传入；遗漏任何非终态请求都会在时间释放前触发
+`STATE_CONFLICT`。
+
+首次连接时先读取时间状态：想定正在运行就直接调用 `cmo_bridge_status`，不要改变倍率；已经暂停则
+调用 `cmo_simulation_pulse(handshake=true)`。正常推演中的普通指令也应保持当前速度，只有复杂规划
+才暂停；中等时效风险可以临时降到 1x。pulse 超时不会取消或重新提交 durable request，并会尽力
+复停。由于 Lua 事件仍需要时间推进，这不是零时间单步。
+
+时间工具需要 MCP server 与 CMO 位于同一交互式 Windows 会话，且只有一个可明确识别的 CMO
+主窗口。它们使用语义 UI Automation，不发送全局键鼠输入；CMO 仍可能在按钮调用时短暂出现在
+前台，bridge 只会尽力恢复原前台窗口。阻塞主窗口的 modal 对话框或无法验证的 UI 状态会导致
+工具 fail closed，此时再请用户手动处理。
 
 mutation 工具返回 `QueuedOperationReceipt`。用其中的 `request_id` 调用 `cmo_request_get` 或
 `cmo_request_wait` 取得最终结果；等待超时不会取消请求。`cmo_request_list` 和 `cmo_queue_status`
@@ -127,7 +147,7 @@ binding 不一致时，旧请求会被拒绝或隔离，不会跨想定执行。
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -191,11 +211,11 @@ MCP server 提供工具，skill 提供如何评估、规划和安全使用这些
 plugin marketplace，可下载 Release 中的独立 Skill 包：
 
 ```powershell
-$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.2.1.zip"
-$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.2.1"
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.3.0.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.3.0"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/operate-cmo-skill-0.2.1.zip" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/operate-cmo-skill-0.3.0.zip" `
   -OutFile $skillZip
 Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 ```
@@ -206,7 +226,7 @@ Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 如果机器上已安装 Git，也可从标签固定的源码取得：
 
 ```powershell
-git clone --depth 1 --branch v0.2.1 https://github.com/Nuclear2/cmo-agent-bridge.git
+git clone --depth 1 --branch v0.3.0 https://github.com/Nuclear2/cmo-agent-bridge.git
 cd cmo-agent-bridge
 ```
 
@@ -223,7 +243,7 @@ plugins/cmo-agent-bridge/skills/operate-cmo/
 不想持久安装 CLI 时，可让 `uvx` 从 Release wheel 启动隔离环境：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge --help
 uvx --python 3.12 --from $wheel cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"
@@ -232,7 +252,7 @@ uvx --python 3.12 --from $wheel cmo-bridge prepare `
 对应的 MCP 命令为：
 
 ```text
-uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl cmo-bridge serve
+uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl cmo-bridge serve
 ```
 
 `uvx` 不创建持久 tool 安装，但会使用 `uv` 的下载缓存。它适合试用和固定版本的可移植配置；长期
@@ -252,7 +272,7 @@ uv run --locked cmo-bridge --help
 
 ## 冒烟测试
 
-保持 CMO、目标想定和轮询事件运行，且时间至少为 1x：
+下面是纯 CLI 测试，因此需要让 CMO、目标想定和轮询事件运行，且时间至少为 1x：
 
 ```powershell
 cmo-bridge invoke bridge.status --args '{}'
@@ -269,6 +289,7 @@ cmo-bridge invoke scenario.get --args '{}'
 6. Agent 是否启动了一个新的会话并加载了 MCP server。
 
 CLI 适合诊断；Agent 的正常操作应通过 `cmo_*` MCP tools 完成。
+MCP Agent 遇到已暂停的想定时可以自行调用 handshake pulse，不需要玩家为状态检查手动释放时间。
 
 ### 纯 CLI 队列命令
 
@@ -321,7 +342,7 @@ claude plugin update cmo-agent-bridge@cmo-tools --scope user
 独立安装 CLI/wheel 的用户查看目标 Release 的 wheel 文件名，然后执行：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.0/cmo_agent_bridge-0.3.0-py3-none-any.whl"
 uv tool install --force --python 3.12 $wheel
 cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"
