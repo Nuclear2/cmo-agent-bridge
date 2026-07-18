@@ -243,6 +243,34 @@ def test_empty_executable_is_skipped_before_create_time_is_read(
     assert [phase for _token, phase in events] == ["pid", "exe"]
 
 
+def test_unrelated_inaccessible_executable_does_not_block_exact_target_match(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command_exe(tmp_path)
+    unrelated = tmp_path / "restricted" / "uvx.exe"
+    candidates = {
+        10: _FakeProcess(10, str(unrelated), 1.0),
+        11: _FakeProcess(11, str(command), 2.0),
+    }
+    _install_process_factory(monkeypatch, [10, 11], candidates.__getitem__)
+    original_resolve = Path.resolve
+
+    def guarded_resolve(
+        path: Path,
+        strict: bool = False,
+    ) -> Path:
+        if str(path) == str(unrelated):
+            raise PermissionError(5, "access denied", str(path))
+        return original_resolve(path, strict=strict)
+
+    monkeypatch.setattr(Path, "resolve", guarded_resolve)
+
+    assert PsutilCmoProcessInspector().matching_processes(command) == (
+        ProcessInfo(pid=11, create_time=2.0, executable=command.resolve(strict=True)),
+    )
+
+
 def test_non_file_executable_candidate_is_not_silently_ignored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

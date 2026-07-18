@@ -28,6 +28,13 @@ from cmo_agent_bridge.bootstrap import (
 )
 from cmo_agent_bridge.config import BridgeConfigStore
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.message_log import (
+    MessageLogReadResult,
+    MessageLogServicePort,
+    MessageLogStart,
+    MessageLogStatusResult,
+    NativeMessageLogService,
+)
 from cmo_agent_bridge.operations.kinds import ExecutionTarget
 from cmo_agent_bridge.operations.models import (
     BridgeStatusResult,
@@ -44,6 +51,8 @@ from cmo_agent_bridge.scenario_context import (
     ScenarioContextReaderPort,
 )
 from cmo_agent_bridge.state.operation_queue import OperationQueueState
+from cmo_agent_bridge.state.session_store import SessionStore
+from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
 from cmo_agent_bridge.ui_time import (
@@ -503,15 +512,18 @@ class McpRuntimeManager:
         local_app_data: Path | None = None,
         scenario_context_reader: ScenarioContextReaderPort | None = None,
         ui_time_controller: UiTimeControllerPort | None = None,
+        message_log_service: MessageLogServicePort | None = None,
     ) -> None:
         self._game_root = game_root
         self._local_app_data = local_app_data
         self._runtime: ApplicationRuntime | None = None
         self._lock = asyncio.Lock()
         self._ui_gate = asyncio.Lock()
+        self._message_log_gate = asyncio.Lock()
         self._queue_lifecycle_started = False
         self._scenario_context_reader = scenario_context_reader or ScenarioContextReader()
         self._ui_time_controller = ui_time_controller
+        self._message_log_service = message_log_service
 
     async def _ensure_runtime(self) -> ApplicationRuntime:
         async with self._lock:
@@ -634,6 +646,35 @@ class McpRuntimeManager:
     async def queue_summary(self) -> QueueSummary:
         runtime = await self._ensure_runtime()
         return runtime.queue_service.summary()
+
+    async def message_log_status(self) -> MessageLogStatusResult:
+        runtime = await self._ensure_runtime()
+        async with self._message_log_gate:
+            service = self._message_log_service_for(runtime)
+            return await asyncio.to_thread(service.status)
+
+    async def message_log_read(
+        self,
+        *,
+        side_name: str,
+        cursor: str | None = None,
+        start: MessageLogStart = "now",
+        page_size: int = 50,
+        include_unscoped: bool = False,
+        include_raw: bool = False,
+    ) -> MessageLogReadResult:
+        runtime = await self._ensure_runtime()
+        async with self._message_log_gate:
+            service = self._message_log_service_for(runtime)
+            return await asyncio.to_thread(
+                service.read,
+                side_name=side_name,
+                cursor=cursor,
+                start=start,
+                page_size=page_size,
+                include_unscoped=include_unscoped,
+                include_raw=include_raw,
+            )
 
     async def time_get_state(self) -> McpTimeState:
         runtime = await self._ensure_runtime()
@@ -1038,6 +1079,17 @@ class McpRuntimeManager:
                 "CMO UI time controller is unavailable before runtime preparation",
             )
         return controller
+
+    def _message_log_service_for(self, runtime: ApplicationRuntime) -> MessageLogServicePort:
+        service = self._message_log_service
+        if service is None:
+            database = StateDatabase(runtime.paths.sqlite_file)
+            service = NativeMessageLogService(
+                paths=runtime.paths,
+                session_store=SessionStore(database),
+            )
+            self._message_log_service = service
+        return service
 
     @staticmethod
     def _new_ui_lock(runtime: ApplicationRuntime) -> RootLock:

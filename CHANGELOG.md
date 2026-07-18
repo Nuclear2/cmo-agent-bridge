@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-19 (Preview)
+
+这一版新增不依赖 Lua 轮询的 CMO 原生消息日志读取，并把剧本消息纳入推演态势评估与暂停诊断。
+
+### Added
+
+- 新增 host-only `cmo_message_log_status` 与 `cmo_message_log_read`，直接读取 CMO 自己的时间戳消息
+  日志；不经过 Lua、不修改日志路径，想定暂停时也可使用。
+- 消息读取使用与 CMO 进程、想定 lineage、日志文件和阵营过滤绑定的前向游标；默认从当前文件尾
+  开始，显式 `start="recent"` 恢复时会标记可能混入同一进程内旧想定历史。
+- `operate-cmo` Skill 将己方原生消息纳入态势评估、交战循环和暂停/超时诊断，同时要求
+  `LIVE_PLAYER` 保持己方过滤并把日志内容仅视作想定内信息。
+
+### Fixed
+
+- 进程检查遇到与 `Command.exe` 明显无关、但当前用户无权解析其路径的进程时不再阻断 CMO 精确
+  匹配；同名候选仍保持 fail-closed 检查。
+- 原生日志文件尾需经过短暂稳定性复采样后才提交最后一条记录，避免长 HTML 消息内部空行被误判为
+  写入结束；未完成记录不会推进游标。
+- 日志文件名早于进程启动的容差收紧到不足一秒的时间戳取整范围，避免 CMO 快速重启时误绑定上一
+  进程留下的日志。
+
+### Changed
+
+- 项目版本升级到 `0.4.0`。
+
 ## [0.3.2] - 2026-07-18 (Preview)
 
 这一版修复了隔离错误破坏队列查询的问题，补齐 CMO Build 1868 下任务目标与编队规模的写后读回兼容，
@@ -237,6 +263,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.4.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.4.0
 [0.3.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.0

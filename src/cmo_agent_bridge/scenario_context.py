@@ -17,9 +17,7 @@ from typing import Protocol, cast
 
 _LOADDOC_PATTERN = re.compile(r"\[LOADDOC\](.*?)\[/LOADDOC\]", re.IGNORECASE | re.DOTALL)
 _URL_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*://")
-_HTML_CHARSET_PATTERN = re.compile(
-    br"charset\s*=\s*['\"]?\s*([A-Za-z0-9._:-]+)", re.IGNORECASE
-)
+_HTML_CHARSET_PATTERN = re.compile(rb"charset\s*=\s*['\"]?\s*([A-Za-z0-9._:-]+)", re.IGNORECASE)
 _BLOCK_TAGS = frozenset(
     {
         "address",
@@ -230,7 +228,7 @@ def _decode_document(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _html_to_text(value: str) -> str:
+def html_to_text(value: str) -> str:
     parser = _ReadableHtml()
     parser.feed(value)
     parser.close()
@@ -294,7 +292,9 @@ def _resolve_scenario_path(
         raise ValueError("CMO did not report a saved scenario file name")
     reported_path = Path(file_name_path.strip()) if file_name_path.strip() else None
     reported_candidate = (
-        reported_path if reported_path is None or reported_path.is_absolute() else game_root / reported_path
+        reported_path
+        if reported_path is None or reported_path.is_absolute()
+        else game_root / reported_path
     )
     if (
         reported_path is not None
@@ -456,10 +456,10 @@ class ScenarioContextReader:
             max_document_bytes=self._max_document_bytes,
         )
         description, description_truncated = _limit_text(
-            _html_to_text(description), self._max_text_characters
+            html_to_text(description), self._max_text_characters
         )
         briefing, briefing_truncated = _limit_text(
-            _html_to_text(briefing), self._max_text_characters
+            html_to_text(briefing), self._max_text_characters
         )
         return ScenarioContext(
             available=True,

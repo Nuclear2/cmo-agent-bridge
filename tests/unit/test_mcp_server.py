@@ -27,6 +27,7 @@ from cmo_agent_bridge.mcp_runtime import (
     McpTimeState,
 )
 from cmo_agent_bridge.mcp_server import create_mcp_server
+from cmo_agent_bridge.message_log import MessageLogReadResult, MessageLogStatusResult
 from cmo_agent_bridge.operations.models import ScenarioContextResult
 from cmo_agent_bridge.ui_time import SimulationRunState
 
@@ -52,6 +53,7 @@ class _FakeApplication:
         self._submitted: dict[UUID, QueuedOperationStatus] = {}
         self.worker_start_count = 0
         self.worker_stop_count = 0
+        self.message_log_reads: list[dict[str, object]] = []
         self.time_state = McpTimeState(
             state=SimulationRunState.PAUSED,
             rate_code=3,
@@ -167,6 +169,64 @@ class _FakeApplication:
 
     async def scenario_context_get(self) -> ScenarioContextResult:
         return ScenarioContextResult.model_validate(_scenario_context_result())
+
+    async def message_log_status(self) -> MessageLogStatusResult:
+        return MessageLogStatusResult(
+            state="ready",
+            available=True,
+            process_pid=123,
+            process_create_time=1.0,
+            session_lineage_id=UUID("11111111-1111-4111-8111-111111111111"),
+            session_activation_id=UUID("22222222-2222-4222-8222-222222222222"),
+            session_validated_at_ms=100,
+            native_logging_enabled=True,
+            log_path="C:\\CMO\\Logs\\2026-07-18_23.09.25.txt",
+            log_size_bytes=100,
+            log_modified_time=2.0,
+            candidate_count=1,
+            next_step="Open a cursor.",
+        )
+
+    async def message_log_read(
+        self,
+        *,
+        side_name: str,
+        cursor: str | None = None,
+        start: Literal["now", "recent"] = "now",
+        page_size: int = 50,
+        include_unscoped: bool = False,
+        include_raw: bool = False,
+    ) -> MessageLogReadResult:
+        self.message_log_reads.append(
+            {
+                "side_name": side_name,
+                "cursor": cursor,
+                "start": start,
+                "page_size": page_size,
+                "include_unscoped": include_unscoped,
+                "include_raw": include_raw,
+            }
+        )
+        return MessageLogReadResult(
+            process_pid=123,
+            process_create_time=1.0,
+            session_lineage_id=UUID("11111111-1111-4111-8111-111111111111"),
+            session_activation_id=UUID("22222222-2222-4222-8222-222222222222"),
+            side_name=side_name,
+            log_path="C:\\CMO\\Logs\\2026-07-18_23.09.25.txt",
+            items=(),
+            next_cursor="ml1.cursor",
+            has_more=False,
+            pending_partial_record=False,
+            history_truncated=False,
+            pre_session_history_may_be_included=start == "recent",
+            suppressed_other_side=0,
+            suppressed_unscoped=0,
+            scan_start_offset=100,
+            read_through_offset=100,
+            snapshot_size_bytes=100,
+            limited_by=None,
+        )
 
     async def time_get_state(self) -> McpTimeState:
         return self.time_state
@@ -929,6 +989,8 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_bridge_diagnose",
         "cmo_bridge_prepare",
         "cmo_bridge_status",
+        "cmo_message_log_status",
+        "cmo_message_log_read",
         "cmo_time_get_state",
         "cmo_time_set",
         "cmo_simulation_pulse",
@@ -1126,6 +1188,13 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     context_tool = tools_by_name["cmo_scenario_context_get"]
     assert context_tool.description is not None
     assert "current player side's briefing" in context_tool.description
+    message_tool = tools_by_name["cmo_message_log_read"]
+    assert message_tool.description is not None
+    assert "while CMO is paused" in message_tool.description
+    message_schema = cast(dict[str, JsonValue], message_tool.inputSchema)
+    message_properties = cast(dict[str, JsonValue], message_schema["properties"])
+    assert cast(dict[str, JsonValue], message_properties["page_size"])["maximum"] == 100
+    assert "side_name" in cast(list[JsonValue], message_schema["required"])
 
 
 @pytest.mark.asyncio
@@ -1162,6 +1231,40 @@ async def test_final_campaign_contract_is_reflected_in_mcp_input_schemas() -> No
             for branch in target_type
         )
         assert any(branch.get("type") == "integer" for branch in target_type)
+
+
+@pytest.mark.asyncio
+async def test_native_message_log_tools_map_to_host_application_methods() -> None:
+    application = _FakeApplication({})
+    server = create_mcp_server(application)
+
+    status = _structured_result(await server.call_tool("cmo_message_log_status", {}))
+    result = _structured_result(
+        await server.call_tool(
+            "cmo_message_log_read",
+            {
+                "side_name": "PRC",
+                "start": "recent",
+                "page_size": 25,
+                "include_raw": True,
+            },
+        )
+    )
+
+    assert status["state"] == "ready"
+    assert status["requires_lua_poll"] is False
+    assert result["side_name"] == "PRC"
+    assert result["next_cursor"] == "ml1.cursor"
+    assert application.message_log_reads == [
+        {
+            "side_name": "PRC",
+            "cursor": None,
+            "start": "recent",
+            "page_size": 25,
+            "include_unscoped": False,
+            "include_raw": True,
+        }
+    ]
 
 
 @pytest.mark.asyncio

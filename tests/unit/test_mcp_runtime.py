@@ -26,6 +26,7 @@ from cmo_agent_bridge.config import BridgeConfig
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
 from cmo_agent_bridge.mcp_runtime import McpRuntimeManager
 from cmo_agent_bridge.mcp_server import create_mcp_server
+from cmo_agent_bridge.message_log import MessageLogReadResult, MessageLogStatusResult
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot
 from cmo_agent_bridge.scenario_context import ScenarioContext, ScenarioScoring
@@ -157,6 +158,71 @@ class _ScenarioContextReader:
     ) -> ScenarioContext:
         self.calls.append((game_root, file_name_path, file_name, player_side_guid))
         return self.result
+
+
+class _MessageLogService:
+    def __init__(self) -> None:
+        self.status_calls = 0
+        self.read_calls: list[dict[str, object]] = []
+
+    def status(self) -> MessageLogStatusResult:
+        self.status_calls += 1
+        return MessageLogStatusResult(
+            state="ready",
+            available=True,
+            process_pid=7300,
+            process_create_time=1.0,
+            session_lineage_id=UUID("11111111-1111-4111-8111-111111111111"),
+            session_activation_id=UUID("22222222-2222-4222-8222-222222222222"),
+            session_validated_at_ms=100,
+            native_logging_enabled=True,
+            log_path="log.txt",
+            log_size_bytes=10,
+            log_modified_time=2.0,
+            candidate_count=1,
+            next_step="Read.",
+        )
+
+    def read(
+        self,
+        *,
+        side_name: str,
+        cursor: str | None = None,
+        start: Literal["now", "recent"] = "now",
+        page_size: int = 50,
+        include_unscoped: bool = False,
+        include_raw: bool = False,
+    ) -> MessageLogReadResult:
+        self.read_calls.append(
+            {
+                "side_name": side_name,
+                "cursor": cursor,
+                "start": start,
+                "page_size": page_size,
+                "include_unscoped": include_unscoped,
+                "include_raw": include_raw,
+            }
+        )
+        return MessageLogReadResult(
+            process_pid=7300,
+            process_create_time=1.0,
+            session_lineage_id=UUID("11111111-1111-4111-8111-111111111111"),
+            session_activation_id=UUID("22222222-2222-4222-8222-222222222222"),
+            side_name=side_name,
+            log_path="log.txt",
+            items=(),
+            next_cursor="ml1.cursor",
+            has_more=False,
+            pending_partial_record=False,
+            history_truncated=False,
+            pre_session_history_may_be_included=False,
+            suppressed_other_side=0,
+            suppressed_unscoped=0,
+            scan_start_offset=10,
+            read_through_offset=10,
+            snapshot_size_bytes=10,
+            limited_by=None,
+        )
 
 
 class _FakeQueueService:
@@ -388,6 +454,59 @@ async def test_scenario_context_get_discards_briefing_when_player_side_changes(
     assert result.side_briefing is None
     assert result.scenario_description is None
     assert result.saved_snapshot is False
+
+
+@pytest.mark.asyncio
+async def test_native_message_log_methods_do_not_call_lua_or_ui(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    application = _ScenarioApplication([_scenario_payload()])
+    runtime = _fake_runtime(
+        application=application,
+        queue_service=_FakeQueueService(),
+        queue_worker=_FakeQueueWorker(),
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+    message_log = _MessageLogService()
+
+    def fake_build_application_runtime(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(
+        runtime_module,
+        "build_application_runtime",
+        fake_build_application_runtime,
+    )
+    manager = McpRuntimeManager(
+        game_root=game_root,
+        local_app_data=local_app_data,
+        ui_time_controller=cast(Any, object()),
+        message_log_service=message_log,
+    )
+
+    status = await manager.message_log_status()
+    result = await manager.message_log_read(side_name="PRC", start="now")
+
+    assert status.available is True
+    assert result.next_cursor == "ml1.cursor"
+    assert application.calls == 0
+    assert message_log.status_calls == 1
+    assert message_log.read_calls == [
+        {
+            "side_name": "PRC",
+            "cursor": None,
+            "start": "now",
+            "page_size": 50,
+            "include_unscoped": False,
+            "include_raw": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio

@@ -70,6 +70,9 @@ Before every planned batch of CMO-backed synchronous reads, require a fresh
 establishes the state. User interaction, extended reasoning, another time-control action, or a
 failed CMO call invalidates that observation. If CMO is paused, never start or retry the read batch:
 either use an explicitly stale prior snapshot or open the controlled 1x acquisition window below.
+The host-only `cmo_message_log_read` is an exception: it reads the retained native-log cursor without
+Lua polling and can reveal scenario tasking or a message associated with the pause. It does not make
+the rest of the paused read batch safe.
 Use registered MCP tools for normal Agent work. A fallback `cmo-bridge invoke` is still a
 synchronous Lua-backed call and follows the same gate: verified pause must return
 `SCENARIO_NOT_ADVANCING` without publishing the operation or waiting for or retrying Lua polling.
@@ -117,15 +120,19 @@ Read only what can affect the next decision:
    situation, and victory thresholds before choosing forces or missions. The tool deliberately
    exposes no other side's briefing. If it reports an unavailable saved snapshot, ask for the
    objective before autonomous command instead of inferring one from force composition.
-4. Read relevant directed relationships from the commanded side to each other side with
+4. Call `cmo_message_log_status`; in a normal opening, establish and retain a commanded-side
+   forward cursor with `cmo_message_log_read(..., start="now")`. If the first handoff is already
+   paused and an earlier message may explain it, use one explicit `start="recent"` recovery tail
+   instead, assess its scenario-boundary warning, then retain its returned forward cursor.
+5. Read relevant directed relationships from the commanded side to each other side with
    `cmo_side_posture_get`; never substitute the reverse relationship.
-5. Read friendly missions, reference points, and assigned units.
-6. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
+6. Read friendly missions, reference points, and assigned units.
+7. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
    that might be committed.
-7. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
-8. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
+8. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
+9. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
    engagement or exposure is possible.
-9. Record the decision horizon, information gaps, latest useful decision time, and conservative
+10. Record the decision horizon, information gaps, latest useful decision time, and conservative
    default if an uncertainty remains unresolved.
 
 Follow paging to completion when comparing the entire force, contact set, mission set, or reference
@@ -374,8 +381,9 @@ Do not create or edit special actions in `LIVE_PLAYER`.
 
 1. Assess the decision horizon and keep the current speed by default. Use temporary 1x for moderate
    timing risk; reserve a pause for a genuinely complex decision window.
-2. Read contacts, missions, assigned units, combat status, inventories, sensors, allocations, and
-   decision indicators relevant to the next action.
+2. Read new commanded-side native messages with the retained cursor, then read contacts, missions,
+   assigned units, combat status, inventories, sensors, allocations, and other decision indicators
+   relevant to the next action.
 3. Compare observations with assumptions, adversary courses, objective, MOPs, and MOEs.
 4. Submit one bounded set of orders, resolve required dependencies, and retain all request IDs.
 5. Restore or raise compression as explicitly chosen for execution and let asynchronous effects
@@ -395,18 +403,19 @@ authority, expected gain, and a recovery path.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
 - `SCENARIO_NOT_ADVANCING`: whether returned by an MCP tool or fallback `cmo-bridge invoke`, the
   runtime verified pause and intentionally did not publish the synchronous CMO call or wait for or
-  retry Lua polling. Do not repeat it. Use local queue/time tools while paused, or preserve the
-  selected rate, inspect non-terminal durable work, open one explicit 1x read window, complete the
-  preselected reads without deliberation, and restore verified pause in cleanup.
+  retry Lua polling. Do not repeat it. Read the retained native message-log cursor first when
+  available, then use local queue/time tools while paused or preserve the selected rate, inspect
+  non-terminal durable work, open one explicit 1x read window, complete the preselected reads
+  without deliberation, and restore verified pause in cleanup.
 - `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: call `cmo_time_get_state`. If CMO is
   paused, list the durable queue, include every non-terminal request UUID in
   `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the pause. If
   CMO is already running, do not change speed; repair the repeatable Regular Time polling event.
   Ask the user to operate time manually only when host UI control is unavailable or cannot verify
   state.
-- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Inspect UI state and polling health.
-  Use the shortest justified 1x run window for a paused read; if time already advances, repair the
-  polling event.
+- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Inspect UI state, read the native
+  message-log cursor when available, and inspect polling health. Use the shortest justified 1x run
+  window for a paused read; if time already advances, repair the polling event.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the

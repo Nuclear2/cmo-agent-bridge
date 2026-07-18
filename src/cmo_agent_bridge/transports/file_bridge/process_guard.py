@@ -94,6 +94,12 @@ class PsutilCmoProcessInspector:
                 try:
                     executable = Path(executable_text).resolve(strict=True)
                     executable_status = executable.stat()
+                except PermissionError:
+                    raw_name = ntpath.basename(_windows_normalized(Path(executable_text)))
+                    target_name = ntpath.basename(target_key)
+                    if raw_name != target_name:
+                        continue
+                    raise
                 except (FileNotFoundError, NotADirectoryError):
                     continue
                 if not stat.S_ISREG(executable_status.st_mode):
