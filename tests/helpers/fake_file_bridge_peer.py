@@ -662,6 +662,7 @@ class FakeFileBridgePeer:
                     "guid": "SCENARIO-1",
                     "title": "Bridge test scenario",
                     "file_name": "bridge-test.scen",
+                    "file_name_path": "C:\\CMO\\Scenarios",
                     "current_time": "2026-07-10T13:00:00Z",
                     "current_time_seconds": 100.0,
                     "start_time": "2026-07-10T12:00:00Z",

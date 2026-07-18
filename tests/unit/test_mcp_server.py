@@ -21,6 +21,7 @@ from cmo_agent_bridge.application.queue_models import (
 )
 from cmo_agent_bridge.mcp_runtime import McpBridgeDiagnostic, McpBridgePrepareResult
 from cmo_agent_bridge.mcp_server import create_mcp_server
+from cmo_agent_bridge.operations.models import ScenarioContextResult
 
 
 _ERROR_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(
@@ -148,6 +149,9 @@ class _FakeApplication:
             next_step="Call cmo_bridge_status.",
         )
 
+    async def scenario_context_get(self) -> ScenarioContextResult:
+        return ScenarioContextResult.model_validate(_scenario_context_result())
+
 
 def _success(result: JsonValue) -> InvocationOutcome:
     return InvocationOutcome(
@@ -199,6 +203,7 @@ def _scenario_result() -> dict[str, JsonValue]:
         "guid": "SCENARIO-1",
         "title": "J-36 vs F-35",
         "file_name": "test.scen",
+        "file_name_path": "C:\\CMO\\Scenarios",
         "current_time": "2026/5/22 17:03:05",
         "current_time_seconds": 1_779_469_385.0,
         "start_time": "2026/5/22 16:58:49",
@@ -214,6 +219,30 @@ def _scenario_result() -> dict[str, JsonValue]:
         "player_side_guid": "SIDE-BLUE",
         "time_compression": 1.0,
         "campaign_score": 0,
+    }
+
+
+def _scenario_context_result() -> dict[str, JsonValue]:
+    return {
+        "status": "available",
+        "scenario_guid": "SCENARIO-1",
+        "title": "J-36 vs F-35",
+        "player_side_guid": "SIDE-BLUE",
+        "player_side_name": "PLAAF",
+        "scenario_file": "C:\\CMO\\Scenarios\\test.scen",
+        "scenario_description": "Defend the airbase.",
+        "side_briefing": "Destroy all hostile fighters.",
+        "scoring_thresholds": {
+            "major_defeat": -100,
+            "minor_defeat": -50,
+            "average": 0,
+            "minor_victory": 50,
+            "major_victory": 100,
+        },
+        "description_truncated": False,
+        "briefing_truncated": False,
+        "saved_snapshot": True,
+        "warnings": [],
     }
 
 
@@ -841,6 +870,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_request_cancel",
         "cmo_queue_status",
         "cmo_scenario_get",
+        "cmo_scenario_context_get",
         "cmo_scenario_time_compression_set",
         "cmo_side_list",
         "cmo_side_posture_get",
@@ -1022,6 +1052,9 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     scenario_properties = cast(dict[str, JsonValue], scenario_schema["properties"])
     assert "player_side_guid" in scenario_properties
     assert "player_side_guid" in cast(list[JsonValue], scenario_schema["required"])
+    context_tool = tools_by_name["cmo_scenario_context_get"]
+    assert context_tool.description is not None
+    assert "current player side's briefing" in context_tool.description
 
 
 @pytest.mark.asyncio
@@ -1676,6 +1709,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
         {"accept_lineage_id": "33333333-3333-4333-8333-333333333333"},
     )
     scenario_response = await server.call_tool("cmo_scenario_get", {})
+    scenario_context_response = await server.call_tool("cmo_scenario_context_get", {})
     side_response = await server.call_tool(
         "cmo_side_list",
         {"page_size": 1, "cursor": "1"},
@@ -1897,6 +1931,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
 
     assert _structured_result(status_response) == status
     assert _structured_result(scenario_response) == scenario
+    assert _structured_result(scenario_context_response) == _scenario_context_result()
     assert _structured_result(side_response) == sides
     assert _structured_result(unit_list_response) == units
     assert _structured_result(unit_get_response) == unit

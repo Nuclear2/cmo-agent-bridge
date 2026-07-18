@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.2.0` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.2.1` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.0/cmo_agent_bridge-0.2.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.2.1/cmo_agent_bridge-0.2.1-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -86,7 +86,7 @@ cmo-bridge serve
   server 本身不会分发 Skill。
 
 重启 Agent 并新建会话，然后先要求它调用 `cmo_bridge_diagnose`；需要时由它在当前会话调用
-`cmo_bridge_prepare`，再调用 `cmo_bridge_status`。当前 MCP surface 提供 75 个有类型
+`cmo_bridge_prepare`，再调用 `cmo_bridge_status`。当前 MCP surface 提供 76 个有类型
 工具。CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*` tools。
 
 ## 6. 处理写操作回执

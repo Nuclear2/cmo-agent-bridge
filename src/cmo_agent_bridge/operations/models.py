@@ -469,10 +469,14 @@ class ReferencePointAddArgs(StrictModel):
         has_absolute = any(value is not None for value in absolute_values)
         has_relative = any(value is not None for value in relative_values)
         if has_absolute and has_relative:
-            raise ValueError("absolute and relative reference-point positions are mutually exclusive")
+            raise ValueError(
+                "absolute and relative reference-point positions are mutually exclusive"
+            )
         if has_absolute:
             if any(value is None for value in absolute_values):
-                raise ValueError("absolute reference-point position requires latitude and longitude")
+                raise ValueError(
+                    "absolute reference-point position requires latitude and longitude"
+                )
             if self.bearing_type is not None:
                 raise ValueError("bearing_type requires a relative reference-point position")
             return self
@@ -833,9 +837,7 @@ class MissionAirRefuelingUpdateArgs(StrictModel):
     minimum_tankers_on_station: int | None = Field(default=None, ge=0)
     max_receivers_in_queue_per_tanker: int | None = Field(default=None, ge=0)
     fuel_percent_to_start_looking: float | None = Field(default=None, ge=0, le=100)
-    tanker_max_distance_nm: (
-        Annotated[float, Field(ge=0)] | Literal["internal"] | None
-    ) = None
+    tanker_max_distance_nm: Annotated[float, Field(ge=0)] | Literal["internal"] | None = None
     tanker_one_time: bool | None = None
     tanker_max_receivers: Annotated[int, Field(ge=0)] | NonEmptyStr | None = None
 
@@ -1265,6 +1267,7 @@ class ScenarioResult(StrictModel):
     guid: NonEmptyStr
     title: str
     file_name: str
+    file_name_path: str
     current_time: str
     current_time_seconds: float
     start_time: str
@@ -1280,6 +1283,43 @@ class ScenarioResult(StrictModel):
     player_side_guid: NonEmptyStr | None
     time_compression: float
     campaign_score: int
+
+
+ScenarioContextStatus = Literal[
+    "available",
+    "partial",
+    "no_player_side",
+    "unsaved_scenario",
+    "file_missing",
+    "side_not_found",
+    "assembly_incompatible",
+    "reader_failed",
+    "scenario_changed",
+]
+
+
+class ScenarioScoringThresholds(StrictModel):
+    major_defeat: int | None
+    minor_defeat: int | None
+    average: int | None
+    minor_victory: int | None
+    major_victory: int | None
+
+
+class ScenarioContextResult(StrictModel):
+    status: ScenarioContextStatus
+    scenario_guid: NonEmptyStr
+    title: str
+    player_side_guid: NonEmptyStr | None
+    player_side_name: str | None
+    scenario_file: str | None
+    scenario_description: str | None
+    side_briefing: str | None
+    scoring_thresholds: ScenarioScoringThresholds | None
+    description_truncated: bool
+    briefing_truncated: bool
+    saved_snapshot: bool
+    warnings: list[str]
 
 
 class SideResult(StrictModel):

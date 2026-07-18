@@ -59,6 +59,7 @@ def _scenario(lua: LuaRuntime, *, player_side: object = "SIDE-BLUE") -> Any:
             "guid": str(LINEAGE_ID),
             "Title": "最小桥接测试",
             "FileName": "bridge-test.scen",
+            "FileNamePath": "C:\\CMO\\Scenarios",
             "CurrentTime": "2026-07-15T12:00:00Z",
             "StartTime": "2026-07-15T10:00:00Z",
             "StartTimeNum": 1_768_471_200,
@@ -2263,6 +2264,7 @@ def test_lua_scenario_get_round_trip_maps_scenario_wrapper() -> None:
     assert result["guid"] == str(LINEAGE_ID)
     assert result["title"] == "最小桥接测试"
     assert result["database"] == "DB3000"
+    assert result["file_name_path"] == "C:\\CMO\\Scenarios"
     assert result["current_time_seconds"] == 1_768_478_400.0
     assert result["start_time_seconds"] == 1_768_471_200.0
     assert result["duration_seconds"] == 7_200.0

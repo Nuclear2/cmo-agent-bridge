@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
@@ -26,7 +26,18 @@ from cmo_agent_bridge.bootstrap import (
 )
 from cmo_agent_bridge.config import BridgeConfigStore
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.operations.models import (
+    ScenarioContextResult,
+    ScenarioContextStatus,
+    ScenarioResult,
+    ScenarioScoringThresholds,
+)
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot, render_dispatcher
+from cmo_agent_bridge.scenario_context import (
+    ScenarioContext,
+    ScenarioContextReader,
+    ScenarioContextReaderPort,
+)
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 
 
@@ -243,6 +254,113 @@ def _runtime_result(runtime: ApplicationRuntime) -> McpBridgePrepareResult:
     )
 
 
+def _normalized_identifier(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip().strip("{}").casefold()
+
+
+def _scenario_context_identity(scenario: ScenarioResult) -> tuple[str | bool | None, ...]:
+    return (
+        _normalized_identifier(scenario.guid),
+        scenario.title,
+        scenario.file_name.casefold(),
+        scenario.file_name_path.casefold(),
+        _normalized_identifier(scenario.player_side_guid),
+        scenario.started,
+    )
+
+
+def _scenario_file_name(scenario: ScenarioResult) -> str | None:
+    if not scenario.file_name:
+        return None
+    reported = Path(scenario.file_name_path) if scenario.file_name_path else None
+    if reported is not None and reported.suffix.lower() in {".scen", ".save"}:
+        return str(reported)
+    return str(reported / scenario.file_name) if reported is not None else scenario.file_name
+
+
+def _scenario_context_failure_status(reason: str) -> ScenarioContextStatus:
+    lowered = reason.casefold()
+    if "saved scenario file name" in lowered:
+        return "unsaved_scenario"
+    if "player side" in lowered and ("exactly one" in lowered or "not found" in lowered):
+        return "side_not_found"
+    if any(
+        marker in lowered
+        for marker in (
+            "command.exe",
+            "assembly",
+            "deserialize",
+            "unsupported root",
+            "method",
+            "type",
+        )
+    ):
+        return "assembly_incompatible"
+    if "could not be resolved" in lowered or "not a file" in lowered or "was not found" in lowered:
+        return "file_missing"
+    return "reader_failed"
+
+
+def _unavailable_scenario_context(
+    *,
+    scenario: ScenarioResult,
+    status: ScenarioContextStatus,
+    reason: str,
+) -> ScenarioContextResult:
+    return ScenarioContextResult(
+        status=status,
+        scenario_guid=scenario.guid,
+        title=scenario.title,
+        player_side_guid=scenario.player_side_guid,
+        player_side_name=None,
+        scenario_file=_scenario_file_name(scenario),
+        scenario_description=None,
+        side_briefing=None,
+        scoring_thresholds=None,
+        description_truncated=False,
+        briefing_truncated=False,
+        saved_snapshot=False,
+        warnings=[reason],
+    )
+
+
+def _available_scenario_context(
+    *,
+    scenario: ScenarioResult,
+    context: ScenarioContext,
+    status: ScenarioContextStatus,
+    warnings: list[str],
+) -> ScenarioContextResult:
+    scoring = context.scoring
+    return ScenarioContextResult(
+        status=status,
+        scenario_guid=scenario.guid,
+        title=scenario.title,
+        player_side_guid=scenario.player_side_guid,
+        player_side_name=context.player_side_name,
+        scenario_file=_scenario_file_name(scenario),
+        scenario_description=context.scenario_description,
+        side_briefing=context.side_briefing,
+        scoring_thresholds=(
+            ScenarioScoringThresholds(
+                major_defeat=scoring.major_defeat,
+                minor_defeat=scoring.minor_defeat,
+                average=scoring.average,
+                minor_victory=scoring.minor_victory,
+                major_victory=scoring.major_victory,
+            )
+            if scoring is not None
+            else None
+        ),
+        description_truncated=context.description_truncated,
+        briefing_truncated=context.briefing_truncated,
+        saved_snapshot=True,
+        warnings=warnings,
+    )
+
+
 class McpRuntimeManager:
     """Keep a stdio MCP server alive while its release-bound CMO runtime is prepared."""
 
@@ -251,12 +369,14 @@ class McpRuntimeManager:
         *,
         game_root: Path | None = None,
         local_app_data: Path | None = None,
+        scenario_context_reader: ScenarioContextReaderPort | None = None,
     ) -> None:
         self._game_root = game_root
         self._local_app_data = local_app_data
         self._runtime: ApplicationRuntime | None = None
         self._lock = asyncio.Lock()
         self._queue_lifecycle_started = False
+        self._scenario_context_reader = scenario_context_reader or ScenarioContextReader()
 
     async def _ensure_runtime(self) -> ApplicationRuntime:
         async with self._lock:
@@ -329,6 +449,80 @@ class McpRuntimeManager:
     async def queue_summary(self) -> QueueSummary:
         runtime = await self._ensure_runtime()
         return runtime.queue_service.summary()
+
+    async def scenario_context_get(self) -> ScenarioContextResult:
+        runtime = await self._ensure_runtime()
+        before = await self._live_scenario(runtime)
+        player_side_guid = before.player_side_guid
+        if player_side_guid is None:
+            return _unavailable_scenario_context(
+                scenario=before,
+                status="no_player_side",
+                reason="CMO did not report a current player side GUID",
+            )
+
+        context = await self._scenario_context_reader.read(
+            game_root=runtime.paths.game_root,
+            file_name_path=before.file_name_path,
+            file_name=before.file_name,
+            player_side_guid=player_side_guid,
+        )
+        after = await self._live_scenario(runtime)
+        if _scenario_context_identity(before) != _scenario_context_identity(after):
+            return _unavailable_scenario_context(
+                scenario=after,
+                status="scenario_changed",
+                reason="the loaded scenario or current player side changed while reading briefing",
+            )
+        if not context.available:
+            reason = context.unavailable_reason or "the saved scenario context is unavailable"
+            return _unavailable_scenario_context(
+                scenario=after,
+                status=_scenario_context_failure_status(reason),
+                reason=reason,
+            )
+
+        warnings = list(context.warnings)
+        if not after.started:
+            warnings.append(
+                "The scenario is not started; unsaved editor changes are not visible in this "
+                "saved-file snapshot."
+            )
+        partial = bool(warnings or context.description_truncated or context.briefing_truncated)
+        return _available_scenario_context(
+            scenario=after,
+            context=context,
+            status="partial" if partial else "available",
+            warnings=warnings,
+        )
+
+    @staticmethod
+    async def _live_scenario(runtime: ApplicationRuntime) -> ScenarioResult:
+        outcome = await runtime.application.execute("scenario.get", {})
+        if not outcome.ok:
+            error = outcome.error or {}
+            raw_code = error.get("code")
+            try:
+                code = (
+                    ErrorCode(raw_code) if isinstance(raw_code, str) else ErrorCode.PROTOCOL_ERROR
+                )
+            except ValueError:
+                code = ErrorCode.PROTOCOL_ERROR
+            message = error.get("message")
+            details = error.get("details")
+            raise BridgeError(
+                code,
+                message if isinstance(message, str) else "CMO scenario read failed",
+                details if isinstance(details, dict) else None,
+            )
+        try:
+            return ScenarioResult.model_validate(outcome.result)
+        except ValidationError as error:
+            raise BridgeError(
+                ErrorCode.PROTOCOL_ERROR,
+                "CMO returned an invalid scenario result",
+                {"operation": "scenario.get"},
+            ) from error
 
     async def start_queue_worker(self) -> None:
         async with self._lock:

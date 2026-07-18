@@ -83,6 +83,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_bridge_diagnose` | none | Inspect saved game root and release-runtime readiness without contacting CMO |
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage; success establishes the session binding required for queued mutations |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, actual compression multiplier, and projected score state |
+| `cmo_scenario_context_get` | none | Read the saved scenario description, only the live current player's side briefing, plain-text projections, and that side's five victory-score thresholds; reports unsaved/missing/incompatible sources instead of exposing another side |
 | `cmo_scenario_time_compression_set` | code `0..5` | Queued mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; its eventual result echoes the requested code and actual multiplier |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
@@ -231,7 +232,7 @@ are now callable.
 | Automatic multi-mission assignment, `AllowMultiMission`, and assignment queues | `EXPERIMENTAL` | The durable command FIFO does not implement CMO unit-to-mission assignment queues; a unit can use only the current single-mission assignment tool |
 | Generated-flight waypoint insert/update/delete and timing refresh | `EXPERIMENTAL` | Current tools create and inspect flight plans; do not claim route mutation |
 | Exclusion, no-nav, standard, and custom-environment zone objects | `EXPERIMENTAL` | Mission areas made from reference points are current; independent zone objects are not |
-| Remaining scenario metadata such as briefing, database selection, complexity/difficulty, and every environment field | `MANUAL LUA` or editor | Current authoring tools cover title, timeline, and the four global weather values only |
+| Remaining writable scenario metadata such as briefing text, database selection, complexity/difficulty, and every environment field | `MANUAL LUA` or editor | Saved description/current-side briefing are readable through `cmo_scenario_context_get`; writing them and the other fields still requires the editor or a separately reviewed author workflow |
 | Agent-driven deterministic pause/start/single-step simulation control | `UNSUPPORTED` | Retail Lua time compression cannot pause; the user can press `Alt+1` while paused for CMO's built-in 15-second time step |
 
 Current complex-planning tools are deliberately narrower than complete GUI parity:

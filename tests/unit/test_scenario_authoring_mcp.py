@@ -118,6 +118,7 @@ def _scenario_result() -> dict[str, JsonValue]:
         "guid": "SCENARIO-1",
         "title": "Northern Shield",
         "file_name": "northern-shield.scen",
+        "file_name_path": "C:\\CMO\\Scenarios",
         "current_time": "2026/7/16 12:00:00",
         "current_time_seconds": 1_784_203_200.0,
         "start_time": "2026/7/16 10:00:00",

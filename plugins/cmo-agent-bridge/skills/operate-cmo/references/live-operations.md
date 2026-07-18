@@ -97,15 +97,20 @@ Read only what can affect the next decision:
 2. Page through `cmo_side_list`, match `player_side_guid` while ignoring only case and surrounding
    braces, and report the matched side's exact name and returned GUID. If it is null or cannot be
    matched uniquely, stop live mutations instead of inferring a side.
-3. Read relevant directed relationships from the commanded side to each other side with
+3. Call `cmo_scenario_context_get`. Read both the scenario description and current-side briefing,
+   then record the assigned mission, desired end state, deadlines, ROE, constraints, known
+   situation, and victory thresholds before choosing forces or missions. The tool deliberately
+   exposes no other side's briefing. If it reports an unavailable saved snapshot, ask for the
+   objective before autonomous command instead of inferring one from force composition.
+4. Read relevant directed relationships from the commanded side to each other side with
    `cmo_side_posture_get`; never substitute the reverse relationship.
-4. Read friendly missions, reference points, and assigned units.
-5. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
+5. Read friendly missions, reference points, and assigned units.
+6. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
    that might be committed.
-6. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
-7. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
+7. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
+8. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
    engagement or exposure is possible.
-8. Record the decision horizon, information gaps, latest useful decision time, and conservative
+9. Record the decision horizon, information gaps, latest useful decision time, and conservative
    default if an uncertainty remains unresolved.
 
 Follow paging to completion when comparing the entire force, contact set, mission set, or reference

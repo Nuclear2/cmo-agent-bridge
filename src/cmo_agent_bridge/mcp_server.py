@@ -48,6 +48,7 @@ from cmo_agent_bridge.operations.models import (
     ReferencePointBearingType,
     RefuelUnrepValue,
     ScenarioResult,
+    ScenarioContextResult,
     ScoreResult,
     SidePostureResult,
     SideResult,
@@ -106,6 +107,8 @@ class McpApplicationPort(ApplicationPort, Protocol):
         game_root: str | None = None,
         replace_saved_game_root: bool = False,
     ) -> McpBridgePrepareResult: ...
+
+    async def scenario_context_get(self) -> ScenarioContextResult: ...
 
 
 ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
@@ -416,6 +419,26 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         description=(
             "Return metadata, time state, and the current player-side GUID for the loaded CMO "
             "scenario. Resolve that GUID through cmo_side_list before live-player operations."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def scenario_context_get() -> ScenarioContextResult:
+        try:
+            return await application.scenario_context_get()
+        except BridgeError as error:
+            raise _bridge_tool_error(error) from error
+
+    server.add_tool(
+        scenario_context_get,
+        name="cmo_scenario_context_get",
+        title="Get CMO scenario briefing",
+        description=(
+            "Read the saved scenario description and only the current player side's briefing, "
+            "plus its victory-score thresholds. Call this after resolving the player side and "
+            "before assessing the battlespace or making the first deployment. The result is a "
+            "saved-file snapshot; unsaved editor changes are reported as a limitation."
         ),
         annotations=_read_only_annotations(),
         structured_output=True,

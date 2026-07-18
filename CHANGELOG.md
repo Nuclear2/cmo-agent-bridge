@@ -2,6 +2,26 @@
 
 本项目遵循 [Semantic Versioning](https://semver.org/)。
 
+## [Unreleased]
+
+## [0.2.1] - 2026-07-18 (Preview)
+
+这一版让 Agent 在首次部署前读取保存的想定介绍和当前玩家方简报，先确认战役目标与已知态势，
+再进行作战规划。
+
+### Added
+
+- 新增 `cmo_scenario_context_get`：读取保存的想定介绍、当前玩家方 briefing 及五档胜负分数阈值；
+  工具不会接受任意阵营参数，也不会解密其他阵营的简报。
+- 支持解析 briefing 中的本地 `[LOADDOC]` 文档，并同时给 Agent 返回便于规划的纯文本。
+
+### Changed
+
+- `cmo_scenario_get` 增加想定文件位置投影，供宿主侧读取当前保存的 `.scen` 或 `.save`。
+- `operate-cmo` 现在要求 Agent 在首次部署前读取想定介绍和当前方简报，提取任务、终态、时限、
+  ROE、硬约束、已知态势与胜负标准；拿不到时不得自行臆造战役目标。
+- 项目版本升级到 `0.2.1`。
+
 ## [0.2.0] - 2026-07-18 (Preview)
 
 这一版把普通 CMO 写操作改为本地持久异步队列。Agent 可以在 CMO 暂停时先提交命令，待想定
@@ -141,6 +161,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.2.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.1
 [0.2.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.0
 [0.1.4]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.4
 [0.1.3]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.1.3

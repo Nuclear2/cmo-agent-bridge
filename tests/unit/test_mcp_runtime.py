@@ -28,6 +28,7 @@ from cmo_agent_bridge.mcp_runtime import McpRuntimeManager
 from cmo_agent_bridge.mcp_server import create_mcp_server
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot
+from cmo_agent_bridge.scenario_context import ScenarioContext, ScenarioScoring
 from cmo_agent_bridge.state.operation_queue import OperationQueueState
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 
@@ -85,6 +86,77 @@ class _BlockingApplication:
             result={"released": True},
             error=None,
         )
+
+
+def _scenario_payload(
+    *,
+    player_side_guid: str | None = "SIDE-BLUE",
+    started: bool = True,
+) -> dict[str, JsonValue]:
+    return {
+        "guid": "SCENARIO-1",
+        "title": "Test Scenario",
+        "file_name": "test.scen",
+        "file_name_path": "Scenarios\\Test",
+        "current_time": "2026/7/18 12:00:00",
+        "current_time_seconds": 1.0,
+        "start_time": "2026/7/18 11:00:00",
+        "start_time_seconds": 0.0,
+        "duration": "01:00:00",
+        "duration_seconds": 3600.0,
+        "complexity": 1,
+        "difficulty": 1,
+        "setting": "Test",
+        "database": "DB3000",
+        "save_version": "1868",
+        "started": started,
+        "player_side_guid": player_side_guid,
+        "time_compression": 1.0,
+        "campaign_score": 0,
+    }
+
+
+class _ScenarioApplication:
+    def __init__(self, scenarios: list[dict[str, JsonValue]]) -> None:
+        self._scenarios = scenarios
+        self.calls = 0
+
+    async def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+        *,
+        confirmation_token: str | None = None,
+    ) -> InvocationOutcome:
+        assert operation == "scenario.get"
+        assert arguments == {}
+        assert confirmation_token is None
+        scenario = self._scenarios[min(self.calls, len(self._scenarios) - 1)]
+        self.calls += 1
+        return InvocationOutcome(
+            protocol="cmo-agent-bridge/1",
+            request_id=None,
+            ok=True,
+            result=scenario,
+            error=None,
+        )
+
+
+class _ScenarioContextReader:
+    def __init__(self, result: ScenarioContext) -> None:
+        self.result = result
+        self.calls: list[tuple[Path, str, str, str]] = []
+
+    async def read(
+        self,
+        *,
+        game_root: Path,
+        file_name_path: str,
+        file_name: str,
+        player_side_guid: str,
+    ) -> ScenarioContext:
+        self.calls.append((game_root, file_name_path, file_name, player_side_guid))
+        return self.result
 
 
 class _FakeQueueService:
@@ -204,6 +276,169 @@ def _structured(value: object) -> dict[str, JsonValue]:
     _content, structured = pair
     assert isinstance(structured, dict)
     return cast(dict[str, JsonValue], structured)
+
+
+@pytest.mark.asyncio
+async def test_scenario_context_get_combines_live_identity_with_saved_player_briefing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    application = _ScenarioApplication([_scenario_payload(), _scenario_payload()])
+    reader = _ScenarioContextReader(
+        ScenarioContext(
+            available=True,
+            scenario_description="Regional crisis background.",
+            player_side_guid="SIDE-BLUE",
+            player_side_name="Blue",
+            side_briefing="Destroy all hostile fighters.",
+            scoring=ScenarioScoring(-100, -50, 0, 50, 100),
+            description_truncated=False,
+            briefing_truncated=False,
+            warnings=(),
+            unavailable_reason=None,
+        )
+    )
+    runtime = _fake_runtime(
+        application=application,
+        queue_service=_FakeQueueService(),
+        queue_worker=_FakeQueueWorker(),
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(
+        game_root=game_root,
+        local_app_data=local_app_data,
+        scenario_context_reader=reader,
+    )
+
+    result = await manager.scenario_context_get()
+
+    assert result.status == "available"
+    assert result.player_side_guid == "SIDE-BLUE"
+    assert result.player_side_name == "Blue"
+    assert result.scenario_description == "Regional crisis background."
+    assert result.side_briefing == "Destroy all hostile fighters."
+    assert result.scoring_thresholds is not None
+    assert result.scoring_thresholds.major_victory == 100
+    assert result.saved_snapshot is True
+    assert application.calls == 2
+    assert reader.calls == [(paths.game_root, "Scenarios\\Test", "test.scen", "SIDE-BLUE")]
+
+
+@pytest.mark.asyncio
+async def test_scenario_context_get_discards_briefing_when_player_side_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    application = _ScenarioApplication(
+        [
+            _scenario_payload(player_side_guid="SIDE-BLUE"),
+            _scenario_payload(player_side_guid="SIDE-RED"),
+        ]
+    )
+    reader = _ScenarioContextReader(
+        ScenarioContext(
+            available=True,
+            scenario_description="Background",
+            player_side_guid="SIDE-BLUE",
+            player_side_name="Blue",
+            side_briefing="Blue-only orders",
+            scoring=ScenarioScoring(-100, -50, 0, 50, 100),
+            description_truncated=False,
+            briefing_truncated=False,
+            warnings=(),
+            unavailable_reason=None,
+        )
+    )
+    runtime = _fake_runtime(
+        application=application,
+        queue_service=_FakeQueueService(),
+        queue_worker=_FakeQueueWorker(),
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(
+        game_root=game_root,
+        local_app_data=local_app_data,
+        scenario_context_reader=reader,
+    )
+
+    result = await manager.scenario_context_get()
+
+    assert result.status == "scenario_changed"
+    assert result.player_side_guid == "SIDE-RED"
+    assert result.side_briefing is None
+    assert result.scenario_description is None
+    assert result.saved_snapshot is False
+
+
+@pytest.mark.asyncio
+async def test_scenario_context_get_discards_briefing_when_play_mode_changes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    game_root = _game_root(tmp_path)
+    local_app_data = tmp_path / "LocalAppData"
+    local_app_data.mkdir()
+    paths = FileBridgePaths.build(game_root, local_app_data)
+    application = _ScenarioApplication(
+        [_scenario_payload(started=False), _scenario_payload(started=True)]
+    )
+    reader = _ScenarioContextReader(
+        ScenarioContext(
+            available=True,
+            scenario_description="Background",
+            player_side_guid="SIDE-BLUE",
+            player_side_name="Blue",
+            side_briefing="Orders",
+            scoring=ScenarioScoring(-100, -50, 0, 50, 100),
+            description_truncated=False,
+            briefing_truncated=False,
+            warnings=(),
+            unavailable_reason=None,
+        )
+    )
+    runtime = _fake_runtime(
+        application=application,
+        queue_service=_FakeQueueService(),
+        queue_worker=_FakeQueueWorker(),
+        paths=paths,
+        snapshot=create_runtime_snapshot(),
+    )
+
+    def fake_build(**_kwargs: object) -> ApplicationRuntime:
+        return runtime
+
+    monkeypatch.setattr(runtime_module, "build_application_runtime", fake_build)
+    manager = McpRuntimeManager(
+        game_root=game_root,
+        local_app_data=local_app_data,
+        scenario_context_reader=reader,
+    )
+
+    result = await manager.scenario_context_get()
+
+    assert result.status == "scenario_changed"
+    assert result.side_briefing is None
+    assert result.saved_snapshot is False
 
 
 @pytest.mark.asyncio

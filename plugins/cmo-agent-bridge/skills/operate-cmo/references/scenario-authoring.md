@@ -73,17 +73,21 @@ enqueue only independent work and resume time to execute it before synchronous v
 
 1. Open an unsaved working copy or create a recoverable save.
 2. Read current scenario identity and timing with `cmo_scenario_get`.
-3. Define title, briefing intent, database, date and time, duration, weather or environment,
+3. If editing an existing saved scenario, call `cmo_scenario_context_get` to audit its saved
+   description, current selected side's briefing, and score thresholds. It cannot see unsaved
+   editor changes and must never be used to inspect a non-selected side during a player test.
+4. Define title, briefing intent, database, date and time, duration, weather or environment,
    player side, difficulty assumptions, and victory conditions.
-4. Set the title with `cmo_scenario_title_set`; set current time, start time, or duration with
+5. Set the title with `cmo_scenario_title_set`; set current time, start time, or duration with
    `cmo_scenario_timeline_set`.
-5. Read weather with `cmo_scenario_weather_get`. When changing it, call
+6. Read weather with `cmo_scenario_weather_get`. When changing it, call
    `cmo_scenario_weather_set` with the complete temperature, rainfall, undercloud, and sea-state
    tuple, then verify the returned tuple.
-6. Read scenario metadata again after each settings group.
-7. For unexposed fields such as briefing, database selection, difficulty/complexity, or other
-   environmental settings, use the editor or prepare `MANUAL LUA` from official APIs.
-8. Establish object prefixes, for example `BLU-`, `RED-`, `NTR-`, `EVT-`, `TRG-`, `CND-`,
+7. Read scenario metadata again after each settings group.
+8. Briefing and description writes, database selection, difficulty/complexity, and other
+   unexposed environmental settings still require the editor or a reviewed author workflow. Save
+   before using `cmo_scenario_context_get` as readback.
+9. Establish object prefixes, for example `BLU-`, `RED-`, `NTR-`, `EVT-`, `TRG-`, `CND-`,
    `ACT-`, and `SA-`.
 
 The authoring surface is deliberately field-specific rather than a general scenario-settings
@@ -376,7 +380,9 @@ retail Lua environment cannot load.
 
 Use a fresh save and, preferably, a fresh agent task for each player-side test. Verify:
 
-- briefing and objective clarity;
+- after selecting that player side and saving, `cmo_scenario_context_get` returns the intended
+  description, only that side's briefing, and matching score thresholds;
+- briefing and objective clarity without the tester having to supply the mission separately;
 - initial detections and uncertainty;
 - time to first meaningful decision;
 - mission and special-action discoverability;

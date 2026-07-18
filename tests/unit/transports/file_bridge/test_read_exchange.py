@@ -1980,6 +1980,7 @@ async def test_scenario_read_round_trips_unicode_multiline_and_exact_durable_rec
         command.invocation,
         title="海峡态势\n第二行",
         file_name="测试.scen",
+        file_name_path="C:\\CMO\\Scenarios",
     )
     peer.enqueue(Respond(result=result))
     artifact: ResponseArtifact | None = None

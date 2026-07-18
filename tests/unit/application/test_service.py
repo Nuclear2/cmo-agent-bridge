@@ -1302,6 +1302,7 @@ def _scenario_result() -> ScenarioResult:
         guid="scenario-1",
         title="Test Scenario",
         file_name="test.scen",
+        file_name_path="C:\\CMO\\Scenarios",
         current_time="2026-07-12T08:00:00Z",
         current_time_seconds=100.0,
         start_time="2026-07-12T07:00:00Z",

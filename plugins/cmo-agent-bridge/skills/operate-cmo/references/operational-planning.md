@@ -72,6 +72,15 @@ Run the full cycle below and compare at least two genuinely different courses of
 
 ### 1. Establish intent, end state, and authority
 
+After resolving `cmo_scenario_get.player_side_guid` through `cmo_side_list`, call
+`cmo_scenario_context_get`. Use the scenario description and only the current side's briefing as
+the primary source of assigned mission, scenario background, known intelligence, ROE, deadlines,
+constraints, and victory conditions. Separate what the briefing explicitly states from your
+inferences. If a later user order conflicts with it, surface the conflict and follow an override
+only when it is explicit. If neither the context nor the user supplies an operational objective,
+stop before autonomous force commitment and ask; force composition and existing missions do not
+prove the campaign goal.
+
 Write a one-sentence mission statement containing who, what effect, where, when, and why. Record:
 
 - the desired end state and three to seven observable success conditions;
@@ -97,16 +106,18 @@ Adapt the four JIPOE steps:
 
 Build the picture with:
 
-- `cmo_scenario_get`, `cmo_side_list`, `cmo_side_posture_get`, and existing missions;
+- `cmo_scenario_get`, `cmo_scenario_context_get`, `cmo_side_list`,
+  `cmo_side_posture_get`, and existing missions;
 - friendly `cmo_unit_list/get`, combat status, loadouts, inventories, doctrine, WRA, and EMCON;
 - observer-side contacts, including age, uncertainty area, detection sources, emissions, possible
   matches, BDA, and weapon allocations;
 - reference points and mission zones that define defended areas, patrol areas, axes, and support
   tracks.
 
-Treat weather, terrain effects, communications state, briefing restrictions, or other data not
-returned by the bridge as unknown unless supplied by the user or visibly available through another
-authorized interface.
+Treat weather, terrain effects, communications state, or other data not returned by the bridge as
+unknown unless supplied by the user or visibly available through another authorized interface.
+When the context result is based on a saved file, treat unsaved editor changes as unknown rather
+than silently substituting the older briefing.
 
 Create an information requirement when an unknown could change the selected course. Assign it an
 indicator, collection method, latest useful decision time, and conservative default action.

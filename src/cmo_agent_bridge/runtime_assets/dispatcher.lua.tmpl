@@ -513,6 +513,10 @@ local function scenario_result(scenario, lineage_id)
             safe_get(scenario, { "FileName", "filename", "file_name" }),
             ""
         ),
+        file_name_path = text_or(
+            safe_get(scenario, { "FileNamePath", "filenamepath", "file_name_path" }),
+            ""
+        ),
         current_time = text_or(current, ""),
         current_time_seconds = number_or(
             current_seconds,
