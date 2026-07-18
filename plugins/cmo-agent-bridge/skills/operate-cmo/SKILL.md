@@ -5,9 +5,10 @@ description: "Assess, plan, command, operate, test, or author Command: Modern Op
 
 # Operate CMO
 
-Treat MCP results as the authority for the scenario currently open in CMO. Prefer the MCP tools
-over the CLI whenever the corresponding tool exists. Never present an official Lua capability,
-planned bridge capability, or manually mounted script as an already callable MCP tool.
+Treat MCP results as the authority for the scenario currently open in CMO. Use the MCP tools for
+normal Agent work and the CLI only for documented setup or fallback paths. Never present an
+official Lua capability, planned bridge capability, or manually mounted script as an already
+callable MCP tool.
 
 ## Establish bridge readiness
 
@@ -54,7 +55,9 @@ CMO's Regular Time trigger does not run while scenario time is paused. Therefore
 batch of Lua-backed synchronous calls**, not merely at task startup or after a timeout, require a
 fresh host UI state from `cmo_time_get_state` or the immediately preceding verified
 `cmo_time_set` result. Treat the state as unknown again after user interaction, extended reasoning,
-any time-control action, or any failed CMO-backed call.
+any time-control action, or any failed CMO-backed call. Apply the same gate to a fallback
+`cmo-bridge invoke`: verified pause must fail fast without publishing the operation or waiting for
+or retrying Lua polling.
 
 - If the verified state is `running`, perform the already planned read batch at the current speed.
   Slow to 1x only when the decision horizon requires it.
@@ -221,6 +224,33 @@ its `request_id` and use:
 - `cmo_request_cancel` only while a request remains `queued`. Never claim that an `active` request
   was aborted.
 
+Fail closed on every tool result and receipt:
+
+1. Treat a mutation as submitted only when the MCP call itself succeeded (`isError` is not true)
+   and returned a well-formed receipt with a non-null UUID `request_id`. On any tool error,
+   structured error, malformed receipt, missing field, or invalid UUID, stop all dependent and
+   fan-out writes. Never substitute `null`, reuse another request ID, or pass the failed result to
+   a pulse.
+2. Before a pulse, require a successful, well-formed `cmo_request_list`. Build `request_ids` only
+   from non-null UUIDs and prove that the set exactly covers every current `queued` or `active`
+   request. If listing or completeness cannot be proved, do not pulse.
+3. If a request tracked in the current batch becomes `rejected`, or a quarantine reports
+   `quarantine_resolution.state="unresolved"` or `barrier_active=true`, stop new mutation submission
+   and fan-out. Also stop on a failed queue/list call or a queue summary with a current barrier.
+   Inspect and resolve that condition first. Prior rejected requests and resolved quarantines remain
+   as audit history; do not treat them as a current barrier or reinterpret their original outcome.
+   Never infer a barrier from the historical `quarantined` total alone, or infer its absence without
+   the explicit current barrier and unresolved counts.
+4. Submit no more than eight independent mutation calls between checkpoints. After each bounded
+   batch, retain every receipt, inspect queue state and terminal errors, and yield an interruption
+   boundary before submitting more. Never run an uninterruptible Agent-side loop over a large
+   force.
+
+When the user says stop, cease the local orchestration loop before any other action and submit no
+more mutations. Then pause CMO if possible, list the durable queue, cancel only unwanted requests
+that are still `queued`, and report every `active` request as potentially published and still able
+to execute. Pausing, ending a wait, closing MCP, or ending the Agent task does not cancel it.
+
 The queue is durable and FIFO. Submit independent mutations in their intended order. When a later
 step needs an earlier result, such as a mission GUID returned by `cmo_mission_create`, wait until
 the earlier request is `completed`, validate its result, and only then submit the dependent step.
@@ -289,9 +319,9 @@ and never resubmit a durable request because a pulse or local wait timed out.
    read the resulting state.
 6. Send only fields that should change. Preserve ordered zones and courses. An empty ordered list
    is an explicit clear when the tool contract permits it.
-7. Follow every list tool's `next_cursor` until null when completeness matters. On large sides,
-   `cmo_unit_list.page_size` is an upper bound: a filtered page may be short or empty while a
-   non-null cursor still means more candidates remain.
+7. Follow every list tool's `next_cursor` until null when completeness matters. `cmo_unit_list`
+   scans candidates in safety-bounded chunks, so a filtered page may be short or empty while a
+   non-null cursor still means more candidates remain. Only `next_cursor=null` ends that scan.
 8. Do not resubmit a mutation because `cmo_request_wait` timed out. Query the same request ID until
    it is terminal. After a synchronous read timeout, recover polling and read again without
    duplicating any already submitted mutation.

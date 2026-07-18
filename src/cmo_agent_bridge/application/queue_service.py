@@ -18,11 +18,15 @@ from cmo_agent_bridge.operations.registry import OperationRegistry, ResolvedInvo
 from cmo_agent_bridge.protocol.canonical import canonical_body_bytes
 from cmo_agent_bridge.protocol.models import RequestBody
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot, Sha256, revalidate_runtime_snapshot
+from cmo_agent_bridge.state.host_resolution import parse_host_quarantine_resolution
+from cmo_agent_bridge.state.models import HostRequestState
+from cmo_agent_bridge.state.request_ledger import RequestLedger
 from cmo_agent_bridge.state.session_store import SessionRecord
 
 from .queue_models import (
     CancelQueuedOperationResult,
     QueueClock,
+    QueueQuarantineResolution,
     QueueStore,
     QueueSummary,
     QueueWaitResult,
@@ -77,6 +81,7 @@ class QueueService:
         allow_mutations: bool,
         session_store: SessionBindingPort,
         queue_store: QueueStore,
+        ledger: RequestLedger,
         clock: QueueClock | None = None,
         new_uuid: Callable[[], UUID] = uuid4,
         poll_interval_seconds: float = 0.1,
@@ -87,6 +92,8 @@ class QueueService:
             raise TypeError("operation registry must be exact")
         if type(allow_mutations) is not bool:
             raise TypeError("allow_mutations must be an exact bool")
+        if type(ledger) is not RequestLedger:
+            raise TypeError("queue request ledger must be exact")
         if not math.isfinite(poll_interval_seconds) or poll_interval_seconds <= 0:
             raise ValueError("queue poll interval must be finite and positive")
         self._root_key = root_key
@@ -95,6 +102,7 @@ class QueueService:
         self._allow_mutations = allow_mutations
         self._session_store = session_store
         self._queue_store = queue_store
+        self._ledger = ledger
         self._clock = _SystemClock() if clock is None else clock
         self._new_uuid = new_uuid
         self._poll_interval_seconds = poll_interval_seconds
@@ -113,6 +121,24 @@ class QueueService:
             raise _invalid("operation arguments must be an object", {"operation": operation})
         invocation = self._registry.resolve_invocation(operation, arguments)
         self._require_queueable(invocation)
+        quarantined_request_ids = self._unresolved_quarantine_request_ids()
+        if quarantined_request_ids:
+            raise BridgeError(
+                ErrorCode.MUTATION_QUARANTINED,
+                "mutation submission is blocked while an earlier outcome is quarantined",
+                {
+                    "operation": invocation.contract.name,
+                    "quarantined_request_ids": [
+                        str(request_id) for request_id in quarantined_request_ids
+                    ],
+                    "next_step": (
+                        "Inspect any queue-backed request with cmo_request_get, independently "
+                        "verify the Host-quarantined operation's outcome in CMO, then resolve "
+                        "the current Host quarantine with "
+                        "cmo-bridge resolve-quarantine, then retry this submission."
+                    ),
+                },
+            )
         session = self._session_store.load(self._root_key)
         if session is None:
             raise BridgeError(
@@ -188,7 +214,7 @@ class QueueService:
                 "queued operation was not found",
                 {"request_id": str(request_id)},
             )
-        return QueuedOperationStatus.from_record(record)
+        return self._status(record)
 
     def list(self, *, limit: int | None = None) -> QueuedOperationList:
         if limit is not None and (type(limit) is not int or limit < 1):
@@ -196,12 +222,125 @@ class QueueService:
         records = self._queue_store.list(root_key=self._root_key)
         if limit is not None:
             records = records[:limit]
+        return QueuedOperationList(items=tuple(self._status(item) for item in records))
+
+    def list_nonterminal(self) -> QueuedOperationList:
+        """Return only work that a simulation pulse could advance.
+
+        Filtering in SQLite before public error/result projection prevents
+        terminal history from breaking a pulse or making its preflight scale
+        with the lifetime size of the queue.
+        """
+        records = self._queue_store.list(
+            root_key=self._root_key,
+            states=frozenset(
+                {
+                    QueuedOperationState.QUEUED,
+                    QueuedOperationState.ACTIVE,
+                }
+            ),
+        )
         return QueuedOperationList(
             items=tuple(QueuedOperationStatus.from_record(item) for item in records)
         )
 
     def summary(self) -> QueueSummary:
-        return QueueSummary.from_counts(self._queue_store.counts(root_key=self._root_key))
+        counts, quarantined = self._queue_store.summary_snapshot(root_key=self._root_key)
+        resolutions = tuple(self._quarantine_resolution(record) for record in quarantined)
+        resolved = sum(item.state == "resolved" for item in resolutions)
+        host_barriers = self._ledger.list_requests(
+            root_key=self._root_key,
+            states=frozenset({HostRequestState.QUARANTINED}),
+        )
+        return QueueSummary.from_counts(
+            counts,
+            unresolved_quarantined=max(counts.quarantined - resolved, 0),
+            resolved_quarantined=resolved,
+            barrier_active=bool(host_barriers)
+            or any(item.barrier_active for item in resolutions),
+        )
+
+    def _unresolved_quarantine_request_ids(self) -> tuple[UUID, ...]:
+        host_barriers = self._ledger.list_requests(
+            root_key=self._root_key,
+            states=frozenset({HostRequestState.QUARANTINED}),
+        )
+        quarantined = self._queue_store.list(
+            root_key=self._root_key,
+            states=frozenset({QueuedOperationState.QUARANTINED}),
+        )
+        request_ids = [record.request_id for record in host_barriers]
+        seen = set(request_ids)
+        for record in quarantined:
+            if (
+                record.request_id not in seen
+                and self._quarantine_resolution(record).barrier_active
+            ):
+                request_ids.append(record.request_id)
+                seen.add(record.request_id)
+        return tuple(request_ids)
+
+    def _status(self, record: QueuedOperationRecord) -> QueuedOperationStatus:
+        resolution = (
+            self._quarantine_resolution(record)
+            if record.state is QueuedOperationState.QUARANTINED
+            else None
+        )
+        return QueuedOperationStatus.from_record(
+            record,
+            quarantine_resolution=resolution,
+        )
+
+    def _quarantine_resolution(
+        self,
+        record: QueuedOperationRecord,
+    ) -> QueueQuarantineResolution:
+        ledger_record = self._ledger.get_request(record.request_id)
+        if ledger_record is not None and ledger_record.state is HostRequestState.RESOLVED:
+            disposition = None
+            resolved_at_ms = ledger_record.terminal_at_ms
+            if ledger_record.resolution_json is not None:
+                try:
+                    marker = parse_host_quarantine_resolution(ledger_record.resolution_json)
+                except ValueError:
+                    marker = None
+                if marker is not None and marker.request_id == record.request_id:
+                    disposition = marker.disposition
+                    resolved_at_ms = marker.resolved_at_ms
+            return QueueQuarantineResolution(
+                state="resolved",
+                disposition=disposition,
+                resolved_at_ms=resolved_at_ms,
+                barrier_active=False,
+            )
+
+        if ledger_record is not None and ledger_record.state in {
+            HostRequestState.COMPLETED,
+            HostRequestState.REJECTED,
+            HostRequestState.CANCELLED,
+        }:
+            return QueueQuarantineResolution(
+                state="resolved",
+                disposition=(
+                    "applied"
+                    if ledger_record.state is HostRequestState.COMPLETED
+                    else "not_applied"
+                ),
+                resolved_at_ms=ledger_record.terminal_at_ms,
+                barrier_active=False,
+            )
+
+        non_barrier_states = {
+            HostRequestState.COMPLETED,
+            HostRequestState.REJECTED,
+            HostRequestState.CANCELLED,
+            HostRequestState.RESOLVED,
+        }
+        barrier_active = ledger_record is not None and ledger_record.state not in non_barrier_states
+        return QueueQuarantineResolution(
+            state="unresolved",
+            barrier_active=barrier_active,
+        )
 
     async def wait(self, *, request_id: UUID, timeout_seconds: float) -> QueueWaitResult:
         timeout = validate_wait_timeout(timeout_seconds)
@@ -237,7 +376,7 @@ class QueueService:
                     "queued operation changed while cancellation was attempted",
                     {"request_id": str(request_id)},
                 )
-        status = QueuedOperationStatus.from_record(record)
+        status = self._status(record)
         return CancelQueuedOperationResult(
             operation=status,
             cancelled=status.state is QueuedOperationState.CANCELLED,

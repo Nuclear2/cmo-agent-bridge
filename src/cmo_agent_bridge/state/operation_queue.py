@@ -439,6 +439,33 @@ class OperationQueueStore:
                 "SELECT state,COUNT(*) AS count FROM operation_queue" + where + " GROUP BY state",
                 values,
             ).fetchall()
+        return self._counts_from_rows(rows)
+
+    def summary_snapshot(
+        self,
+        *,
+        root_key: str,
+    ) -> tuple[QueueCounts, tuple[OperationQueueRecord, ...]]:
+        """Read counts and quarantined rows from one SQLite snapshot."""
+
+        validated_root = self._validated_root_key(root_key)
+        with self._database._transaction(write=False) as connection:  # pyright: ignore[reportPrivateUsage]
+            count_rows = connection.execute(
+                "SELECT state,COUNT(*) AS count FROM operation_queue "
+                "WHERE root_key=? GROUP BY state",
+                (validated_root,),
+            ).fetchall()
+            quarantined_rows = connection.execute(
+                "SELECT * FROM operation_queue "
+                "WHERE root_key=? AND state='quarantined' ORDER BY queue_sequence",
+                (validated_root,),
+            ).fetchall()
+            counts = self._counts_from_rows(count_rows)
+            quarantined = tuple(self._record_from_row(row) for row in quarantined_rows)
+        return counts, quarantined
+
+    @staticmethod
+    def _counts_from_rows(rows: list[sqlite3.Row]) -> QueueCounts:
         raw = {state.value: 0 for state in OperationQueueState}
         for row in rows:
             state = row["state"]

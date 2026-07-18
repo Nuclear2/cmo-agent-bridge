@@ -87,6 +87,7 @@ class _FakeQueueService:
             rejected=4,
             quarantined=5,
             cancelled=6,
+            resolved_quarantined=5,
         )
 
 
@@ -135,9 +136,10 @@ class _ObservingQueueService(_FakeQueueService):
         )
 
 
-class _FakeApplication:
-    def __init__(self) -> None:
+class _FakeInvokeManager:
+    def __init__(self, outcome: InvocationOutcome | None = None) -> None:
         self.calls: list[tuple[str, dict[str, object], str | None]] = []
+        self._outcome = outcome
 
     async def execute(
         self,
@@ -147,7 +149,7 @@ class _FakeApplication:
         confirmation_token: str | None = None,
     ) -> InvocationOutcome:
         self.calls.append((operation, dict(arguments), confirmation_token))
-        return InvocationOutcome(
+        return self._outcome or InvocationOutcome(
             protocol="cmo-agent-bridge/1",
             request_id=None,
             ok=True,
@@ -253,7 +255,7 @@ def test_submit_rejects_non_object_json_before_building_runtime(
 def test_invoke_rejects_ordinary_cmo_mutation_before_runtime_build(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(cli_module, "build_application_runtime", _forbid_eager_build)
+    monkeypatch.setattr(cli_module, "McpRuntimeManager", _forbid_eager_build)
 
     result = CliRunner().invoke(
         app,
@@ -277,25 +279,28 @@ def test_invoke_rejects_ordinary_cmo_mutation_before_runtime_build(
     [
         ("bridge.status", {}, None),
         ("scenario.get", {}, None),
+        ("bridge.doctor", {"live": False}, None),
         ("unit.delete", {"unit_guid": "UNIT-1"}, None),
         ("unit.delete", {"unit_guid": "UNIT-1"}, "confirmation-token"),
     ],
 )
-def test_invoke_delegates_status_reads_and_destructive_workflows_without_wire_enrichment(
+def test_invoke_delegates_cmo_local_and_destructive_workflows_without_wire_enrichment(
     monkeypatch: pytest.MonkeyPatch,
     operation: str,
     arguments: dict[str, object],
     confirmation_token: str | None,
 ) -> None:
-    application = _FakeApplication()
+    manager = _FakeInvokeManager()
+    manager_roots: list[object] = []
 
-    def fake_build(**_kwargs: object) -> object:
-        return SimpleNamespace(application=application)
+    def fake_manager(**kwargs: object) -> _FakeInvokeManager:
+        manager_roots.append(kwargs["game_root"])
+        return manager
 
     monkeypatch.setattr(
         cli_module,
-        "build_application_runtime",
-        fake_build,
+        "McpRuntimeManager",
+        fake_manager,
     )
     command = ["invoke", operation, "--args", json.dumps(arguments)]
     if confirmation_token is not None:
@@ -304,22 +309,70 @@ def test_invoke_delegates_status_reads_and_destructive_workflows_without_wire_en
     result = CliRunner().invoke(app, command)
 
     assert result.exit_code == 0
-    assert application.calls == [(operation, arguments, confirmation_token)]
+    assert manager_roots == [None]
+    assert manager.calls == [(operation, arguments, confirmation_token)]
     assert json.loads(result.stdout)["result"] == {"delegated": True}
+
+
+def test_invoke_returns_manager_pause_preflight_without_direct_runtime_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeInvokeManager(
+        InvocationOutcome(
+            protocol="cmo-agent-bridge/1",
+            request_id=None,
+            ok=False,
+            result=None,
+            error={
+                "code": "SCENARIO_NOT_ADVANCING",
+                "message": "CMO is paused; the Lua-backed operation was not published or retried",
+                "details": {
+                    "operation": "unit.list",
+                    "observed_state": "paused",
+                    "requires_lua_poll": True,
+                    "retry_suppressed": True,
+                },
+            },
+        )
+    )
+    manager_roots: list[object] = []
+
+    def fake_manager(**kwargs: object) -> _FakeInvokeManager:
+        manager_roots.append(kwargs["game_root"])
+        return manager
+
+    monkeypatch.setattr(cli_module, "McpRuntimeManager", fake_manager)
+    monkeypatch.setattr(cli_module, "build_application_runtime", _forbid_eager_build)
+
+    result = CliRunner().invoke(
+        app,
+        ["invoke", "unit.list", "--args", '{"side_guid":"SIDE-BLUE"}'],
+    )
+
+    assert result.exit_code == 1
+    assert manager_roots == [None]
+    assert manager.calls == [("unit.list", {"side_guid": "SIDE-BLUE"}, None)]
+    payload = json.loads(result.stdout)
+    assert payload["request_id"] is None
+    assert payload["error"]["code"] == "SCENARIO_NOT_ADVANCING"
+    assert payload["error"]["details"]["retry_suppressed"] is True
 
 
 def test_invoke_preserves_dynamic_read_and_mutation_routing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    application = _FakeApplication()
+    manager = _FakeInvokeManager()
+    manager_build_count = 0
 
-    def fake_build(**_kwargs: object) -> object:
-        return SimpleNamespace(application=application)
+    def fake_manager(**_kwargs: object) -> _FakeInvokeManager:
+        nonlocal manager_build_count
+        manager_build_count += 1
+        return manager
 
     monkeypatch.setattr(
         cli_module,
-        "build_application_runtime",
-        fake_build,
+        "McpRuntimeManager",
+        fake_manager,
     )
     runner = CliRunner()
 
@@ -344,7 +397,8 @@ def test_invoke_preserves_dynamic_read_and_mutation_routing(
 
     assert read_result.exit_code == 0
     assert mutation_result.exit_code == 2
-    assert application.calls == [
+    assert manager_build_count == 1
+    assert manager.calls == [
         (
             "lua.call",
             {"function": "ScenEdit_GetScore", "arguments": {"side": "Blue"}},
@@ -396,4 +450,7 @@ def test_queue_cli_inspection_wait_cancel_and_summary_delegate_locally(
         "rejected": 4,
         "quarantined": 5,
         "cancelled": 6,
+        "unresolved_quarantined": 0,
+        "resolved_quarantined": 5,
+        "barrier_active": False,
     }

@@ -4,7 +4,7 @@ Use this reference when the plugin or Skill is installed but the MCP tools are a
 `cmo_bridge_diagnose` reports incomplete setup, `cmo_bridge_status` times out, or the polling event
 must be mounted or repaired.
 
-`v0.3.1` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.3.2` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Identify the failed layer
@@ -99,7 +99,7 @@ permissions block the command.
 Get-Command uv, uvx
 uv --version
 
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.1/cmo_agent_bridge-0.3.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.2/cmo_agent_bridge-0.3.2-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge version
 ```
 
@@ -178,16 +178,25 @@ After diagnose reports ready, use the running `cmo_bridge_status` or paused
 `cmo_simulation_pulse(handshake=true)` path above. A successful result reports the CMO build,
 runtime tag, and scenario lineage and establishes the mutation queue's session binding.
 
-For a direct CLI smoke test, keep CMO and the event running:
+Use registered MCP tools for normal Agent operation. Direct CLI `invoke` is a smoke-test or recovery
+fallback, not a way to bypass the MCP pause gate. It performs the same synchronous Lua polling: if
+the host UI preflight verifies that CMO is paused, it returns `SCENARIO_NOT_ADVANCING` without
+publishing the operation or waiting for or retrying Lua polling. Do not loop that command while
+paused. Use the MCP time tools when available to open a controlled 1x window; if they are absent,
+ask the user to release time at 1x for the bounded fallback call and re-pause afterward.
+
+For a direct CLI smoke test, first verify that CMO is running, scenario time is advancing, and the
+event is Active and Repeatable:
 
 ```powershell
 uvx --python 3.12 --from $wheel cmo-bridge invoke bridge.status --args '{}'
 ```
 
-If this times out, inspect the structured `phase`, `likely_causes`, and `next_steps`. Check that CMO
-is running, the intended saved scenario is loaded, the event is Active and Repeatable, the trigger
-and action are linked, and scenario time is advancing. For a submitted mutation, query its durable
-request ID rather than resubmitting it.
+If this times out while the UI is verified running, inspect the structured `phase`, `likely_causes`,
+and `next_steps`. Check that CMO is running, the intended saved scenario is loaded, the event is
+Active and Repeatable, the trigger and action are linked, and scenario time is advancing. A verified
+pause should produce `SCENARIO_NOT_ADVANCING`, not a polling timeout. For a submitted mutation,
+query its durable request ID rather than resubmitting it.
 
 ## Optional persistent CLI
 
@@ -202,7 +211,7 @@ uv tool update-shell
 After restarting PowerShell, `cmo-bridge version`, `cmo-bridge prepare`, `cmo-bridge invoke`,
 `cmo-bridge submit`, `cmo-bridge request-get`, `cmo-bridge request-wait`,
 `cmo-bridge request-cancel`, and `cmo-bridge queue-status` are available directly. This does not
-replace plugin installation or the polling event.
+replace plugin installation, the polling event, MCP-first Agent operation, or the pause rules above.
 
 CLI `submit` only persists the mutation and returns its queue receipt. It does not start a
 background worker. CLI `request-wait` starts a worker in the foreground for that command, stops it

@@ -4,6 +4,33 @@
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-07-18 (Preview)
+
+这一版修复了隔离错误破坏队列查询的问题，补齐 CMO Build 1868 下任务目标与编队规模的写后读回兼容，
+并统一 MCP 与 CLI 在暂停想定中的同步调用行为。
+
+### Changed
+
+- pulse 预检只查询非终态请求，历史终态记录不再参与待执行请求集合的构造。
+- mutation 提交在存在尚未解决的隔离屏障时直接拒绝，避免继续堆积无法执行的后续命令。
+- 队列状态区分历史隔离记录、已解决隔离与当前执行屏障；`operate-cmo` Skill 在工具错误、缺失回执或隔离状态下改为 fail-closed，不再继续批量提交。
+- `cmo-bridge invoke` 复用 MCP 的主机 UI 时间门禁；已验证暂停时在发布任何 Lua 请求前返回
+  `SCENARIO_NOT_ADVANCING`，不再等待或重试轮询。
+- `operate-cmo` 明确要求列表完整性只能由 `next_cursor=null` 判断；`cmo_unit_list` 的短页或空页仍须继续跟随非空游标。
+- 项目版本升级到 `0.3.2`。
+
+### Fixed
+
+- 修复持久化 `QueueError` 从 JSON 读回时无法恢复 `ErrorCode` 枚举的问题，并统一队列各读取路径的错误解码。
+- 修复打击任务目标在 contact GUID 与 CMO 返回的规范目标 GUID 不同时被误判为失败的问题。
+- 扩展 mission `FlightSize` 读回规范化，兼容 CMO wrapper 返回的数值、名称与嵌套字段形式。
+- 将 UI 时间 helper 的默认单次验证窗口从 5 秒提高到 15 秒，避免大型想定或较慢 WPF 响应在状态已经切换后被误判为超时。
+
+### Compatibility
+
+- 已在 CMO Build 1868 实机验证：暂停状态下连续入队 6 架 J-11 的任务分配，FIFO 全部完成，
+  pulse 自动恢复暂停，最终任务成员读回与六条请求返回的 unit GUID 一致，且没有新增拒绝或隔离。
+
 ## [0.3.1] - 2026-07-18 (Preview)
 
 这一版修复了暂停想定中的同步读取等待、大型兵力列表超时，以及时间控制后前台窗口恢复不可靠的问题。
@@ -210,6 +237,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.3.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.1
 [0.3.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.0
 [0.2.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.2.1

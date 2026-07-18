@@ -131,8 +131,12 @@ def _require_exact_keys(
         )
 
 
-def _parse_error_payload(payload: dict[str, object], *, returncode: int, stderr: str) -> BridgeError:
-    _require_exact_keys(payload, {"ok", "code", "message", "details"}, description="UI helper error")
+def _parse_error_payload(
+    payload: dict[str, object], *, returncode: int, stderr: str
+) -> BridgeError:
+    _require_exact_keys(
+        payload, {"ok", "code", "message", "details"}, description="UI helper error"
+    )
     if payload["ok"] is not False:
         raise _bridge_failure(
             "UI helper returned a contradictory failure payload",
@@ -240,7 +244,7 @@ class UiTimeController:
         process_inspector: CmoProcessInspector | None = None,
         runner: UiTimeProcessRunner | None = None,
         powershell_executable: str | None = None,
-        timeout_seconds: float = 5.0,
+        timeout_seconds: float = 15.0,
     ) -> None:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")

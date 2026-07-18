@@ -179,9 +179,9 @@ def invoke(
                     ),
                 },
             )
-        runtime = build_application_runtime(game_root=game_root)
+        runtime = McpRuntimeManager(game_root=game_root)
         outcome = asyncio.run(
-            runtime.application.execute(
+            runtime.execute(
                 operation,
                 decoded,
                 confirmation_token=confirmation_token,

@@ -1,7 +1,8 @@
 # CMO Bridge Tool Catalog
 
-Use this reference to distinguish callable MCP tools from planned or manual capabilities. The
-registered tool schema is authoritative for exact argument types.
+Use registered MCP tools for normal Agent work and this reference to distinguish them from planned,
+manual, or CLI-fallback capabilities. The registered tool schema is authoritative for exact
+argument types.
 
 ## Contents
 
@@ -37,8 +38,9 @@ Never infer `CURRENT` from an official Lua function. Never call a proposed tool 
   name.
 - Contact GUIDs belong to the observing side and are not interchangeable with actual unit GUIDs.
 - Follow `next_cursor` until null when a complete list matters. Reuse the same `page_size`.
-  `cmo_unit_list` bounds expensive candidate hydration, so its page may be short or empty while a
-  non-null cursor still requires another call.
+  `cmo_unit_list` scans and hydrates candidates in safety-bounded chunks, so `page_size` does not
+  guarantee that many matching output items. A short page or `items=[]` is non-terminal whenever
+  `next_cursor` is non-null; only `next_cursor=null` ends the scan.
 - Ordinary mutation tools return `QueuedOperationReceipt` with `request_id`, operation, FIFO
   sequence, `queued` state, and submission time. They do not return CMO's eventual result.
 - Use `cmo_request_get` or `cmo_request_wait` to obtain the terminal queue status and result. Treat
@@ -59,11 +61,35 @@ session binding has been established.
 
 | Tool | Primary inputs | Use and boundary |
 |---|---|---|
-| `cmo_request_get` | request UUID | Read `queued`, `active`, `completed`, `rejected`, `quarantined`, or `cancelled` state plus terminal result/error |
+| `cmo_request_get` | request UUID | Read `queued`, `active`, `completed`, `rejected`, `quarantined`, or `cancelled` state plus terminal result/error; quarantined rows include current resolution metadata |
 | `cmo_request_wait` | request UUID, non-negative timeout seconds | Wait locally for a terminal state; `timed_out=true` never cancels the request |
 | `cmo_request_list` | optional positive limit | List durable requests in FIFO submission order |
 | `cmo_request_cancel` | request UUID | Cancel only a request still in `queued`; an `active` or terminal request remains unchanged |
-| `cmo_queue_status` | none | Return counts by queue state |
+| `cmo_queue_status` | none | Return historical counts plus `unresolved_quarantined`, `resolved_quarantined`, and the current global `barrier_active` flag |
+
+A queue row remains `state="quarantined"` as durable audit history after Host resolution. Read its
+`quarantine_resolution`: `state` is `unresolved` or `resolved`, `disposition` is `applied`,
+`not_applied`, or null when unavailable, `resolved_at_ms` is the settlement epoch when known, and
+`barrier_active` says whether that row is currently blocking. In `cmo_queue_status`, `quarantined`
+is the historical total; only `unresolved_quarantined` and `barrier_active` describe current
+attention. A prior `rejected` row is likewise historical unless it belongs to the batch currently
+being evaluated.
+
+There is deliberately no MCP tool that guesses an indeterminate outcome. After independently
+verifying in CMO whether the quarantined operation was applied, use the local CLI with the exact
+release runtime:
+
+1. Preview only: `cmo-bridge resolve-quarantine --disposition applied` or use `not_applied`.
+2. Check the returned identity, disposition, impact, and confirmation token against the request
+   under investigation.
+3. Commit with the same disposition and
+   `--confirmation-token <preview-token>`.
+
+This Host-only action records the disposition and attestation that it was based on independent
+manual verification, then removes the execution barrier. It does not store the evidence itself,
+replay, undo, or otherwise mutate the CMO operation. Never choose a disposition from the queue error
+alone; if the outcome cannot be independently established, leave the barrier unresolved and ask the
+user.
 
 The queue executes one active mutation at a time. Submit independent work in the intended FIFO
 order. If a later tool needs a GUID or other value from an earlier result, wait for the earlier
@@ -114,7 +140,9 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 For all CMO-backed synchronous rows in this table, a handshake pulse is not a read window: it
 returns to pause before it returns. If fresh reads are needed from a paused scenario, inspect the
 durable queue, explicitly run at 1x, execute the preselected batch, and restore verified pause and
-the preserved rate in cleanup. Never retry `SCENARIO_NOT_ADVANCING` while still paused.
+the preserved rate in cleanup. A fallback `cmo-bridge invoke` of the same operation obeys this gate
+too: verified pause returns `SCENARIO_NOT_ADVANCING` before publishing the operation or waiting for
+or retrying Lua polling. Never retry that result while still paused.
 
 In `LIVE_PLAYER`, unit, mission, inventory, doctrine, and score reads apply to the commanded side.
 Read adversaries through `cmo_contact_*`. In author or umpire mode, omniscient reads are permitted

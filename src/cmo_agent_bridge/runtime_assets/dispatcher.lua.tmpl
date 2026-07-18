@@ -954,6 +954,83 @@ local function contains_identifier(values, wanted)
     return false
 end
 
+local function identifier_list_text(values)
+    local rendered = {}
+    for _, value in ipairs(values) do
+        rendered[#rendered + 1] = tostring(value)
+    end
+    return "[" .. table.concat(rendered, ",") .. "]"
+end
+
+local function normalized_target_api_guids(value, expected_count, operation)
+    local identifiers = Json.array()
+    if type(value) == "string" or type(value) == "number" then
+        identifiers[#identifiers + 1] = tostring(value)
+    else
+        for index, item in ipairs(collect(value)) do
+            local identifier
+            if type(item) == "string" or type(item) == "number" then
+                identifier = tostring(item)
+            else
+                identifier = object_guid(item)
+            end
+            if identifier == "" then
+                error(
+                    operation
+                        .. " returned a non-GUID target at index "
+                        .. tostring(index)
+                        .. ": return_type="
+                        .. type(item)
+                )
+            end
+            identifiers[#identifiers + 1] = identifier
+        end
+        table.sort(identifiers)
+    end
+
+    local unique = {}
+    for _, identifier in ipairs(identifiers) do
+        local key = lower_text(identifier)
+        if key == "" or unique[key] then
+            error(
+                operation
+                    .. " returned invalid canonical target GUIDs: canonical="
+                    .. identifier_list_text(identifiers)
+                    .. "; return_type="
+                    .. type(value)
+            )
+        end
+        unique[key] = true
+    end
+    if #identifiers ~= expected_count then
+        error(
+            operation
+                .. " returned an unexpected canonical target count: expected="
+                .. tostring(expected_count)
+                .. "; canonical="
+                .. identifier_list_text(identifiers)
+                .. "; return_type="
+                .. type(value)
+        )
+    end
+    return identifiers
+end
+
+local function diagnostic_value(value)
+    if value == nil or value == Json.null then
+        return "null"
+    end
+    local rendered_ok, rendered = pcall(tostring, value)
+    if not rendered_ok then
+        rendered = "<unprintable>"
+    end
+    rendered = tostring(rendered)
+    if #rendered > 160 then
+        rendered = string.sub(rendered, 1, 157) .. "..."
+    end
+    return type(value) .. "(" .. rendered .. ")"
+end
+
 local function same_identifiers_in_order(left, right)
     if #left ~= #right then
         return false
@@ -3111,18 +3188,18 @@ end
 
 local function nullable_flight_size(value)
     local numeric = nullable_integer(value)
-    if numeric == Json.null then
-        numeric = nullable_integer(safe_get(value, { "value__", "Value", "value" }))
-    end
     if numeric ~= Json.null then
         return numeric
     end
-    local rendered = value
-    local rendered_ok, rendered_value = pcall(function() return value:ToString() end)
-    if rendered_ok and rendered_value ~= nil then
-        rendered = rendered_value
+
+    local value_fields = { "value__", "Value__", "Value", "value", "Code", "code" }
+    for _, field in ipairs(value_fields) do
+        numeric = nullable_integer(safe_get(value, { field }))
+        if numeric ~= Json.null then
+            return numeric
+        end
     end
-    local key = string.lower(string.gsub(text_or(rendered, ""), "[^%w]", ""))
+
     local sizes = {
         none = 0,
         singleaircraft = 1,
@@ -3132,15 +3209,38 @@ local function nullable_flight_size(value)
         fouraircraft = 4,
         sixaircraft = 6,
     }
-    if sizes[key] ~= nil then
-        return sizes[key]
+    local function rendered_size(candidate)
+        local key = string.lower(string.gsub(text_or(candidate, ""), "[^%w]", ""))
+        if sizes[key] ~= nil then
+            return sizes[key]
+        end
+        for name, size in pairs(sizes) do
+            if string.find(key, name, 1, true) ~= nil then
+                return size
+            end
+        end
+        return Json.null
     end
-    for name, size in pairs(sizes) do
-        if string.find(key, name, 1, true) ~= nil then
-            return size
+
+    local rendered_fields = {
+        "value__", "Value__", "Value", "value", "Code", "code",
+        "Name", "name", "Description", "description", "Text", "text",
+    }
+    for _, field in ipairs(rendered_fields) do
+        local rendered = safe_get(value, { field })
+        if rendered ~= nil then
+            local parsed = rendered_size(rendered)
+            if parsed ~= Json.null then
+                return parsed
+            end
         end
     end
-    return Json.null
+
+    local rendered_ok, rendered_value = pcall(function() return value:ToString() end)
+    if rendered_ok and rendered_value ~= nil then
+        return rendered_size(rendered_value)
+    end
+    return rendered_size(value)
 end
 
 local function nullable_flight_quantity(value)
@@ -4133,6 +4233,7 @@ local function mission_create_result(arguments)
     end
     local expected_zone = nil
     local expected_targets = nil
+    local canonical_targets = nil
     local expected_destination = nil
     local expected_cargo_subtype = nil
     local post_create_options = { isactive = false }
@@ -4227,6 +4328,11 @@ local function mission_create_result(arguments)
                         .. text_or(assigned, "no targets returned")
                 )
             end
+            canonical_targets = normalized_target_api_guids(
+                assigned,
+                #expected_targets,
+                "ScenEdit_AssignUnitAsTarget"
+            )
         end
 
         local _, actual = mission_readback(side, side_selector, mission_guid)
@@ -4253,11 +4359,19 @@ local function mission_create_result(arguments)
                 error("added mission zone did not match readback")
             end
         end
-        if expected_targets ~= nil then
-            for _, target_guid in ipairs(expected_targets) do
-                if not contains_identifier(actual.target_guids, target_guid) then
-                    error("added strike target did not match readback")
-                end
+        if expected_targets ~= nil and #expected_targets > 0 then
+            if canonical_targets == nil
+                or not same_identifier_sets(actual.target_guids, canonical_targets)
+            then
+                error(
+                    "added strike target readback mismatch: requested="
+                        .. identifier_list_text(expected_targets)
+                        .. "; canonical="
+                        .. identifier_list_text(canonical_targets or {})
+                        .. "; observed="
+                        .. identifier_list_text(actual.target_guids)
+                        .. "; path=mission.targetlist"
+                )
             end
         end
         if expected_destination ~= nil
@@ -4294,7 +4408,30 @@ local function mission_create_result(arguments)
         })
     end)
     if not finalize_ok then
-        pcall(ScenEdit_DeleteMission, side_selector, mission_guid)
+        local rollback_ok, rollback_result = pcall(
+            ScenEdit_DeleteMission,
+            side_selector,
+            mission_guid
+        )
+        local verify_ok, remaining = pcall(
+            ScenEdit_GetMission,
+            side_selector,
+            mission_guid
+        )
+        if not rollback_ok
+            or rollback_result == nil
+            or rollback_result == false
+            or not verify_ok
+            or remaining ~= nil
+        then
+            error(
+                text_or(finalized, "added mission readback failed")
+                    .. "; rollback could not be verified: delete="
+                    .. diagnostic_value(rollback_result)
+                    .. "; remaining="
+                    .. diagnostic_value(remaining)
+            )
+        end
         error(text_or(finalized, "added mission readback failed"))
     end
     return finalized
@@ -4516,7 +4653,55 @@ local function mission_update_result(arguments)
     if not ok or updated == nil or updated == false then
         error("ScenEdit_SetMission failed: " .. text_or(updated, "no mission returned"))
     end
+    local returned_actual = nil
+    if object_guid(updated) ~= "" then
+        local projection_ok, projection = pcall(mission_full_result, updated, side)
+        if projection_ok then
+            returned_actual = projection
+        end
+    end
     local _, actual = mission_readback(side, side_selector, mission_guid)
+    if arguments.flight_size ~= nil and arguments.flight_size ~= Json.null then
+        local requested = integer_or(arguments.flight_size, 1)
+        local returned_value = returned_actual ~= nil
+            and returned_actual.flight_size
+            or Json.null
+        local refreshed_value = actual.flight_size
+        local returned_observed = returned_value ~= nil and returned_value ~= Json.null
+        local refreshed_observed = refreshed_value ~= nil and refreshed_value ~= Json.null
+        if returned_observed and returned_value ~= requested then
+            error(
+                "flight_size readback mismatch: requested="
+                    .. diagnostic_value(requested)
+                    .. "; observed="
+                    .. diagnostic_value(returned_value)
+                    .. "; path=ScenEdit_SetMission.return"
+            )
+        end
+        if refreshed_observed and refreshed_value ~= requested then
+            error(
+                "flight_size readback mismatch: requested="
+                    .. diagnostic_value(requested)
+                    .. "; observed="
+                    .. diagnostic_value(refreshed_value)
+                    .. "; path=ScenEdit_GetMission.refresh"
+            )
+        end
+        if not returned_observed and not refreshed_observed then
+            error(
+                "flight_size could not be verified: requested="
+                    .. diagnostic_value(requested)
+                    .. "; returned="
+                    .. diagnostic_value(returned_value)
+                    .. "; refreshed="
+                    .. diagnostic_value(refreshed_value)
+                    .. "; paths=ScenEdit_SetMission.return,ScenEdit_GetMission.refresh"
+            )
+        end
+        if not refreshed_observed then
+            actual.flight_size = returned_value
+        end
+    end
     local scalar_checks = {
         { argument = "active", actual = actual.active },
         { argument = "flight_size", actual = actual.flight_size },
@@ -5135,10 +5320,37 @@ local function mission_target_result(arguments, assign)
     if not ok or changed == nil or changed == false then
         error("mission target update failed: " .. text_or(changed, "no targets returned"))
     end
+    local canonical_targets = normalized_target_api_guids(
+        changed,
+        1,
+        assign and "ScenEdit_AssignUnitAsTarget" or "ScenEdit_RemoveUnitAsTarget"
+    )
+    local canonical_target_guid = canonical_targets[1]
+    if not assign and not contains_identifier(before.target_guids, canonical_target_guid) then
+        error(
+            "mission target removal return was not present before mutation: requested="
+                .. target_guid
+                .. "; canonical="
+                .. canonical_target_guid
+                .. "; before="
+                .. identifier_list_text(before.target_guids)
+                .. "; path=mission.targetlist"
+        )
+    end
     local _, actual = mission_readback(side, side_selector, mission_guid)
-    local observed = contains_identifier(actual.target_guids, target_guid)
+    local observed = contains_identifier(actual.target_guids, canonical_target_guid)
     if observed ~= assign then
-        error("mission target state did not match readback")
+        error(
+            "mission target readback mismatch: requested="
+                .. target_guid
+                .. "; canonical="
+                .. canonical_target_guid
+                .. "; expected_assigned="
+                .. tostring(assign)
+                .. "; observed="
+                .. identifier_list_text(actual.target_guids)
+                .. "; path=mission.targetlist"
+        )
     end
     return Json.object({
         mission_guid = actual.guid,

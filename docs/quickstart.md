@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.3.1` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.3.2` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.1/cmo_agent_bridge-0.3.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.2/cmo_agent_bridge-0.3.2-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -61,6 +61,10 @@ cmo-bridge invoke scenario.get --args '{}'
 
 返回超时时，确认 CMO 正在运行、打开的是已挂载事件的想定、event 已启用且可重复，以及想定时间
 正在推进。
+
+如果想定已经暂停，CLI 会先从 CMO 窗口核验时间状态，并在写入 Lua inbox 前返回
+`SCENARIO_NOT_ADVANCING`；不要原样重试。需要纯 CLI 冒烟测试时先手动释放时间，使用 MCP 时则让
+Agent 通过 `cmo_simulation_pulse(handshake=true)` 完成受控握手并恢复暂停。
 
 纯 CLI 写操作使用 `cmo-bridge submit`；它只持久化请求，不启动 worker。没有 MCP server 时，随后
 运行 `cmo-bridge request-wait <request-id>` 才会在前台启动 worker。等待超时不取消请求，再次

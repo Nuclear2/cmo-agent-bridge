@@ -74,21 +74,20 @@ def _queue_error_json(error_json: str | None, *, fallback: ErrorCode, message: s
         return canonical_queue_json(
             QueueError(code=fallback, message=message).model_dump(mode="json")
         )
-    decoded: object = json.loads(error_json)
-    if type(decoded) is not dict:
-        return canonical_queue_json(
-            QueueError(code=fallback, message=message).model_dump(mode="json")
-        )
-    parsed = cast(dict[object, object], decoded)
     try:
+        decoded: object = json.loads(error_json)
+        if type(decoded) is not dict:
+            raise ValueError("ledger error must be an object")
+        parsed = cast(dict[object, object], decoded)
+        projected = canonical_queue_json(
+            {
+                "code": parsed.get("code", fallback.value),
+                "message": parsed.get("message", message),
+                "details": parsed.get("details", {}),
+            }
+        )
         return canonical_queue_json(
-            QueueError.model_validate(
-                {
-                    "code": parsed.get("code", fallback),
-                    "message": parsed.get("message", message),
-                    "details": parsed.get("details", {}),
-                }
-            ).model_dump(mode="json")
+            QueueError.model_validate_json(projected).model_dump(mode="json")
         )
     except (TypeError, ValueError):
         return canonical_queue_json(

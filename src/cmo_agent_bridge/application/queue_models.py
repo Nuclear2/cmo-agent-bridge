@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import math
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, StrictStr, model_validator
@@ -34,6 +34,17 @@ class QueueError(BaseModel):
     code: ErrorCode
     message: StrictStr
     details: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class QueueQuarantineResolution(BaseModel):
+    """Current Host disposition of a historically quarantined queue item."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    state: Literal["unresolved", "resolved"]
+    disposition: Literal["applied", "not_applied"] | None = None
+    resolved_at_ms: StrictInt | None = Field(default=None, ge=0)
+    barrier_active: bool
 
 
 def canonical_queue_json(value: object) -> bytes:
@@ -85,12 +96,22 @@ class QueuedOperationStatus(BaseModel):
     completed_at_ms: StrictInt | None = Field(default=None, ge=0)
     result: JsonValue | None = None
     error: QueueError | None = None
+    quarantine_resolution: QueueQuarantineResolution | None = None
 
     @classmethod
-    def from_record(cls, record: QueuedOperationRecord) -> Self:
+    def from_record(
+        cls,
+        record: QueuedOperationRecord,
+        *,
+        quarantine_resolution: QueueQuarantineResolution | None = None,
+    ) -> Self:
         error = None
         if record.error_json is not None:
-            error = QueueError.model_validate(json.loads(record.error_json))
+            # Durable queue errors are JSON, so validate them in JSON mode. In
+            # strict Python mode Pydantic refuses to coerce the decoded string
+            # back into ``ErrorCode``; JSON mode is the matching inverse of the
+            # JSON-mode dump used at persistence time.
+            error = QueueError.model_validate_json(record.error_json)
         return cls(
             request_id=record.request_id,
             operation=_body_operation(record),
@@ -103,6 +124,7 @@ class QueuedOperationStatus(BaseModel):
             completed_at_ms=record.terminal_at_ms,
             result=_load_json(record.result_json),
             error=error,
+            quarantine_resolution=quarantine_resolution,
         )
 
 
@@ -121,9 +143,19 @@ class QueueSummary(BaseModel):
     rejected: StrictInt = Field(ge=0)
     quarantined: StrictInt = Field(ge=0)
     cancelled: StrictInt = Field(ge=0)
+    unresolved_quarantined: StrictInt = Field(default=0, ge=0)
+    resolved_quarantined: StrictInt = Field(default=0, ge=0)
+    barrier_active: bool = False
 
     @classmethod
-    def from_counts(cls, counts: QueueCounts) -> Self:
+    def from_counts(
+        cls,
+        counts: QueueCounts,
+        *,
+        unresolved_quarantined: int = 0,
+        resolved_quarantined: int = 0,
+        barrier_active: bool = False,
+    ) -> Self:
         return cls(
             queued=counts.queued,
             active=counts.active,
@@ -131,6 +163,9 @@ class QueueSummary(BaseModel):
             rejected=counts.rejected,
             quarantined=counts.quarantined,
             cancelled=counts.cancelled,
+            unresolved_quarantined=unresolved_quarantined,
+            resolved_quarantined=resolved_quarantined,
+            barrier_active=barrier_active,
         )
 
 
@@ -201,6 +236,12 @@ class QueueStore(Protocol):
     ) -> QueuedOperationRecord | None: ...
 
     def counts(self, *, root_key: str | None = None) -> QueueCounts: ...
+
+    def summary_snapshot(
+        self,
+        *,
+        root_key: str,
+    ) -> tuple[QueueCounts, tuple[QueuedOperationRecord, ...]]: ...
 
 
 class QueueClock(Protocol):

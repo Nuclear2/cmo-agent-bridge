@@ -6,7 +6,7 @@
         "--python",
         "3.12",
         "--from",
-        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.1/cmo_agent_bridge-0.3.1-py3-none-any.whl",
+        "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.3.2/cmo_agent_bridge-0.3.2-py3-none-any.whl",
         "cmo-bridge",
         "serve"
       ]

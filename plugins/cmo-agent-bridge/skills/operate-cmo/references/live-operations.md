@@ -12,6 +12,7 @@ plan, also consult [operational-planning.md](operational-planning.md).
 - [Protect the decision window](#protect-the-decision-window)
 - [Build the operating picture](#build-the-operating-picture)
 - [Issue bounded orders](#issue-bounded-orders)
+- [Control batches and stop safely](#control-batches-and-stop-safely)
 - [Build and activate a mission](#build-and-activate-a-mission)
 - [Triage and engage contacts](#triage-and-engage-contacts)
 - [Operate naval and submarine forces](#operate-naval-and-submarine-forces)
@@ -69,6 +70,9 @@ Before every planned batch of CMO-backed synchronous reads, require a fresh
 establishes the state. User interaction, extended reasoning, another time-control action, or a
 failed CMO call invalidates that observation. If CMO is paused, never start or retry the read batch:
 either use an explicitly stale prior snapshot or open the controlled 1x acquisition window below.
+Use registered MCP tools for normal Agent work. A fallback `cmo-bridge invoke` is still a
+synchronous Lua-backed call and follows the same gate: verified pause must return
+`SCENARIO_NOT_ADVANCING` without publishing the operation or waiting for or retrying Lua polling.
 Then choose the least intrusive procedure:
 
 - **Routine order:** keep the observed state and compression. Submit and resolve the order normally.
@@ -125,8 +129,11 @@ Read only what can affect the next decision:
    default if an uncertainty remains unresolved.
 
 Follow paging to completion when comparing the entire force, contact set, mission set, or reference
-point set. Do not call bridge status before every read; call it for health questions, failures, or
-multi-step work that needs the exact runtime identity.
+point set. `cmo_unit_list` scans and hydrates candidates in safety-bounded chunks; `page_size` is not
+a promise of that many matching output items. Continue with every non-null `next_cursor` even when
+`items=[]` or the page is short, and stop only when `next_cursor=null`. Do not call bridge status
+before every read; call it for health questions, failures, or multi-step work that needs the exact
+runtime identity.
 
 ## Issue bounded orders
 
@@ -151,6 +158,35 @@ multi-step work that needs the exact runtime identity.
 For an aircraft loadout change during fair play, use the database-default readying behavior. Do
 not set an artificially short `time_to_ready_minutes` or set `ignore_magazines=true`; those are
 author or umpire interventions.
+
+## Control batches and stop safely
+
+Use this sequence for every multi-unit or multi-mission write:
+
+1. Submit at most eight independent mutations, checking each MCP result before continuing. Accept
+   it only when `isError` is not true and the result is a well-formed receipt containing a non-null
+   UUID `request_id`.
+2. If any tool reports an error, returns no receipt, or returns a malformed/invalid request ID,
+   stop the batch immediately. Do not append a placeholder ID and do not submit dependent work.
+3. At the checkpoint, call `cmo_request_list`. If it fails or returns malformed data, stop all new
+   writes. Otherwise retain every receipt and inspect all terminal results before the next batch.
+4. Do not continue fan-out when a request tracked in the current batch becomes `rejected`, when a
+   quarantine is explicitly unresolved, or while status reports a current quarantine barrier.
+   Resolve the current condition first. Prior rejected requests and resolved quarantines are audit
+   history. Treat the aggregate `quarantined` value as historical unless the explicit current
+   barrier/unresolved fields say otherwise; never use historical terminal rows alone as a go/no-go
+   signal.
+5. Before `cmo_simulation_pulse`, derive `request_ids` from the fresh list, reject every null or
+   non-UUID value locally, and require exact coverage of all `queued` and `active` requests. If
+   completeness is uncertain, do not release time.
+6. Yield control after every batch so a user interruption can be honored before another mutation
+   is submitted. Never hide dozens of MCP calls inside one long Agent-side loop.
+
+If the user says stop, terminate the local submission loop first; no later loop iteration may call
+a mutation tool. Then pause CMO if UI control is available, list the queue, and cancel only requests
+still reported as `queued`. An `active` request may already be in CMO's inbox: record its UUID and
+state, but never claim it was cancelled or neutralized by pause, timeout, MCP shutdown, or task
+termination.
 
 ## Build and activate a mission
 
@@ -357,10 +393,11 @@ authority, expected gain, and a recovery path.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
-- `SCENARIO_NOT_ADVANCING`: the runtime verified pause and intentionally did not publish or retry
-  the synchronous CMO call. Do not repeat it. Use local queue/time tools while paused, or preserve
-  the selected rate, inspect non-terminal durable work, open one explicit 1x read window, complete
-  the preselected reads without deliberation, and restore verified pause in cleanup.
+- `SCENARIO_NOT_ADVANCING`: whether returned by an MCP tool or fallback `cmo-bridge invoke`, the
+  runtime verified pause and intentionally did not publish the synchronous CMO call or wait for or
+  retry Lua polling. Do not repeat it. Use local queue/time tools while paused, or preserve the
+  selected rate, inspect non-terminal durable work, open one explicit 1x read window, complete the
+  preselected reads without deliberation, and restore verified pause in cleanup.
 - `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: call `cmo_time_get_state`. If CMO is
   paused, list the durable queue, include every non-terminal request UUID in
   `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the pause. If
@@ -374,7 +411,13 @@ authority, expected gain, and a recovery path.
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the
   durable request remains queued or active and resumes when polling does.
-- `rejected` or `quarantined`: inspect the queue error and current bridge binding. Never carry the
-  request into a different CMO process or scenario.
+- A current-batch request becomes `rejected`, or a quarantine is unresolved/currently blocking:
+  stop dependent work and all further fan-out. Inspect the queue error, explicit current
+  barrier/unresolved status, and current bridge binding; resolve the condition before any new
+  mutation. Prior rejected rows and resolved quarantine rows are audit history, not proof that a
+  current barrier still exists. Never carry the request into a different CMO process or scenario.
+- Queue/list tool error or malformed receipt: fail closed. Preserve already accepted UUIDs, submit
+  nothing else, and recover local queue inspection before deciding whether to pulse, cancel, or
+  continue.
 - MCP/client restart: query the original request ID; shutdown does not cancel active work.
 - Other structured errors: report the code and actionable message without inventing state.

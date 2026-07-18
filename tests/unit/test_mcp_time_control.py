@@ -142,6 +142,7 @@ class _FakeQueueService:
         }
         self.get_calls: list[UUID] = []
         self.list_calls = 0
+        self.nonterminal_list_calls = 0
         self.wait_calls = 0
 
     def get(self, *, request_id: UUID) -> QueuedOperationStatus:
@@ -157,6 +158,15 @@ class _FakeQueueService:
         self.list_calls += 1
         items = tuple(self._current.values())
         return QueuedOperationList(items=items if limit is None else items[:limit])
+
+    def list_nonterminal(self) -> QueuedOperationList:
+        self.nonterminal_list_calls += 1
+        items = tuple(
+            status
+            for status in self._current.values()
+            if status.state in {OperationQueueState.QUEUED, OperationQueueState.ACTIVE}
+        )
+        return QueuedOperationList(items=items)
 
     async def wait(self, *, request_id: UUID, timeout_seconds: float) -> None:
         del request_id, timeout_seconds
@@ -337,9 +347,7 @@ async def test_paused_cmo_backed_execute_fails_before_publish_or_retry(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    controller = _FakeUiTimeController(
-        _ui_state(SimulationRunState.PAUSED, TimeRate.X15)
-    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
     manager, _queue, application = _manager(
         tmp_path,
         monkeypatch,
@@ -373,9 +381,7 @@ async def test_paused_scenario_context_get_fails_before_its_direct_live_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    controller = _FakeUiTimeController(
-        _ui_state(SimulationRunState.PAUSED, TimeRate.X15)
-    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
     manager, _queue, application = _manager(
         tmp_path,
         monkeypatch,
@@ -398,9 +404,7 @@ async def test_running_cmo_backed_execute_reaches_bridge_application(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    controller = _FakeUiTimeController(
-        _ui_state(SimulationRunState.RUNNING, TimeRate.X15)
-    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.RUNNING, TimeRate.X15))
     manager, _queue, application = _manager(
         tmp_path,
         monkeypatch,
@@ -419,9 +423,7 @@ async def test_running_scenario_context_get_checks_each_live_identity_read(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    controller = _FakeUiTimeController(
-        _ui_state(SimulationRunState.RUNNING, TimeRate.X15)
-    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.RUNNING, TimeRate.X15))
     application = _ScenarioBridgeApplication()
     manager, _queue, _application = _manager(
         tmp_path,
@@ -608,12 +610,47 @@ async def test_request_pulse_polls_only_local_queue_until_terminal(
     assert application.calls == []
     assert queue.wait_calls == 0
     assert queue.get_calls.count(_REQUEST_A) >= 3
+    assert queue.nonterminal_list_calls == 1
+    assert queue.list_calls == 0
     assert controller.calls == [
         ("get_state", None),
         ("play_1x", None),
         ("pause", None),
         ("set_rate", TimeRate.X30),
     ]
+
+
+@pytest.mark.asyncio
+async def test_request_pulse_does_not_materialize_terminal_queue_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _TerminalHistoryPoison(_FakeQueueService):
+        def list(self, *, limit: int | None = None) -> QueuedOperationList:
+            del limit
+            raise AssertionError("pulse must not materialize rejected/quarantined history")
+
+    queue = _TerminalHistoryPoison(
+        {
+            _REQUEST_A: (
+                _queued_status(_REQUEST_A, OperationQueueState.QUEUED, sequence=1),
+                _queued_status(_REQUEST_A, OperationQueueState.COMPLETED, sequence=1),
+            )
+        }
+    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        queue_service=queue,
+    )
+
+    result = await manager.simulation_pulse(request_ids=(_REQUEST_A,))
+
+    assert result.ok is True
+    assert result.requests[0].state is OperationQueueState.COMPLETED
+    assert queue.nonterminal_list_calls == 1
 
 
 @pytest.mark.asyncio

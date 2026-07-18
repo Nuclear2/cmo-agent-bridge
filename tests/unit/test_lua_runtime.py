@@ -33,6 +33,7 @@ class _LuaRun:
     set_unit_calls: tuple[dict[str, JsonValue], ...]
     assign_mission_calls: tuple[tuple[str, str, bool], ...]
     api_calls: dict[str, tuple[object, ...]]
+    mission_target_guids: dict[str, tuple[str, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -700,8 +701,28 @@ def _run_lua(
     export_failures_before_success: int = 0,
     zero_export_results_before_success: int = 0,
     large_unit_count: int | None = None,
+    target_guid_aliases: dict[str, str] | None = None,
+    target_api_return_mode: str = "normal",
+    flight_size_readback_mode: str = "normal",
+    mission_create_finalize_failure: bool = False,
+    mission_delete_mode: str = "normal",
 ) -> _LuaRun:
     assert not (export_failures_before_success and zero_export_results_before_success)
+    assert target_api_return_mode in {
+        "normal",
+        "canonical_not_in_before",
+        "invalid_extra",
+    }
+    assert flight_size_readback_mode in {
+        "normal",
+        "returned_only",
+        "named_enum",
+        "value_then_code",
+        "name_then_description",
+        "missing",
+        "conflict",
+    }
+    assert mission_delete_mode in {"normal", "failure", "residual"}
     snapshot = create_runtime_snapshot()
     activation_id = uuid4()
     invocation = _invocation(operation, public_arguments, activation_id)
@@ -733,6 +754,14 @@ def _run_lua(
     globals_ = cast(Any, lua.globals())
     scenario = _scenario(lua, player_side=player_side)
     fixture = _cmo_fixture(lua)
+    target_guid_aliases = target_guid_aliases or {}
+    if target_guid_aliases:
+        for mission in fixture.missions_by_guid.values():
+            targets = [
+                target_guid_aliases.get(str(target), str(target))
+                for target in mission["targetlist"].values()
+            ]
+            mission["targetlist"] = lua.table_from(targets)
     if large_unit_count is not None:
         _replace_with_large_unit_fixture(lua, fixture, count=large_unit_count)
     captured: dict[str, object] = {
@@ -1359,6 +1388,8 @@ def _run_lua(
         mission = get_mission(side, mission_guid)
         if mission is None:
             return None
+        if mission_create_finalize_failure and str(mission_guid).startswith("MISSION-ADDED-"):
+            return None
         for field in ("isactive", "starttime", "endtime"):
             if descriptor[field] is not None:
                 mission[field] = descriptor[field]
@@ -1448,6 +1479,43 @@ def _run_lua(
         for zone_field in ("PatrolZone", "ProsecutionZone", "Zone"):
             if descriptor[zone_field] is not None:
                 details[zone_field] = zone_wrapper(descriptor[zone_field])
+        flight_field = "StrikeFlightSize" if mission_type == 1 else "FlightSize"
+        if descriptor[flight_field] is not None:
+            if flight_size_readback_mode == "returned_only":
+                returned_data = table_dict(mission)
+                returned_data[details_name] = _lua_table(lua, table_dict(details))
+                returned = _lua_table(lua, returned_data)
+                details[flight_field] = None
+                return returned
+            if flight_size_readback_mode == "conflict":
+                returned_data = table_dict(mission)
+                returned_data[details_name] = _lua_table(lua, table_dict(details))
+                returned = _lua_table(lua, returned_data)
+                requested = int(cast(int, descriptor[flight_field]))
+                details[flight_field] = 4 if requested != 4 else 2
+                return returned
+            if flight_size_readback_mode == "named_enum":
+                size_name = {
+                    0: "None",
+                    1: "SingleAircraft",
+                    2: "TwoAircraft",
+                    3: "ThreeAircraft",
+                    4: "FourAircraft",
+                    6: "SixAircraft",
+                }[int(cast(int, descriptor[flight_field]))]
+                details[flight_field] = _lua_table(lua, {"Description": size_name})
+            elif flight_size_readback_mode == "value_then_code":
+                details[flight_field] = _lua_table(
+                    lua,
+                    {"Value": "TwoAircraft", "Code": 2},
+                )
+            elif flight_size_readback_mode == "name_then_description":
+                details[flight_field] = _lua_table(
+                    lua,
+                    {"Name": "Size", "Description": "TwoAircraft"},
+                )
+            elif flight_size_readback_mode == "missing":
+                details[flight_field] = None
         return mission
 
     def create_mission_flight_plan(
@@ -1503,12 +1571,27 @@ def _run_lua(
 
     def delete_mission(side: object, mission_guid: object) -> bool:
         capture_call("delete_mission", (str(side), str(mission_guid)))
+        if mission_delete_mode == "failure":
+            return False
+        if mission_delete_mode == "residual":
+            return True
         return fixture.missions_by_guid.pop(str(mission_guid), None) is not None
 
     def target_values(value: object) -> list[str]:
         if hasattr(value, "items"):
             return [str(item) for item in ordered_table_values(value)]
         return [str(value)]
+
+    def canonical_target_values(values: list[str]) -> list[str]:
+        if target_api_return_mode == "canonical_not_in_before":
+            return ["UNIT-RED-NOT-PRESENT"]
+        return [target_guid_aliases.get(target, target) for target in values]
+
+    def target_api_result(canonical_values: list[str]) -> Any:
+        returned: list[object] = list(canonical_values)
+        if target_api_return_mode == "invalid_extra":
+            returned.append(_lua_table(lua, {"Name": "Not a target GUID"}))
+        return lua.table_from(returned)
 
     def assign_target(value: object, mission_guid: object) -> Any | None:
         values = target_values(value)
@@ -1517,11 +1600,12 @@ def _run_lua(
         if mission is None:
             return None
         existing = [str(item) for item in ordered_table_values(mission["targetlist"])]
-        for target in values:
+        canonical_values = canonical_target_values(values)
+        for target in canonical_values:
             if target not in existing:
                 existing.append(target)
         mission["targetlist"] = lua.table_from(existing)
-        return lua.table_from(values)
+        return target_api_result(canonical_values)
 
     def remove_target(value: object, mission_guid: object) -> Any | None:
         values = target_values(value)
@@ -1529,11 +1613,12 @@ def _run_lua(
         mission = fixture.missions_by_guid.get(str(mission_guid))
         if mission is None:
             return None
+        canonical_values = canonical_target_values(values)
         existing = [str(item) for item in ordered_table_values(mission["targetlist"])]
         mission["targetlist"] = lua.table_from(
-            [target for target in existing if target not in values]
+            [target for target in existing if target not in canonical_values]
         )
-        return lua.table_from(values)
+        return target_api_result(canonical_values)
 
     def assigned_cargo_values(mission: Any) -> list[Any]:
         return list(ordered_table_values(mission["assignedCargo"]))
@@ -2278,6 +2363,10 @@ def _run_lua(
                 dict[str, list[object]],
                 captured["api_calls"],
             ).items()
+        },
+        mission_target_guids={
+            guid: tuple(str(target) for target in ordered_table_values(mission["targetlist"]))
+            for guid, mission in fixture.missions_by_guid.items()
         },
     )
 
@@ -3539,6 +3628,62 @@ def test_lua_mission_create_allows_an_inactive_strike_without_initial_targets() 
 
 
 @pytest.mark.parametrize(
+    ("delete_mode", "delete_diagnostic"),
+    [("failure", "boolean(false)"), ("residual", "boolean(true)")],
+)
+def test_lua_mission_create_reports_an_unverifiable_rollback_when_finalize_fails(
+    delete_mode: str,
+    delete_diagnostic: str,
+) -> None:
+    run = _run_lua(
+        "mission.create",
+        {
+            "side_guid": "SIDE-BLUE",
+            "name": "Failed Finalize Mission",
+            "details": {"mission_class": "strike", "strike_type": "land"},
+        },
+        mission_create_finalize_failure=True,
+        mission_delete_mode=delete_mode,
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "new mission could not be made inactive" in reason
+    assert "rollback could not be verified" in reason
+    assert f"delete={delete_diagnostic}" in reason
+    assert "remaining=table(" in reason
+    assert run.api_calls["delete_mission"] == (("SIDE-BLUE", "MISSION-ADDED-4"),)
+    assert "MISSION-ADDED-4" in run.mission_target_guids
+
+
+def test_lua_mission_create_verifies_canonical_target_guids_returned_by_cmo() -> None:
+    run = _run_lua(
+        "mission.create",
+        {
+            "side_guid": "SIDE-BLUE",
+            "name": "Canonical Target Strike",
+            "details": {
+                "mission_class": "strike",
+                "strike_type": "land",
+                "target_guids": ["CONTACT-BLUE-0", "CONTACT-BLUE-1"],
+            },
+        },
+        target_guid_aliases={
+            "CONTACT-BLUE-0": "UNIT-RED-0",
+            "CONTACT-BLUE-1": "UNIT-RED-1",
+        },
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["mission_guid"] == "MISSION-ADDED-4"
+    assert run.api_calls["assign_target"] == (
+        (("CONTACT-BLUE-0", "CONTACT-BLUE-1"), "MISSION-ADDED-4"),
+    )
+
+
+@pytest.mark.parametrize(
     ("category", "parent_guid", "expected_options"),
     [
         ("task_pool", None, {"category": "taskpool", "type": "land"}),
@@ -3737,6 +3882,84 @@ def test_lua_mission_update_maps_strike_execution_controls_and_verifies_them() -
     assert result["preplanned_only"] is False
 
 
+@pytest.mark.parametrize("readback_mode", ["returned_only", "named_enum"])
+def test_lua_mission_update_verifies_flight_size_across_build_1868_wrapper_shapes(
+    readback_mode: str,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "flight_size": 2,
+        },
+        flight_size_readback_mode=readback_mode,
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["flight_size"] == 2
+
+
+@pytest.mark.parametrize(
+    "readback_mode",
+    ["value_then_code", "name_then_description"],
+)
+def test_lua_mission_update_skips_unparseable_flight_size_wrapper_fields(
+    readback_mode: str,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "flight_size": 2,
+        },
+        flight_size_readback_mode=readback_mode,
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["flight_size"] == 2
+
+
+def test_lua_mission_update_rejects_unobservable_flight_size_with_diagnostics() -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "flight_size": 2,
+        },
+        flight_size_readback_mode="missing",
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "flight_size could not be verified" in reason
+    assert "requested=number(2)" in reason
+    assert "ScenEdit_SetMission.return,ScenEdit_GetMission.refresh" in reason
+
+
+def test_lua_mission_update_rejects_conflicting_flight_size_readbacks() -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "flight_size": 2,
+        },
+        flight_size_readback_mode="conflict",
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "flight_size readback mismatch" in reason
+    assert "observed=number(4)" in reason
+    assert "path=ScenEdit_GetMission.refresh" in reason
+
+
 @pytest.mark.parametrize(
     ("operation", "target_guid", "assigned", "expected_targets"),
     [
@@ -3770,6 +3993,96 @@ def test_lua_mission_target_updates_are_verified_on_strike_wrapper(
         "assigned": assigned,
         "target_guids": expected_targets,
     }
+
+
+@pytest.mark.parametrize(
+    ("operation", "target_guid", "assigned", "expected_targets"),
+    [
+        (
+            "mission.target.add",
+            "CONTACT-BLUE-1",
+            True,
+            ["UNIT-RED-0", "UNIT-RED-1"],
+        ),
+        ("mission.target.remove", "CONTACT-BLUE-0", False, []),
+    ],
+)
+def test_lua_mission_target_updates_verify_canonical_guids_returned_by_cmo(
+    operation: str,
+    target_guid: str,
+    assigned: bool,
+    expected_targets: list[str],
+) -> None:
+    run = _run_lua(
+        operation,
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": target_guid,
+        },
+        target_guid_aliases={
+            "CONTACT-BLUE-0": "UNIT-RED-0",
+            "CONTACT-BLUE-1": "UNIT-RED-1",
+        },
+    )
+
+    assert run.result == {
+        "mission_guid": "MISSION-BLUE-0",
+        "target_guid": target_guid,
+        "assigned": assigned,
+        "target_guids": expected_targets,
+    }
+
+
+def test_lua_mission_target_remove_rejects_a_canonical_guid_absent_before_mutation() -> None:
+    run = _run_lua(
+        "mission.target.remove",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": "CONTACT-BLUE-0",
+        },
+        target_api_return_mode="canonical_not_in_before",
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "mission target removal return was not present before mutation" in reason
+    assert "canonical=UNIT-RED-NOT-PRESENT" in reason
+    assert run.mission_target_guids["MISSION-BLUE-0"] == ("CONTACT-BLUE-0",)
+
+
+@pytest.mark.parametrize(
+    ("operation", "target_guid", "api_name"),
+    [
+        ("mission.target.add", "CONTACT-BLUE-1", "ScenEdit_AssignUnitAsTarget"),
+        ("mission.target.remove", "CONTACT-BLUE-0", "ScenEdit_RemoveUnitAsTarget"),
+    ],
+)
+def test_lua_mission_target_update_rejects_an_invalid_extra_api_result(
+    operation: str,
+    target_guid: str,
+    api_name: str,
+) -> None:
+    run = _run_lua(
+        operation,
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": target_guid,
+        },
+        target_api_return_mode="invalid_extra",
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert f"{api_name} returned a non-GUID target" in reason
 
 
 def test_lua_doctrine_get_normalizes_numeric_and_wrapper_values() -> None:

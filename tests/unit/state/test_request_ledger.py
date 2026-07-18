@@ -335,6 +335,67 @@ def test_prepared_request_and_delivery_round_trip_are_idempotent(
     )
 
 
+def test_list_requests_filters_by_root_and_selected_states(
+    request_ledger: RequestLedger,
+    prepared_record: RequestRecord,
+) -> None:
+    quarantined = prepared_record.model_copy(
+        update={
+            "request_id": UUID("22222222-2222-4222-8222-222222222222"),
+            "created_at_ms": prepared_record.created_at_ms + 10,
+            "updated_at_ms": prepared_record.created_at_ms + 10,
+        }
+    )
+    completed = prepared_record.model_copy(
+        update={
+            "request_id": UUID("33333333-3333-4333-8333-333333333333"),
+            "created_at_ms": prepared_record.created_at_ms + 20,
+            "updated_at_ms": prepared_record.created_at_ms + 20,
+        }
+    )
+    foreign_root = prepared_record.model_copy(
+        update={
+            "request_id": UUID("44444444-4444-4444-8444-444444444444"),
+            "root_key": "b" * 64,
+            "created_at_ms": prepared_record.created_at_ms + 30,
+            "updated_at_ms": prepared_record.created_at_ms + 30,
+        }
+    )
+    for record in (prepared_record, quarantined, completed, foreign_root):
+        request_ledger.insert_prepared(record)
+    quarantined = request_ledger.transition(
+        quarantined.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.QUARANTINED,
+        updated_at_ms=prepared_record.created_at_ms + 40,
+        error_json='{"code":"INDETERMINATE_OUTCOME"}',
+    )
+    request_ledger.transition(
+        completed.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.COMPLETED,
+        updated_at_ms=prepared_record.created_at_ms + 41,
+        terminal_at_ms=prepared_record.created_at_ms + 41,
+        result_json='{"ok":true}',
+    )
+
+    selected = request_ledger.list_requests(
+        root_key=prepared_record.root_key,
+        states=frozenset(
+            {
+                HostRequestState.PREPARED,
+                HostRequestState.QUARANTINED,
+            }
+        ),
+    )
+
+    assert selected == (prepared_record, quarantined)
+    assert request_ledger.list_requests(
+        root_key=foreign_root.root_key,
+        states=frozenset({HostRequestState.PREPARED}),
+    ) == (foreign_root,)
+
+
 def test_list_deliveries_requires_an_exact_request_uuid(
     request_ledger: RequestLedger,
 ) -> None:

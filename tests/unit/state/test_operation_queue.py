@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Generator
+from contextlib import contextmanager
 from pathlib import Path
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -199,3 +202,61 @@ def test_enqueue_rejects_duplicate_request_id_and_noncanonical_public_arguments(
     malformed["arguments_json"] = b'{"z":1,"a":2}'
     with pytest.raises(ValueError):
         OperationQueueRecord.model_validate(malformed)
+
+
+def test_summary_snapshot_keeps_counts_and_quarantined_rows_on_one_read_view(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "state.sqlite3"
+    database = StateDatabase(path)
+    database.initialize()
+    store = OperationQueueStore(database)
+    writer_store = OperationQueueStore(StateDatabase(path))
+    request_id = uuid4()
+    store.enqueue(_queued_record(request_id=request_id))
+    assert store.claim_next(root_key=ROOT_KEY, at_ms=101) is not None
+    original_transaction = database._transaction  # pyright: ignore[reportPrivateUsage]
+    writer_committed = False
+
+    class _InterleavingConnection:
+        def __init__(self, connection: sqlite3.Connection) -> None:
+            self._connection = connection
+
+        def execute(
+            self,
+            sql: str,
+            parameters: tuple[object, ...] = (),
+        ) -> sqlite3.Cursor:
+            nonlocal writer_committed
+            cursor = self._connection.execute(sql, parameters)
+            if "SELECT state,COUNT" in sql and not writer_committed:
+                quarantined = writer_store.quarantine(
+                    request_id,
+                    b'{"code":"INDETERMINATE_OUTCOME"}',
+                    at_ms=102,
+                )
+                assert quarantined is not None
+                writer_committed = True
+            return cursor
+
+    @contextmanager
+    def interleaved_transaction(*, write: bool) -> Generator[sqlite3.Connection]:
+        with original_transaction(write=write) as connection:
+            if write:
+                yield connection
+            else:
+                proxy = _InterleavingConnection(connection)
+                yield cast(sqlite3.Connection, cast(object, proxy))
+
+    monkeypatch.setattr(database, "_transaction", interleaved_transaction)
+
+    counts, quarantined = store.summary_snapshot(root_key=ROOT_KEY)
+
+    assert writer_committed is True
+    assert counts.active == 1
+    assert counts.quarantined == 0
+    assert quarantined == ()
+    current = writer_store.counts(root_key=ROOT_KEY)
+    assert current.active == 0
+    assert current.quarantined == 1

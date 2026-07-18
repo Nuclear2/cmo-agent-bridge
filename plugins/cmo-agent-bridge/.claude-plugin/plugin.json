@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "cmo-agent-bridge",
   "displayName": "CMO Agent Bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Plan and operate live CMO battles or build and test CMO scenarios through a local stdio MCP bridge.",
   "author": {
     "name": "Nuclear2",

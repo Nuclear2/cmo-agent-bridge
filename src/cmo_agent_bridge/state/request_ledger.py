@@ -430,6 +430,24 @@ class RequestLedger:
             ).fetchone()
             return None if row is None else self._request_from_row(row)
 
+    def list_requests(
+        self,
+        *,
+        root_key: Sha256,
+        states: frozenset[HostRequestState],
+    ) -> tuple[RequestRecord, ...]:
+        if type(root_key) is not str or _SHA256_RE.fullmatch(root_key) is None:
+            raise _invalid_argument("request root key must be lowercase SHA-256")
+        validated_states = self._require_states(states)
+        placeholders = ",".join("?" for _ in validated_states)
+        with self._database._transaction(write=False) as connection:  # pyright: ignore[reportPrivateUsage]
+            rows = connection.execute(
+                f"SELECT * FROM requests WHERE root_key=? AND state IN ({placeholders}) "
+                "ORDER BY created_at_ms,request_id",
+                (root_key, *(state.value for state in validated_states)),
+            ).fetchall()
+            return tuple(self._request_from_row(row) for row in rows)
+
     def get_delivery(self, delivery_id: UUID) -> DeliveryRecord | None:
         self._require_uuid(delivery_id, "delivery ID")
         with self._database._transaction(write=False) as connection:  # pyright: ignore[reportPrivateUsage]

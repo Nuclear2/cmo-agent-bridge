@@ -107,6 +107,39 @@ def test_time_rate_exposes_cmo_code_and_multiplier(rate: TimeRate, multiplier: i
     assert rate.multiplier == multiplier
 
 
+@pytest.mark.parametrize(
+    ("timeout_override", "expected_timeout"),
+    [(None, 15.0), (2.5, 2.5)],
+)
+async def test_helper_timeout_uses_default_and_honors_explicit_override(
+    tmp_path: Path,
+    timeout_override: float | None,
+    expected_timeout: float,
+) -> None:
+    process = _process(tmp_path)
+    inspector = _Inspector((process,), (process,))
+    runner = _Runner(_success(process))
+    if timeout_override is None:
+        controller = UiTimeController(
+            process.executable,
+            process_inspector=inspector,
+            runner=runner,
+            powershell_executable="powershell.exe",
+        )
+    else:
+        controller = UiTimeController(
+            process.executable,
+            process_inspector=inspector,
+            runner=runner,
+            powershell_executable="powershell.exe",
+            timeout_seconds=timeout_override,
+        )
+
+    await controller.get_state()
+
+    assert runner.calls[0][2] == expected_timeout
+
+
 async def test_get_state_binds_exact_process_identity_and_parses_snapshot(tmp_path: Path) -> None:
     process = _process(tmp_path)
     inspector = _Inspector((process,), (process,))

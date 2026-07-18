@@ -364,6 +364,7 @@ def build_application_runtime(
         session_store=session_store,
         queue_store=queue_store,
         allow_mutations=config.allow_mutations,
+        ledger=transport.ledger,
     )
     queue_worker = QueueWorker(
         root_key=paths.root_key,

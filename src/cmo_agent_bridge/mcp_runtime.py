@@ -763,9 +763,12 @@ class McpRuntimeManager:
 
                 released = False
                 release_attempted = False
-                work_task: asyncio.Task[
-                    tuple[tuple[QueuedOperationStatus, ...], BridgeStatusResult | None]
-                ] | None = None
+                work_task: (
+                    asyncio.Task[
+                        tuple[tuple[QueuedOperationStatus, ...], BridgeStatusResult | None]
+                    ]
+                    | None
+                ) = None
                 requests = initial_statuses
                 bridge_status: BridgeStatusResult | None = None
                 timed_out = False
@@ -824,7 +827,9 @@ class McpRuntimeManager:
                             self._pause_and_restore(controller, before_raw.rate)
                         )
                         try:
-                            final_raw, pause_error, restore_error = await asyncio.shield(cleanup_task)
+                            final_raw, pause_error, restore_error = await asyncio.shield(
+                                cleanup_task
+                            )
                         except asyncio.CancelledError as error:
                             if cancellation is None:
                                 cancellation = error
@@ -1084,7 +1089,9 @@ class McpRuntimeManager:
                 "simulation pulse request_ids must not contain duplicates",
             )
         if type(handshake) is not bool:
-            raise BridgeError(ErrorCode.INVALID_ARGUMENT, "simulation pulse handshake must be boolean")
+            raise BridgeError(
+                ErrorCode.INVALID_ARGUMENT, "simulation pulse handshake must be boolean"
+            )
         if not request_ids and not handshake:
             raise BridgeError(
                 ErrorCode.INVALID_ARGUMENT,
@@ -1124,8 +1131,8 @@ class McpRuntimeManager:
         selected_ids = frozenset(request_ids)
         unselected = tuple(
             item
-            for item in runtime.queue_service.list().items
-            if item.state not in _TERMINAL_QUEUE_STATES and item.request_id not in selected_ids
+            for item in runtime.queue_service.list_nonterminal().items
+            if item.request_id not in selected_ids
         )
         if unselected:
             raise BridgeError(
@@ -1171,9 +1178,7 @@ class McpRuntimeManager:
         accept_lineage_id: str | None,
     ) -> tuple[tuple[QueuedOperationStatus, ...], BridgeStatusResult | None]:
         while True:
-            requests = tuple(
-                runtime.queue_service.get(request_id=item) for item in request_ids
-            )
+            requests = tuple(runtime.queue_service.get(request_id=item) for item in request_ids)
             if all(item.state in _TERMINAL_QUEUE_STATES for item in requests):
                 break
             await asyncio.sleep(0.05)
@@ -1217,10 +1222,7 @@ class McpRuntimeManager:
             return paused, None, None
         try:
             restored = await controller.set_rate(prior_rate)
-            if (
-                restored.state is not SimulationRunState.PAUSED
-                or restored.rate is not prior_rate
-            ):
+            if restored.state is not SimulationRunState.PAUSED or restored.rate is not prior_rate:
                 raise BridgeError(
                     ErrorCode.STATE_CONFLICT,
                     "CMO UI did not restore the pre-pulse time compression while paused",

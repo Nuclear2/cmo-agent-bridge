@@ -13,12 +13,17 @@ import pytest
 from pydantic import JsonValue
 
 from cmo_agent_bridge.application.queue_models import (
+    QueueError,
     QueuedOperationRecord,
     QueuedOperationState,
     canonical_queue_json,
 )
 from cmo_agent_bridge.application.queue_service import QueueService
-from cmo_agent_bridge.application.queue_worker import QueueWorker
+from cmo_agent_bridge.application.queue_worker import (  # pyright: ignore[reportPrivateUsage]
+    QueueWorker,
+    _queue_error_json,  # pyright: ignore[reportPrivateUsage]
+)
+from cmo_agent_bridge.errors import ErrorCode
 from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
 from cmo_agent_bridge.protocol.canonical import request_sha256
 from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
@@ -235,6 +240,29 @@ def _unexpected_artifact() -> ResponseArtifact:
     raise AssertionError("worker must not exchange this queue entry")
 
 
+@pytest.mark.parametrize("error_code", tuple(ErrorCode))
+def test_worker_preserves_every_ledger_error_code(error_code: ErrorCode) -> None:
+    ledger_error = canonical_queue_json(
+        {
+            "code": error_code.value,
+            "message": "ledger error",
+            "details": {"request_phase": "response_accepted"},
+        }
+    ).decode("utf-8")
+
+    projected = QueueError.model_validate_json(
+        _queue_error_json(
+            ledger_error,
+            fallback=ErrorCode.PROTOCOL_ERROR,
+            message="fallback",
+        )
+    )
+
+    assert projected.code is error_code
+    assert projected.message == "ledger error"
+    assert projected.details == {"request_phase": "response_accepted"}
+
+
 def _rig(
     tmp_path: Path,
     *,
@@ -272,6 +300,7 @@ def _rig(
         allow_mutations=True,
         session_store=sessions,
         queue_store=queue,
+        ledger=ledger,
         clock=clock,
     )
     worker = QueueWorker(
@@ -302,6 +331,12 @@ def _submit(rig: _Rig, code: int) -> QueuedOperationRecord:
         operation="scenario.time_compression.set", arguments={"code": code}
     )
     record = rig.queue.get(receipt.request_id)
+    assert record is not None
+    return record
+
+
+def _claim_next(rig: _Rig) -> QueuedOperationRecord:
+    record = rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms())
     assert record is not None
     return record
 
@@ -364,8 +399,7 @@ async def test_worker_claims_and_completes_fifo_orders_with_unbounded_exchange_t
         second.request_id,
     ]
     assert all(
-        command.timeout == 0.0 and command.unbounded_wait
-        for command in rig.channel.commands
+        command.timeout == 0.0 and command.unbounded_wait for command in rig.channel.commands
     )
     assert rig.queue.get(first.request_id).state is QueuedOperationState.COMPLETED  # type: ignore[union-attr]
     assert rig.queue.get(second.request_id).state is QueuedOperationState.COMPLETED  # type: ignore[union-attr]
@@ -404,7 +438,7 @@ async def test_startup_settles_active_from_completed_ledger_without_second_excha
             response_cleanup_required=True,
         )
     )
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == record.request_id  # type: ignore[union-attr]
+    assert _claim_next(rig).request_id == record.request_id
     _settle_ledger_completed(rig, record)
 
     assert await rig.worker.run_once() is False
@@ -424,7 +458,7 @@ async def test_active_without_journal_or_ledger_is_reset_and_executed_in_same_wo
 ) -> None:
     rig = _rig(tmp_path)
     record = _submit(rig, 3)
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == record.request_id  # type: ignore[union-attr]
+    assert _claim_next(rig).request_id == record.request_id
 
     assert await rig.worker.run_once() is True
 
@@ -454,12 +488,14 @@ async def test_recovery_owner_is_resolved_after_waiting_for_worker_session(
     )
     first = _submit(rig, 3)
     second = _submit(rig, 4)
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == first.request_id  # type: ignore[union-attr]
+    assert _claim_next(rig).request_id == first.request_id
 
     running = asyncio.create_task(worker.run_once())
     await asyncio.wait_for(transport.owner_resolution_started.wait(), timeout=1)
-    rig.queue.complete(first.request_id, canonical_queue_json(_artifact_result(3)), at_ms=rig.clock.now_ms())
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == second.request_id  # type: ignore[union-attr]
+    rig.queue.complete(
+        first.request_id, canonical_queue_json(_artifact_result(3)), at_ms=rig.clock.now_ms()
+    )
+    assert _claim_next(rig).request_id == second.request_id
     transport.resolve_owner.set()
 
     assert await asyncio.wait_for(running, timeout=1) is True
@@ -480,7 +516,7 @@ async def test_quarantined_recovery_blocks_following_fifo_order(tmp_path: Path) 
             response_cleanup_required=False,
         )
     )
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == first.request_id  # type: ignore[union-attr]
+    assert _claim_next(rig).request_id == first.request_id
     _insert_prepared_ledger(rig, first)
 
     assert await rig.worker.run_once() is False
@@ -500,7 +536,7 @@ async def test_process_mismatch_quarantines_active_and_blocks_later_queue_withou
     rig = _rig(tmp_path, running_process=expected)
     active = _submit(rig, 3)
     queued = _submit(rig, 4)
-    assert rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms()).request_id == active.request_id  # type: ignore[union-attr]
+    assert _claim_next(rig).request_id == active.request_id
     _insert_prepared_ledger(rig, active)
     before = rig.ledger.get_request(active.request_id)
     assert before is not None
