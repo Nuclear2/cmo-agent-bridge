@@ -92,6 +92,12 @@ DELIVERY_ID = UUID("11111111-1111-4111-8111-111111111111")
 LINEAGE_ID = UUID("33333333-3333-4333-8333-333333333333")
 ACTIVATION_ID = UUID("44444444-4444-4444-8444-444444444444")
 
+# A successful automatic retry includes durable SQLite commits and fsync-backed
+# inbox publications inside one shared deadline.  Windows CI can legitimately
+# spend well over 50 ms in those synchronous durability boundaries, so success
+# tests need enough wall-clock budget to exercise the response path reliably.
+_DURABLE_RETRY_TEST_TIMEOUT = 1.0
+
 
 def _forbidden(*_args: object, **_kwargs: object) -> Never:
     raise AssertionError("forbidden side effect was reached")
@@ -2403,7 +2409,10 @@ async def test_status_timeout_retry_rebuilds_expectations_with_one_shared_deadli
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
-    command = replace(_status_command(harness), timeout=0.1)
+    command = replace(
+        _status_command(harness),
+        timeout=_DURABLE_RETRY_TEST_TIMEOUT,
+    )
     peer = _peer(harness)
     peer.enqueue(StaySilent(), Respond(result=peer.result_for(command.invocation)))
     expectations: list[object] = []
@@ -2829,7 +2838,10 @@ async def test_first_timeout_retries_once_with_same_identity_and_second_delivery
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
-    command = replace(_scenario_command(harness), timeout=0.1)
+    command = replace(
+        _scenario_command(harness),
+        timeout=_DURABLE_RETRY_TEST_TIMEOUT,
+    )
     peer = _peer(harness)
     peer.enqueue(
         StaySilent(),
@@ -2985,7 +2997,10 @@ async def test_retry_epochs_are_monotonic_while_artifact_epoch_is_preserved_exac
 
     monkeypatch.setattr(transport_module, "time", BackwardsClock())
     transport = _transport(harness)
-    command = replace(_scenario_command(harness), timeout=0.1)
+    command = replace(
+        _scenario_command(harness),
+        timeout=_DURABLE_RETRY_TEST_TIMEOUT,
+    )
     peer = _peer(harness)
     peer.enqueue(StaySilent(), Respond(result=peer.result_for(command.invocation)))
     intents: list[DeliveryIntent] = []
