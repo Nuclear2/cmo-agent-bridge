@@ -8,7 +8,7 @@ from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
-from mcp.types import ToolAnnotations
+from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from pydantic import BaseModel, Field, JsonValue, ValidationError
 
 from cmo_agent_bridge.application.models import InvocationOutcome
@@ -65,8 +65,11 @@ from cmo_agent_bridge.operations.models import (
     SideResult,
     SpecialActionListResult,
     UnitCombatStatusResult,
+    UnitCatalogResult,
     UnitInventoryResult,
     UnitLoadoutResult,
+    UnitOperationalStatusBatchResult,
+    UnitOverviewResult,
     UnitResult,
     TankerUsage,
     WraSettingValue,
@@ -456,8 +459,10 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         title="Set CMO UI time state",
         description=(
             "Idempotently pause or run the uniquely matched CMO simulation and optionally select "
-            "rate_code 0=1x, 1=2x, 2=5x, 3=15x, 4=30x, or 5=150x. Keep the current "
-            "speed for routine orders; pause only when a complex planning window justifies it."
+            "rate_code 0=1x, 1=2x, 2=5x, 3=15x, 4=coarse one-second slices, or "
+            "5=coarse five-second slices. Codes 4 and 5 are CPU-driven and report "
+            "multiplier=null rather than a guaranteed 30x or 150x. Keep the current speed for "
+            "routine orders; pause only when a complex planning window justifies it."
         ),
         annotations=_mutation_annotations(),
         structured_output=True,
@@ -639,9 +644,9 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             "Set the running scenario's time-compression code: "
             "0=1x, 1=2x, 2=5x, 3=15x, 4=coarse one-second slices, and "
             "5=coarse five-second slices. Before consequential multi-step planning or mutation, "
-            "preserve cmo_scenario_get's multiplier, map 1/2/5/15/30/150 back to code "
-            "0/1/2/3/4/5, set code 0, refresh the relevant state, complete and verify the work, "
-            "then restore the mapped code."
+            "preserve the current code, set code 0, refresh the relevant state, complete and "
+            "verify the work, then restore the saved code. The UI's legacy 30x/150x labels for "
+            "codes 4/5 are not guaranteed effective multipliers."
         ),
         annotations=_mutation_annotations(),
         structured_output=True,
@@ -714,12 +719,98 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         name="cmo_unit_list",
         title="List CMO units",
         description=(
-            "List units for exactly one side, optionally filtering by unit type or a "
-            "case-insensitive name fragment. Large-side scans are bounded, so keep "
-            "following every non-null next_cursor even when a page has no items."
+            "Legacy full structured unit view. It expands many expensive CMO wrapper fields; "
+            "use cmo_unit_catalog for broad force discovery, cmo_unit_overview for Agent-readable "
+            "assessment, and exact unit tools for selected units. Large-side scans are bounded, "
+            "so keep following every non-null next_cursor even when a page has no items."
         ),
         annotations=_read_only_annotations(),
         structured_output=True,
+    )
+
+    async def unit_catalog(
+        side_guid: str | None = None,
+        side_name: str | None = None,
+        page_size: Annotated[int, Field(ge=1, le=500)] = 500,
+        cursor: str | None = None,
+        unit_type: str | None = None,
+        name_contains: str | None = None,
+    ) -> UnitCatalogResult:
+        return await _invoke(
+            application,
+            "unit.catalog",
+            {
+                "side_guid": side_guid,
+                "side_name": side_name,
+                "page_size": page_size,
+                "cursor": cursor,
+                "unit_type": unit_type,
+                "name_contains": name_contains,
+            },
+            UnitCatalogResult,
+        )
+
+    server.add_tool(
+        unit_catalog,
+        name="cmo_unit_catalog",
+        title="Catalog CMO units",
+        description=(
+            "Quickly return stable GUID, name, and type entries for one side. Use this first for "
+            "large-force discovery; it avoids the expensive full wrapper expansion performed by "
+            "cmo_unit_list. Continue any non-null opaque next_cursor with the same query."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def unit_overview(
+        side_guid: str | None = None,
+        side_name: str | None = None,
+        page_size: Annotated[int, Field(ge=1, le=50)] = 40,
+        cursor: str | None = None,
+        unit_guids: Annotated[list[str] | None, Field(min_length=1, max_length=500)] = None,
+        unit_type: str | None = None,
+        name_contains: str | None = None,
+    ) -> CallToolResult:
+        result = await _invoke(
+            application,
+            "unit.overview",
+            {
+                "side_guid": side_guid,
+                "side_name": side_name,
+                "page_size": page_size,
+                "cursor": cursor,
+                "unit_guids": cast(JsonValue, unit_guids),
+                "unit_type": unit_type,
+                "name_contains": name_contains,
+            },
+            UnitOverviewResult,
+        )
+        cursor_json = json.dumps(result.next_cursor, ensure_ascii=False, separators=(",", ":"))
+        header = "\n".join(
+            (
+                "CMO UNIT OVERVIEW",
+                f"SIDE_GUID: {result.side_guid}",
+                f"SIDE_NAME_JSON: {json.dumps(result.side_name, ensure_ascii=False)}",
+                f"ITEM_COUNT: {result.item_count}",
+                f"NEXT_CURSOR_JSON: {cursor_json}",
+            )
+        )
+        text = header if not result.text else f"{header}\n\n{result.text}"
+        return CallToolResult(content=[TextContent(type="text", text=text)], isError=False)
+
+    server.add_tool(
+        unit_overview,
+        name="cmo_unit_overview",
+        title="Read CMO unit overview",
+        description=(
+            "Return CMO's fast native unit text for broad Agent-readable assessment. The response "
+            "is text-only to avoid duplicating a large payload in structuredContent. Use stable "
+            "GUIDs from cmo_unit_catalog for exact reads and mutations, and continue any non-null "
+            "opaque next_cursor with the identical side and filters."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=False,
     )
 
     async def unit_get(
@@ -766,6 +857,29 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         description=(
             "Return one unit's current operating condition, damage, fuel, weapon readiness, "
             "and combat-target relationships."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def unit_operational_status_batch(
+        unit_guids: Annotated[list[str], Field(min_length=1, max_length=20)],
+    ) -> UnitOperationalStatusBatchResult:
+        return await _invoke(
+            application,
+            "unit.operational_status.batch",
+            {"unit_guids": cast(JsonValue, unit_guids)},
+            UnitOperationalStatusBatchResult,
+        )
+
+    server.add_tool(
+        unit_operational_status_batch,
+        name="cmo_unit_operational_status_batch",
+        title="Get CMO unit operational status batch",
+        description=(
+            "Return a narrow position, readiness, and mission-assignment snapshot for up to 20 "
+            "catalogued unit GUIDs in one CMO request. Use exact detail tools only for units that "
+            "need deeper fuel, damage, inventory, sensor, or loadout inspection."
         ),
         annotations=_read_only_annotations(),
         structured_output=True,

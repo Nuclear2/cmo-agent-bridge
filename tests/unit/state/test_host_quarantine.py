@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -11,13 +12,21 @@ from uuid import UUID
 import pytest
 
 from cmo_agent_bridge.application.confirmation import ConfirmationTokenStore
+from cmo_agent_bridge.application.confirmation import (
+    HOST_QUARANTINE_CONFIRMATION_FORMAT,
+    HostQuarantineConfirmationDescriptor,
+    host_quarantine_confirmation_binding,
+)
 from cmo_agent_bridge.application.host_quarantine import (
     HostQuarantineResolutionService,
+)
+from cmo_agent_bridge.application.obsolete_quarantine import (
+    ObsoleteQuarantineAbandonmentService,
 )
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
 from cmo_agent_bridge.operations.models import BridgeStatusResult
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
-from cmo_agent_bridge.protocol.manifest import ManifestCatalog
+from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.lua_delivery import render_idle_lua
 from cmo_agent_bridge.state.host_resolution import (
     HOST_QUARANTINE_RESOLUTION_FORMAT,
@@ -35,6 +44,11 @@ from cmo_agent_bridge.state.pending_journal import (
     PendingJournalStore,
 )
 from cmo_agent_bridge.state.request_ledger import RequestLedger, RequestRecord
+from cmo_agent_bridge.state.operation_queue import (
+    OperationQueueRecord,
+    OperationQueueState,
+    OperationQueueStore,
+)
 from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.inbox import InboxPublisher
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
@@ -45,6 +59,7 @@ from cmo_agent_bridge.transports.file_bridge.models import (
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 from cmo_agent_bridge.transports.file_bridge.process_guard import ProcessInfo
 from cmo_agent_bridge.transports.file_bridge.recovery import RecoveryManager
+from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
 
 
 CURRENT_ACTIVATION = UUID("99999999-9999-4999-8999-999999999999")
@@ -506,3 +521,381 @@ async def test_startup_recovery_finishes_a_committed_host_only_resolution(
     assert report.response_cleanup_required is True
     assert not file_bridge_paths.pending_file.exists()
     assert file_bridge_paths.inbox.read_bytes() == render_idle_lua()
+
+
+def _new_release_catalog() -> ManifestCatalog:
+    snapshot = RuntimeSnapshot.create(
+        runtime_version="9.9.9",
+        runtime_asset_sha256="1" * 64,
+        operation_manifest_sha256=OPERATION_REGISTRY.manifest_sha256,
+        host_contract_sha256="3" * 64,
+        dependency_lock_sha256="4" * 64,
+    )
+    return ManifestCatalog(ReleaseBinding(snapshot=snapshot, registry=OPERATION_REGISTRY))
+
+
+def _obsolete_service(
+    *,
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journals: PendingJournalStore,
+    ledger: RequestLedger,
+    queue_store: OperationQueueStore,
+    confirmations: ConfirmationTokenStore,
+    clock: _Clock,
+    running_release_id: str | None = None,
+) -> ObsoleteQuarantineAbandonmentService:
+    file_bridge_paths.inbox.parent.mkdir(parents=True, exist_ok=True)
+    return ObsoleteQuarantineAbandonmentService(
+        root_key=file_bridge_paths.root_key,
+        running_release_id=(
+            _new_release_catalog().running_release_id
+            if running_release_id is None
+            else running_release_id
+        ),
+        coordination_lock=RootLock(
+            file_bridge_paths.lock_file.with_name(
+                f"{file_bridge_paths.root_key}.ui.lock"
+            ),
+            timeout_seconds=0,
+        ),
+        root_lock=root_lock,
+        journals=journals,
+        ledger=ledger,
+        queue_store=queue_store,
+        confirmations=confirmations,
+        inbox=InboxPublisher(file_bridge_paths, 0),
+        wall_clock=clock,
+    )
+
+
+def _enqueue_matching_active_queue(
+    queue_store: OperationQueueStore,
+    journal: PendingJournal,
+) -> OperationQueueRecord:
+    original = journal.original
+    body = json.loads(original.body_json)
+    enqueued = queue_store.enqueue(
+        OperationQueueRecord(
+            queue_sequence=0,
+            request_id=original.request_id,
+            root_key=journal.header.root_key,
+            operation=original.operation,
+            arguments_json=json.dumps(
+                body["arguments"],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode(),
+            body_json=original.body_json.encode(),
+            runtime_snapshot=original.runtime_snapshot,
+            result_schema_id=original.result_schema_id,
+            recovery_schema_id=original.recovery_schema_id,
+            expected_lineage_id=original.expected_lineage_id,
+            expected_activation_id=original.expected_activation_id,
+            expected_process_pid=1,
+            expected_process_create_time=1.0,
+            state=OperationQueueState.QUEUED,
+            result_json=None,
+            error_json=None,
+            created_at_ms=100,
+            updated_at_ms=100,
+            terminal_at_ms=None,
+        )
+    )
+    claimed = queue_store.claim_next(root_key=journal.header.root_key, at_ms=101)
+    assert claimed is not None
+    assert claimed.request_id == enqueued.request_id
+    assert claimed.state is OperationQueueState.ACTIVE
+    return claimed
+
+
+@pytest.mark.asyncio
+async def test_obsolete_quarantine_preview_confirm_cross_release_without_cmo(
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journal_store: PendingJournalStore,
+    manifest_catalog: ManifestCatalog,
+    valid_journal: PendingJournal,
+) -> None:
+    database = StateDatabase(file_bridge_paths.sqlite_file)
+    database.initialize()
+    ledger = RequestLedger(database, manifest_catalog)
+    quarantined = await _persist_quarantine(
+        valid_journal=valid_journal,
+        journal_store=journal_store,
+        root_lock=root_lock,
+        ledger=ledger,
+    )
+    cross_release_store = PendingJournalStore(
+        file_bridge_paths,
+        root_lock,
+        _new_release_catalog(),
+        max_journal_bytes=1_000_000,
+        replace_retry_seconds=0,
+    )
+    mismatch_error: BridgeError | None = None
+    try:
+        async with root_lock:
+            cross_release_store.load()
+    except BridgeError as error:
+        mismatch_error = error
+    assert mismatch_error is not None
+    assert mismatch_error.code is ErrorCode.MANIFEST_MISMATCH
+
+    queue_store = OperationQueueStore(database)
+    active = _enqueue_matching_active_queue(queue_store, quarantined)
+    service = _obsolete_service(
+        file_bridge_paths=file_bridge_paths,
+        root_lock=root_lock,
+        journals=cross_release_store,
+        ledger=RequestLedger(database, _new_release_catalog()),
+        queue_store=queue_store,
+        confirmations=ConfirmationTokenStore(database, token_factory=_token_factory),
+        clock=_Clock(1_000, 2_000, 3_000, 4_000),
+    )
+    preview = await service.preview()
+    assert preview.phase == "preview"
+    assert preview.request_id == quarantined.original.request_id
+    assert preview.required_release_id == quarantined.header.required_release_id
+    assert preview.confirmation_expires_at_utc == datetime.fromtimestamp(61, tz=UTC)
+    assert preview.target_active_queue_recovery_required is True
+
+    resolved = await service.confirm(TOKEN)
+    assert resolved.phase == "resolved"
+    assert resolved.disposition == "not_applied"
+    assert resolved.cmo_contacted is False
+    assert resolved.original_operation_replayed is False
+    assert resolved.target_active_queue_recovered is True
+    assert not file_bridge_paths.pending_file.exists()
+    assert file_bridge_paths.inbox.read_bytes() == render_idle_lua()
+    record = ledger.get_request(quarantined.original.request_id)
+    assert record is not None and record.state is HostRequestState.RESOLVED
+    assert record.resolution_json is not None
+    marker = HostQuarantineResolutionMarker.model_validate_json(record.resolution_json)
+    assert marker.mode == "host_only"
+    assert marker.disposition == "not_applied"
+    queue_record = queue_store.get(active.request_id)
+    assert queue_record is not None
+    assert queue_record.state is OperationQueueState.QUARANTINED
+
+
+@pytest.mark.asyncio
+async def test_obsolete_quarantine_rejects_a_journal_from_the_running_release(
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journal_store: PendingJournalStore,
+    manifest_catalog: ManifestCatalog,
+    valid_journal: PendingJournal,
+) -> None:
+    database = StateDatabase(file_bridge_paths.sqlite_file)
+    database.initialize()
+    ledger = RequestLedger(database, manifest_catalog)
+    await _persist_quarantine(
+        valid_journal=valid_journal,
+        journal_store=journal_store,
+        root_lock=root_lock,
+        ledger=ledger,
+    )
+    service = _obsolete_service(
+        file_bridge_paths=file_bridge_paths,
+        root_lock=root_lock,
+        journals=journal_store,
+        ledger=ledger,
+        queue_store=OperationQueueStore(database),
+        confirmations=ConfirmationTokenStore(database),
+        clock=_Clock(),
+        running_release_id=manifest_catalog.running_release_id,
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await service.preview()
+
+    assert caught.value.code is ErrorCode.POLICY_DENIED
+    assert caught.value.details["required_release_id"] == manifest_catalog.running_release_id
+
+
+@pytest.mark.asyncio
+async def test_obsolete_quarantine_finishes_a_previously_committed_resolution(
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journal_store: PendingJournalStore,
+    manifest_catalog: ManifestCatalog,
+    valid_journal: PendingJournal,
+) -> None:
+    database = StateDatabase(file_bridge_paths.sqlite_file)
+    database.initialize()
+    ledger = RequestLedger(database, manifest_catalog)
+    quarantined = await _persist_quarantine(
+        valid_journal=valid_journal,
+        journal_store=journal_store,
+        root_lock=root_lock,
+        ledger=ledger,
+    )
+    original = quarantined.original
+    assert original.expected_lineage_id is not None
+    assert original.expected_activation_id is not None
+    marker = HostQuarantineResolutionMarker(
+        format=HOST_QUARANTINE_RESOLUTION_FORMAT,
+        mode="host_only",
+        manual_evidence=True,
+        root_key=quarantined.header.root_key,
+        required_release_id=quarantined.header.required_release_id,
+        request_id=original.request_id,
+        request_hash=original.request_hash,
+        original_journal_revision=original.revision,
+        scenario_lineage_id=original.expected_lineage_id,
+        original_activation_id=original.expected_activation_id,
+        disposition="not_applied",
+        resolved_at_ms=103,
+    )
+    ledger.transition(
+        original.request_id,
+        expected_states=frozenset({HostRequestState.QUARANTINED}),
+        new_state=HostRequestState.RESOLVED,
+        updated_at_ms=103,
+        terminal_at_ms=103,
+        resolution_json=canonical_host_quarantine_resolution(marker),
+    )
+    cross_release_store = PendingJournalStore(
+        file_bridge_paths,
+        root_lock,
+        _new_release_catalog(),
+        max_journal_bytes=1_000_000,
+        replace_retry_seconds=0,
+    )
+    service = _obsolete_service(
+        file_bridge_paths=file_bridge_paths,
+        root_lock=root_lock,
+        journals=cross_release_store,
+        ledger=RequestLedger(database, _new_release_catalog()),
+        queue_store=OperationQueueStore(database),
+        confirmations=ConfirmationTokenStore(database),
+        clock=_Clock(),
+    )
+
+    recovered = await service.preview()
+
+    assert recovered.phase == "resolved"
+    assert recovered.resolved_at_utc == datetime.fromtimestamp(0.103, tz=UTC)
+    assert not file_bridge_paths.pending_file.exists()
+    assert file_bridge_paths.inbox.read_bytes() == render_idle_lua()
+
+
+@pytest.mark.asyncio
+async def test_obsolete_quarantine_rejects_ordinary_resolution_token(
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journal_store: PendingJournalStore,
+    manifest_catalog: ManifestCatalog,
+    valid_journal: PendingJournal,
+) -> None:
+    database = StateDatabase(file_bridge_paths.sqlite_file)
+    database.initialize()
+    ledger = RequestLedger(database, manifest_catalog)
+    quarantined = await _persist_quarantine(
+        valid_journal=valid_journal,
+        journal_store=journal_store,
+        root_lock=root_lock,
+        ledger=ledger,
+    )
+    original = quarantined.original
+    assert original.expected_lineage_id is not None
+    assert original.expected_activation_id is not None
+    confirmations = ConfirmationTokenStore(database, token_factory=_token_factory)
+    ordinary = HostQuarantineConfirmationDescriptor(
+        format=HOST_QUARANTINE_CONFIRMATION_FORMAT,
+        root_key=quarantined.header.root_key,
+        required_release_id=quarantined.header.required_release_id,
+        request_id=original.request_id,
+        request_hash=original.request_hash,
+        original_journal_revision=original.revision,
+        scenario_lineage_id=original.expected_lineage_id,
+        original_activation_id=original.expected_activation_id,
+        disposition="not_applied",
+    )
+    confirmations.issue(host_quarantine_confirmation_binding(ordinary), now_ms=1_000)
+    service = _obsolete_service(
+        file_bridge_paths=file_bridge_paths,
+        root_lock=root_lock,
+        journals=journal_store,
+        ledger=ledger,
+        queue_store=OperationQueueStore(database),
+        confirmations=confirmations,
+        clock=_Clock(2_000),
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await service.confirm(TOKEN)
+    assert caught.value.code is ErrorCode.POLICY_DENIED
+    assert file_bridge_paths.pending_file.exists()
+    assert ledger.get_request(original.request_id).state is HostRequestState.QUARANTINED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("queue_state", [OperationQueueState.QUEUED, OperationQueueState.ACTIVE])
+async def test_obsolete_quarantine_blocks_queued_or_active_work(
+    queue_state: OperationQueueState,
+    file_bridge_paths: FileBridgePaths,
+    root_lock: RootLock,
+    journal_store: PendingJournalStore,
+    manifest_catalog: ManifestCatalog,
+    valid_journal: PendingJournal,
+) -> None:
+    database = StateDatabase(file_bridge_paths.sqlite_file)
+    database.initialize()
+    ledger = RequestLedger(database, manifest_catalog)
+    await _persist_quarantine(
+        valid_journal=valid_journal,
+        journal_store=journal_store,
+        root_lock=root_lock,
+        ledger=ledger,
+    )
+    original = valid_journal.original
+    body = json.loads(original.body_json)
+    arguments_json = json.dumps(
+        body["arguments"], sort_keys=True, separators=(",", ":")
+    ).encode()
+    queue_store = OperationQueueStore(database)
+    queue_store.enqueue(
+        OperationQueueRecord(
+            queue_sequence=0,
+            request_id=UUID("77777777-7777-4777-8777-777777777777"),
+            root_key=file_bridge_paths.root_key,
+            operation=original.operation,
+            arguments_json=arguments_json,
+            body_json=original.body_json.encode(),
+            runtime_snapshot=original.runtime_snapshot,
+            result_schema_id=original.result_schema_id,
+            recovery_schema_id=original.recovery_schema_id,
+            expected_lineage_id=original.expected_lineage_id,
+            expected_activation_id=original.expected_activation_id,
+            expected_process_pid=1,
+            expected_process_create_time=1.0,
+            state=OperationQueueState.QUEUED,
+            result_json=None,
+            error_json=None,
+            created_at_ms=100,
+            updated_at_ms=100,
+            terminal_at_ms=None,
+        )
+    )
+    if queue_state is OperationQueueState.ACTIVE:
+        claimed = queue_store.claim_next(
+            root_key=file_bridge_paths.root_key,
+            at_ms=101,
+        )
+        assert claimed is not None and claimed.state is OperationQueueState.ACTIVE
+    service = _obsolete_service(
+        file_bridge_paths=file_bridge_paths,
+        root_lock=root_lock,
+        journals=journal_store,
+        ledger=ledger,
+        queue_store=queue_store,
+        confirmations=ConfirmationTokenStore(database),
+        clock=_Clock(1_000),
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await service.preview()
+    assert caught.value.code is ErrorCode.STATE_CONFLICT
+    assert caught.value.details["states"] == [queue_state.value]

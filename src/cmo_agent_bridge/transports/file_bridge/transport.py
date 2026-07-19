@@ -30,6 +30,7 @@ from cmo_agent_bridge.protocol.models import (
     RequestBody,
     ResponseExpectation,
 )
+from cmo_agent_bridge.protocol.response import RetryableResponseJsonError
 from cmo_agent_bridge.protocol.response_models import (
     CompletedSettlement,
     RejectedSettlement,
@@ -965,23 +966,64 @@ class _FileBridgeChannel:
         )
 
         artifact: ResponseArtifact | None = None
+        response_deadline = asyncio.get_running_loop().time() + validated.timeout
+        first_wait_timeout = validated.timeout / 2
+        second_delivery_published = False
         for waiter_attempt in range(2):
+            timeout_seconds = (
+                first_wait_timeout
+                if waiter_attempt == 0
+                else max(0.0, response_deadline - asyncio.get_running_loop().time())
+            )
             try:
                 artifact = await self._wait_for_response(
                     validated=validated,
                     response_path=state.response_path,
                     request_hash=first.delivery.request_hash,
                     published_deliveries=tuple(state.allowed_deliveries),
+                    timeout_seconds=timeout_seconds,
                 )
             except BridgeError as error:
-                if error.code is ErrorCode.REQUEST_TIMEOUT and waiter_attempt == 0:
-                    retry = self._new_attempt(
-                        state,
-                        minimum_intended_at_ms=intended_at_ms + 1,
+                if waiter_attempt == 0:
+                    if error.code is ErrorCode.REQUEST_TIMEOUT:
+                        retry = self._new_attempt(
+                            state,
+                            minimum_intended_at_ms=intended_at_ms + 1,
+                        )
+                        self._transport.ledger.insert_delivery(retry.intent)
+                        self._publish_attempt(state, retry)
+                        second_delivery_published = True
+                        continue
+                    if isinstance(error, RetryableResponseJsonError):
+                        # ExportInst can expose an incomplete JSON file while CMO is
+                        # still writing it.  Preserve the second half of the advertised
+                        # response budget without publishing a needless extra delivery.
+                        continue
+                if error.code is ErrorCode.REQUEST_TIMEOUT:
+                    details = error.details.copy()
+                    details.update(
+                        {
+                            "timeout_seconds": validated.timeout,
+                            "wait_attempts": 2,
+                            "second_delivery_recovery": second_delivery_published,
+                            "automatic_retry_exhausted": True,
+                            "do_not_retry": True,
+                            "next_tool": "cmo_time_get_state",
+                            "likely_causes": [
+                                "scenario_paused_after_publication",
+                                "polling_event_inactive_or_unloaded",
+                            ],
+                            "next_step": (
+                                "Do not immediately repeat the same synchronous call unchanged. "
+                                "First use cmo_time_get_state; if CMO is paused, deliberately "
+                                "open a 1x read window before retrying the planned read once, "
+                                "then restore the prior state. If CMO is running, repair or "
+                                "enable the repeatable polling event before retrying. Reserve "
+                                "cmo_simulation_pulse for handshake or durable queued work."
+                            ),
+                        }
                     )
-                    self._transport.ledger.insert_delivery(retry.intent)
-                    self._publish_attempt(state, retry)
-                    continue
+                    raise BridgeError(error.code, error.message, details) from error
                 raise
             break
         if artifact is None:
@@ -1188,6 +1230,7 @@ class _FileBridgeChannel:
         response_path: Path,
         request_hash: str,
         published_deliveries: tuple[AllowedDelivery, ...],
+        timeout_seconds: float,
     ) -> ResponseArtifact:
         expectation = ResponseExpectation(
             request_id=validated.request_id,
@@ -1221,7 +1264,7 @@ class _FileBridgeChannel:
             ),
             poll_seconds=self._transport._response_poll_seconds,  # pyright: ignore[reportPrivateUsage]
         )
-        return await waiter.wait(validated.timeout)
+        return await waiter.wait(timeout_seconds)
 
     async def _run_safety_protected(
         self,
@@ -1771,9 +1814,7 @@ class _FileBridgeSession:
                 self._transport.paths.command_exe,
             )
             recovery_owner = self._recovery_owner
-            owned_request_id = (
-                None if recovery_owner is None else recovery_owner(process)
-            )
+            owned_request_id = None if recovery_owner is None else recovery_owner(process)
             if owned_request_id is not None and type(owned_request_id) is not uuid.UUID:
                 raise _invalid_argument("resolved durable request owner must be exact")
             channel = _FileBridgeChannel(

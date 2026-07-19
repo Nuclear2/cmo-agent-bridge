@@ -256,6 +256,28 @@ class UnitListArgs(SideSelector, PageArgs):
     name_contains: str | None = None
 
 
+class UnitCatalogArgs(SideSelector):
+    page_size: int = Field(default=500, ge=1, le=500)
+    cursor: str | None = None
+    unit_type: str | None = None
+    name_contains: str | None = None
+
+
+class UnitOverviewArgs(SideSelector):
+    page_size: int = Field(default=40, ge=1, le=50)
+    cursor: str | None = None
+    unit_guids: list[NonEmptyStr] | None = Field(default=None, min_length=1, max_length=500)
+    unit_type: str | None = None
+    name_contains: str | None = None
+
+    @field_validator("unit_guids")
+    @classmethod
+    def validate_unit_guids(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        return _require_unique(value, "unit_guids")
+
+
 class UnitGetArgs(StrictModel):
     unit_guid: str | None = None
     side_guid: str | None = None
@@ -281,6 +303,15 @@ class UnitGetArgs(StrictModel):
 
 class UnitCombatStatusArgs(StrictModel):
     unit_guid: NonEmptyStr
+
+
+class UnitOperationalStatusBatchArgs(StrictModel):
+    unit_guids: list[NonEmptyStr] = Field(min_length=1, max_length=20)
+
+    @field_validator("unit_guids")
+    @classmethod
+    def validate_unit_guids(cls, value: list[str]) -> list[str]:
+        return _require_unique(value, "unit_guids")
 
 
 class UnitLoadoutGetArgs(StrictModel):
@@ -1424,6 +1455,51 @@ class UnitResult(StrictModel):
     sprint_drift: bool | None = Field(default=None, exclude_if=_exclude_none)
     avoid_cavitation: bool | None = Field(default=None, exclude_if=_exclude_none)
     obey_emcon: bool | None = Field(default=None, exclude_if=_exclude_none)
+
+
+class UnitCatalogItem(StrictModel):
+    guid: NonEmptyStr
+    name: str
+    type: str
+
+
+class UnitCatalogResult(StrictModel):
+    side_guid: NonEmptyStr
+    side_name: str
+    total_count: int = Field(ge=0)
+    items: list[UnitCatalogItem]
+    next_cursor: str | None
+
+
+class UnitOverviewResult(StrictModel):
+    side_guid: NonEmptyStr
+    side_name: str
+    item_count: int = Field(ge=0, le=50)
+    text: str
+    next_cursor: str | None
+
+
+class UnitOperationalStatusResult(StrictModel):
+    unit_guid: NonEmptyStr
+    name: str
+    type: str
+    latitude: float
+    longitude: float
+    altitude: float
+    speed: float
+    heading: float
+    operating: bool
+    condition: str
+    unit_state: str
+    fuel_state: str
+    weapon_state: str
+    mission_guid: str | None
+    mission_name: str | None
+    loadout_dbid: int | None
+
+
+class UnitOperationalStatusBatchResult(StrictModel):
+    items: list[UnitOperationalStatusResult] = Field(max_length=20)
 
 
 class ContactResult(StrictModel):

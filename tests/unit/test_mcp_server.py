@@ -7,6 +7,7 @@ from uuid import UUID
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
+from mcp.types import CallToolResult, TextContent
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 from cmo_agent_bridge.application.models import InvocationOutcome
@@ -418,6 +419,51 @@ def _unit_result() -> dict[str, JsonValue]:
 
 def _unit_list_result() -> dict[str, JsonValue]:
     return {"items": [_unit_result()], "next_cursor": "1"}
+
+
+def _unit_catalog_result() -> dict[str, JsonValue]:
+    return {
+        "side_guid": "SIDE-1",
+        "side_name": "PLAAF",
+        "total_count": 1,
+        "items": [{"guid": "UNIT-1", "name": "J-36 #1", "type": "Aircraft"}],
+        "next_cursor": None,
+    }
+
+
+def _unit_overview_result() -> dict[str, JsonValue]:
+    return {
+        "side_guid": "SIDE-1",
+        "side_name": "PLAAF",
+        "item_count": 1,
+        "text": "--- CMO UNIT BEGIN ---\nGUID: UNIT-1\nNATIVE:\nunit { type = 'Aircraft' }",
+        "next_cursor": "uc1.cursor",
+    }
+
+
+def _unit_operational_status_batch_result() -> dict[str, JsonValue]:
+    return {
+        "items": [
+            {
+                "unit_guid": "UNIT-1",
+                "name": "J-36 #1",
+                "type": "Aircraft",
+                "latitude": 23.1,
+                "longitude": 121.2,
+                "altitude": 10_000.0,
+                "speed": 480.0,
+                "heading": 90.0,
+                "operating": True,
+                "condition": "Airborne",
+                "unit_state": "OnPatrol",
+                "fuel_state": "None",
+                "weapon_state": "None",
+                "mission_guid": "MISSION-1",
+                "mission_name": "CAP",
+                "loadout_dbid": 12345,
+            }
+        ]
+    }
 
 
 def _unit_set_result() -> dict[str, JsonValue]:
@@ -1005,8 +1051,11 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_side_list",
         "cmo_side_posture_get",
         "cmo_unit_list",
+        "cmo_unit_catalog",
+        "cmo_unit_overview",
         "cmo_unit_get",
         "cmo_unit_combat_status_get",
+        "cmo_unit_operational_status_batch",
         "cmo_unit_loadout_get",
         "cmo_unit_inventory_get",
         "cmo_unit_sensor_set",
@@ -1154,7 +1203,10 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_mission_delete_confirm",
     }
     for name, tool in tools_by_name.items():
-        assert tool.outputSchema is not None
+        if name == "cmo_unit_overview":
+            assert tool.outputSchema is None
+        else:
+            assert tool.outputSchema is not None
         assert tool.annotations is not None
         assert tool.annotations.readOnlyHint is (name not in mutation_tools)
         assert tool.annotations.destructiveHint is (name in destructive_tools)
@@ -1175,8 +1227,8 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     assert compression_description is not None
     assert "0=1x" in compression_description
     assert "3=15x" in compression_description
-    assert "preserve cmo_scenario_get's multiplier" in compression_description
-    assert "1/2/5/15/30/150" in compression_description
+    assert "preserve the current code" in compression_description
+    assert "not guaranteed effective multipliers" in compression_description
 
     scenario_tool = tools_by_name["cmo_scenario_get"]
     assert scenario_tool.description is not None
@@ -1302,6 +1354,78 @@ async def test_mutations_submit_and_request_tools_observe_without_cancelling() -
     launch_description = tools_by_name["cmo_unit_launch"].description
     assert launch_description is not None
     assert "only submits the mutation" in launch_description
+
+
+@pytest.mark.asyncio
+async def test_unit_read_tools_split_catalog_native_text_and_narrow_batch() -> None:
+    application = _FakeApplication(
+        {
+            "unit.catalog": _success(_unit_catalog_result()),
+            "unit.overview": _success(_unit_overview_result()),
+            "unit.operational_status.batch": _success(_unit_operational_status_batch_result()),
+        }
+    )
+    server = create_mcp_server(application)
+
+    catalog_response = await server.call_tool(
+        "cmo_unit_catalog",
+        {"side_guid": "SIDE-1"},
+    )
+    overview_response = await server.call_tool(
+        "cmo_unit_overview",
+        {"side_guid": "SIDE-1", "unit_guids": ["UNIT-1"]},
+    )
+    batch_response = await server.call_tool(
+        "cmo_unit_operational_status_batch",
+        {"unit_guids": ["UNIT-1"]},
+    )
+
+    assert _structured_result(catalog_response) == _unit_catalog_result()
+    assert isinstance(overview_response, CallToolResult)
+    assert overview_response.structuredContent is None
+    assert overview_response.isError is False
+    assert len(overview_response.content) == 1
+    content = overview_response.content[0]
+    assert isinstance(content, TextContent)
+    assert "GUID: UNIT-1" in content.text
+    assert 'NEXT_CURSOR_JSON: "uc1.cursor"' in content.text
+    assert _structured_result(batch_response) == _unit_operational_status_batch_result()
+
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    assert tools["cmo_unit_overview"].outputSchema is None
+    assert tools["cmo_unit_catalog"].outputSchema is not None
+    assert application.calls == [
+        _Call(
+            "unit.catalog",
+            {
+                "side_guid": "SIDE-1",
+                "side_name": None,
+                "page_size": 500,
+                "cursor": None,
+                "unit_type": None,
+                "name_contains": None,
+            },
+            None,
+        ),
+        _Call(
+            "unit.overview",
+            {
+                "side_guid": "SIDE-1",
+                "side_name": None,
+                "page_size": 40,
+                "cursor": None,
+                "unit_guids": ["UNIT-1"],
+                "unit_type": None,
+                "name_contains": None,
+            },
+            None,
+        ),
+        _Call(
+            "unit.operational_status.batch",
+            {"unit_guids": ["UNIT-1"]},
+            None,
+        ),
+    ]
 
 
 @pytest.mark.asyncio

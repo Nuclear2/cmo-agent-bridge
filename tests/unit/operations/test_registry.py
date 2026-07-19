@@ -52,8 +52,11 @@ EXPECTED_NAMES = {
     "side.posture.get",
     "reference_point.list",
     "unit.list",
+    "unit.catalog",
+    "unit.overview",
     "unit.get",
     "unit.combat_status.get",
+    "unit.operational_status.batch",
     "unit.loadout.get",
     "unit.inventory.get",
     "contact.list",
@@ -117,11 +120,11 @@ def test_operation_kind_values_are_stable() -> None:
 
 
 def test_registry_surface_is_locked(registry: OperationRegistry) -> None:
-    assert len(registry) == 57
+    assert len(registry) == 60
     assert registry.names == EXPECTED_NAMES
-    assert registry.count(target="cmo") == 53
+    assert registry.count(target="cmo") == 56
     assert registry.count(target="local") == 4
-    assert registry.count(expose_mcp=True) == 49
+    assert registry.count(expose_mcp=True) == 52
     assert registry.hidden_names == {
         "bridge.reconcile",
         "unit.delete",
@@ -277,6 +280,56 @@ def test_projection_fields_are_unique_nonempty_and_keep_guid(
     invocation.result_adapter.validate_python(
         {"items": [{"guid": "UNIT-1", "name": "Alpha"}], "next_cursor": None}
     )
+
+
+def test_unit_discovery_arguments_enforce_page_and_guid_batch_bounds(
+    registry: OperationRegistry,
+) -> None:
+    registry.resolve_invocation(
+        "unit.catalog",
+        {"side_guid": "SIDE-1", "page_size": 500},
+    )
+    registry.resolve_invocation(
+        "unit.overview",
+        {
+            "side_guid": "SIDE-1",
+            "page_size": 50,
+            "unit_guids": [f"UNIT-{index}" for index in range(500)],
+        },
+    )
+    registry.resolve_invocation(
+        "unit.operational_status.batch",
+        {"unit_guids": [f"UNIT-{index}" for index in range(20)]},
+    )
+
+    invalid_invocations: tuple[tuple[str, dict[str, object]], ...] = (
+        ("unit.catalog", {"side_guid": "SIDE-1", "page_size": 501}),
+        ("unit.overview", {"side_guid": "SIDE-1", "page_size": 51}),
+        ("unit.overview", {"side_guid": "SIDE-1", "unit_guids": []}),
+        (
+            "unit.overview",
+            {"side_guid": "SIDE-1", "unit_guids": ["UNIT-1", "UNIT-1"]},
+        ),
+        (
+            "unit.overview",
+            {
+                "side_guid": "SIDE-1",
+                "unit_guids": [f"UNIT-{index}" for index in range(501)],
+            },
+        ),
+        ("unit.operational_status.batch", {"unit_guids": []}),
+        (
+            "unit.operational_status.batch",
+            {"unit_guids": ["UNIT-1", "UNIT-1"]},
+        ),
+        (
+            "unit.operational_status.batch",
+            {"unit_guids": [f"UNIT-{index}" for index in range(21)]},
+        ),
+    )
+    for operation, arguments in invalid_invocations:
+        with pytest.raises(ValidationError):
+            registry.resolve_invocation(operation, arguments)
 
 
 def test_projection_uses_documented_result_field_names(registry: OperationRegistry) -> None:
@@ -1156,5 +1209,5 @@ def test_generated_manifest_is_canonical_and_complete() -> None:
         raw, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     ).encode()
     assert MANIFEST_SHA256 == hashlib.sha256(canonical).hexdigest()
-    assert len(OPERATIONS) == 57
+    assert len(OPERATIONS) == 60
     assert {entry["name"] for entry in OPERATIONS} == EXPECTED_NAMES

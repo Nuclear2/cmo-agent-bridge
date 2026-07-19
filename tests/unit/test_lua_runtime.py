@@ -637,6 +637,7 @@ def _replace_with_large_unit_fixture(
     fixture: _CmoFixture,
     *,
     count: int,
+    name_chars: int | None = None,
 ) -> None:
     references: list[Any] = []
     units_by_guid: dict[str, Any] = {}
@@ -645,6 +646,8 @@ def _replace_with_large_unit_fixture(
         guid = f"UNIT-BLUE-{index:04d}"
         is_filter_target = index % 120 == 0
         name = f"Target {index:04d}" if is_filter_target else f"Unit {index:04d}"
+        if name_chars is not None:
+            name = (name + " " + ("X" * name_chars))[:name_chars]
         unit_type = "Aircraft" if index % 2 == 0 else "Ship"
         unit = _lua_table(
             lua,
@@ -701,6 +704,7 @@ def _run_lua(
     export_failures_before_success: int = 0,
     zero_export_results_before_success: int = 0,
     large_unit_count: int | None = None,
+    large_unit_name_chars: int | None = None,
     target_guid_aliases: dict[str, str] | None = None,
     target_api_return_mode: str = "normal",
     flight_size_readback_mode: str = "normal",
@@ -763,7 +767,12 @@ def _run_lua(
             ]
             mission["targetlist"] = lua.table_from(targets)
     if large_unit_count is not None:
-        _replace_with_large_unit_fixture(lua, fixture, count=large_unit_count)
+        _replace_with_large_unit_fixture(
+            lua,
+            fixture,
+            count=large_unit_count,
+            name_chars=large_unit_name_chars,
+        )
     captured: dict[str, object] = {
         "score_sides": [],
         "set_unit_calls": [],
@@ -2536,6 +2545,281 @@ def test_lua_unit_list_bounds_large_fixture_hydration_and_traverses_filtered_pag
     assert len(filtered.api_calls["get_unit"]) == 4
 
 
+def test_lua_unit_catalog_returns_large_side_in_one_lightweight_page() -> None:
+    run = _run_lua(
+        "unit.catalog",
+        {"side_guid": "SIDE-BLUE", "page_size": 500},
+        large_unit_count=425,
+    )
+    result = cast(dict[str, JsonValue], run.result)
+    items = cast(list[dict[str, JsonValue]], result["items"])
+
+    assert result["side_guid"] == "SIDE-BLUE"
+    assert result["side_name"] == "Blue"
+    assert result["total_count"] == 425
+    assert result["next_cursor"] is None
+    assert len(items) == 425
+    assert items[0] == {
+        "guid": "UNIT-BLUE-0000",
+        "name": "Target 0000",
+        "type": "Aircraft",
+    }
+    assert items[-1]["guid"] == "UNIT-BLUE-0424"
+    assert len(run.api_calls["get_unit"]) == 425
+
+
+def test_lua_unit_catalog_applies_name_and_type_filters_before_hydration() -> None:
+    run = _run_lua(
+        "unit.catalog",
+        {
+            "side_name": "Blue",
+            "page_size": 500,
+            "unit_type": "aIrCrAfT",
+            "name_contains": "aLpHa",
+        },
+    )
+    result = cast(dict[str, JsonValue], run.result)
+    items = cast(list[dict[str, JsonValue]], result["items"])
+
+    assert result["total_count"] == 1
+    assert result["next_cursor"] is None
+    assert items == [
+        {
+            "guid": "UNIT-BLUE-1",
+            "name": "Alpha One",
+            "type": "Aircraft",
+        }
+    ]
+    assert run.api_calls["get_unit"] == ({"guid": "UNIT-BLUE-1"},)
+
+
+def test_lua_unit_catalog_uses_opaque_keyset_cursor_and_encoded_budget() -> None:
+    first = _run_lua(
+        "unit.catalog",
+        {"side_name": "Blue", "page_size": 500},
+        large_unit_count=30,
+        large_unit_name_chars=3_000,
+    )
+    first_result = cast(dict[str, JsonValue], first.result)
+    first_items = cast(list[dict[str, JsonValue]], first_result["items"])
+    cursor = cast(str, first_result["next_cursor"])
+
+    assert 0 < len(first_items) < 30
+    assert cursor.startswith("uc1.")
+    assert (
+        len(json.dumps(first_result, ensure_ascii=False, separators=(",", ":")).encode()) < 50_000
+    )
+
+    all_guids = [cast(str, item["guid"]) for item in first_items]
+    next_cursor: str | None = cursor
+    while next_cursor is not None:
+        page = _run_lua(
+            "unit.catalog",
+            {
+                "side_name": "Blue",
+                "page_size": 500,
+                "cursor": next_cursor,
+            },
+            large_unit_count=30,
+            large_unit_name_chars=3_000,
+        )
+        page_result = cast(dict[str, JsonValue], page.result)
+        page_items = cast(list[dict[str, JsonValue]], page_result["items"])
+        all_guids.extend(cast(str, item["guid"]) for item in page_items)
+        next_cursor = cast(str | None, page_result["next_cursor"])
+
+    assert all_guids == [f"UNIT-BLUE-{index:04d}" for index in range(30)]
+
+    mismatch = _run_lua(
+        "unit.catalog",
+        {
+            "side_name": "Blue",
+            "page_size": 500,
+            "cursor": cursor,
+            "unit_type": "Aircraft",
+        },
+        large_unit_count=30,
+        large_unit_name_chars=3_000,
+        expect_ok=False,
+    )
+    error = cast(dict[str, JsonValue], mismatch.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "cursor does not match this query" in cast(str, details["reason"])
+
+
+def test_lua_unit_overview_pages_native_text_with_bound_guid_cursor() -> None:
+    first = _run_lua(
+        "unit.overview",
+        {"side_guid": "SIDE-BLUE", "page_size": 2},
+    )
+    first_result = cast(dict[str, JsonValue], first.result)
+    first_text = cast(str, first_result["text"])
+    cursor = cast(str, first_result["next_cursor"])
+
+    assert first_result["item_count"] == 2
+    assert first_text.count("--- CMO UNIT BEGIN ---") == 2
+    assert "GUID: UNIT-BLUE-0" in first_text
+    assert "GUID: UNIT-BLUE-1" in first_text
+    assert cursor.startswith("uc1.")
+
+    second = _run_lua(
+        "unit.overview",
+        {"side_guid": "SIDE-BLUE", "page_size": 2, "cursor": cursor},
+    )
+    second_result = cast(dict[str, JsonValue], second.result)
+    assert second_result["item_count"] == 1
+    assert "GUID: UNIT-BLUE-2" in cast(str, second_result["text"])
+    assert second_result["next_cursor"] is None
+
+    mismatch = _run_lua(
+        "unit.overview",
+        {
+            "side_guid": "SIDE-BLUE",
+            "page_size": 2,
+            "cursor": cursor,
+            "name_contains": "Alpha",
+        },
+        expect_ok=False,
+    )
+    error = cast(dict[str, JsonValue], mismatch.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "cursor does not match this query" in cast(str, details["reason"])
+
+
+def test_lua_unit_overview_selects_guids_and_applies_name_and_type_filters() -> None:
+    run = _run_lua(
+        "unit.overview",
+        {
+            "side_name": "Blue",
+            "unit_guids": ["UNIT-BLUE-2", "UNIT-BLUE-1", "UNIT-BLUE-0"],
+            "unit_type": "aIrCrAfT",
+            "name_contains": "aLpHa",
+            "page_size": 50,
+        },
+    )
+    result = cast(dict[str, JsonValue], run.result)
+    text = cast(str, result["text"])
+
+    assert result["item_count"] == 1
+    assert result["next_cursor"] is None
+    assert "GUID: UNIT-BLUE-1" in text
+    assert "GUID: UNIT-BLUE-0" not in text
+    assert "GUID: UNIT-BLUE-2" not in text
+    assert run.api_calls["get_unit"] == ({"guid": "UNIT-BLUE-1"},)
+
+
+def test_lua_unit_overview_cursor_is_bound_to_selected_guids() -> None:
+    selected = ["UNIT-BLUE-2", "UNIT-BLUE-1", "UNIT-BLUE-0"]
+    first = _run_lua(
+        "unit.overview",
+        {
+            "side_guid": "SIDE-BLUE",
+            "unit_guids": selected,
+            "page_size": 1,
+        },
+    )
+    first_result = cast(dict[str, JsonValue], first.result)
+    cursor = cast(str, first_result["next_cursor"])
+
+    assert first_result["item_count"] == 1
+    assert "GUID: UNIT-BLUE-0" in cast(str, first_result["text"])
+    assert cursor.startswith("uc1.")
+
+    second = _run_lua(
+        "unit.overview",
+        {
+            "side_guid": "SIDE-BLUE",
+            "unit_guids": list(reversed(selected)),
+            "page_size": 1,
+            "cursor": cursor,
+        },
+    )
+    second_result = cast(dict[str, JsonValue], second.result)
+    assert second_result["item_count"] == 1
+    assert "GUID: UNIT-BLUE-1" in cast(str, second_result["text"])
+
+    mismatch = _run_lua(
+        "unit.overview",
+        {
+            "side_guid": "SIDE-BLUE",
+            "unit_guids": selected[:-1],
+            "page_size": 1,
+            "cursor": cursor,
+        },
+        expect_ok=False,
+    )
+    error = cast(dict[str, JsonValue], mismatch.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "cursor does not match this query" in cast(str, details["reason"])
+
+
+def test_lua_unit_overview_stops_before_encoded_payload_budget() -> None:
+    run = _run_lua(
+        "unit.overview",
+        {"side_name": "Blue", "page_size": 50},
+        large_unit_count=20,
+        large_unit_name_chars=6_000,
+    )
+    result = cast(dict[str, JsonValue], run.result)
+
+    assert 0 < cast(int, result["item_count"]) < 20
+    assert isinstance(result["next_cursor"], str)
+    assert len(json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode()) < 50_000
+
+    all_guids = [
+        line.removeprefix("GUID: ")
+        for line in cast(str, result["text"]).splitlines()
+        if line.startswith("GUID: ")
+    ]
+    next_cursor = cast(str | None, result["next_cursor"])
+    while next_cursor is not None:
+        page = _run_lua(
+            "unit.overview",
+            {"side_name": "Blue", "page_size": 50, "cursor": next_cursor},
+            large_unit_count=20,
+            large_unit_name_chars=6_000,
+        )
+        page_result = cast(dict[str, JsonValue], page.result)
+        all_guids.extend(
+            line.removeprefix("GUID: ")
+            for line in cast(str, page_result["text"]).splitlines()
+            if line.startswith("GUID: ")
+        )
+        next_cursor = cast(str | None, page_result["next_cursor"])
+
+    assert all_guids == [f"UNIT-BLUE-{index:04d}" for index in range(20)]
+
+
+def test_lua_unit_operational_status_batch_returns_narrow_input_order() -> None:
+    run = _run_lua(
+        "unit.operational_status.batch",
+        {"unit_guids": ["UNIT-BLUE-1", "UNIT-BLUE-0"]},
+    )
+    result = cast(dict[str, JsonValue], run.result)
+    items = cast(list[dict[str, JsonValue]], result["items"])
+
+    assert [item["unit_guid"] for item in items] == ["UNIT-BLUE-1", "UNIT-BLUE-0"]
+    assert items[0] == {
+        "unit_guid": "UNIT-BLUE-1",
+        "name": "Alpha One",
+        "type": "Aircraft",
+        "latitude": 10.5,
+        "longitude": 20.5,
+        "altitude": 3000,
+        "speed": 250,
+        "heading": 90,
+        "operating": True,
+        "condition": "Airborne",
+        "unit_state": "OnPatrol",
+        "fuel_state": "Full",
+        "weapon_state": "Ready",
+        "mission_guid": "MISSION-BLUE-1",
+        "mission_name": "Blue CAP",
+        "loadout_dbid": 501,
+    }
+    assert len(run.api_calls["get_unit"]) == 2
+
+
 @pytest.mark.parametrize(
     "arguments",
     [
@@ -2726,7 +3010,43 @@ def test_lua_unit_attack_contact_rejects_attacker_from_another_side() -> None:
     assert error["code"] == "CMO_LUA_ERROR"
     details = cast(dict[str, JsonValue], error["details"])
     assert "contact-observing side" in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["schema_version"] == 1
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "unit.attack_contact"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
     assert run.api_calls["attack_contact"] == ()
+
+
+def test_lua_unit_attack_contact_rejects_stale_contact_before_mutation() -> None:
+    run = _run_lua(
+        "unit.attack_contact",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-GONE",
+            "mode": "auto",
+        },
+        expect_ok=False,
+        repeat_dispatches=2,
+        export_failures_before_success=1,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "contact was not found" in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["schema_version"] == 1
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "unit.attack_contact"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["attack_contact"] == ()
+    assert run.api_calls["get_contact"] == (
+        {"side": "SIDE-BLUE", "guid": "CONTACT-GONE"},
+    )
 
 
 @pytest.mark.parametrize(

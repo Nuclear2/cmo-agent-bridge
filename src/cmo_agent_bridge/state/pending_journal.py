@@ -463,6 +463,47 @@ class PendingJournalStore:
             raise _journal_corrupt("pending journal semantic reconstruction failed") from error
         return LoadedPendingJournal(journal=journal, original=original, reconcile_attempt=attempt)
 
+    def load_for_obsolete_abandonment(self) -> PendingJournal | None:
+        """Load an old-release journal without resolving its operation schemas.
+
+        This compatibility path is intentionally limited to host-side abandonment.
+        It still requires canonical, fully typed durable evidence, but it does not
+        consult the running release catalog because no request will be rendered,
+        replayed, or interpreted as an executable operation.
+        """
+
+        self._require_bound_lock()
+        raw = self._read_raw()
+        if raw is None:
+            return None
+        try:
+            header = _probe_header(raw)
+        except (UnicodeError, ValidationError, TypeError, ValueError, RecursionError) as error:
+            raise _journal_corrupt(
+                "obsolete pending journal header or top-level JSON is corrupt"
+            ) from error
+        if header.root_key != self._paths.root_key:
+            raise _journal_corrupt("obsolete pending journal belongs to a different bridge root")
+        try:
+            tree = _parse_duplicate_free_json(raw)
+            if _canonical_json_bytes(tree) != raw:
+                raise ValueError("journal JSON is not canonical")
+            journal = PendingJournal.model_validate_json(raw, strict=True)
+            if _canonical_json_bytes(journal.model_dump(mode="json")) != raw:
+                raise ValueError("typed journal representation is not canonical")
+        except (
+            UnicodeError,
+            ValidationError,
+            TypeError,
+            ValueError,
+            OverflowError,
+            RecursionError,
+        ) as error:
+            raise _journal_corrupt(
+                "obsolete pending journal semantic reconstruction failed"
+            ) from error
+        return journal
+
     def save(
         self,
         journal: PendingJournal,
@@ -563,6 +604,46 @@ class PendingJournalStore:
         ):
             raise _state_conflict(
                 "host-resolved journal delete requires one quarantined original"
+            )
+        try:
+            self._paths.pending_file.unlink()
+        except FileNotFoundError as error:
+            raise _state_conflict(
+                "pending journal disappeared before conditional delete"
+            ) from error
+
+    def delete_obsolete_host_resolved(
+        self,
+        expected: HostResolvedJournalDeleteExpectation,
+    ) -> None:
+        """Conditionally delete an abandoned journal from another release."""
+
+        self._require_bound_lock()
+        if type(expected) is not HostResolvedJournalDeleteExpectation:
+            raise _state_conflict(
+                "obsolete host-resolved journal delete expectation is invalid"
+            )
+        journal = self.load_for_obsolete_abandonment()
+        if journal is None:
+            raise _state_conflict("pending journal does not exist")
+        original = journal.original
+        actual = HostResolvedJournalDeleteExpectation(
+            root_key=journal.header.root_key,
+            required_release_id=journal.header.required_release_id,
+            original_request_id=original.request_id,
+            original_request_hash=original.request_hash,
+            original_revision=original.revision,
+        )
+        if actual != expected:
+            raise _state_conflict(
+                "obsolete host-resolved journal delete identity changed"
+            )
+        if (
+            journal.reconcile_attempt is not None
+            or original.state is not PendingPhase.QUARANTINED
+        ):
+            raise _state_conflict(
+                "obsolete host-resolved journal delete requires one quarantined original"
             )
         try:
             self._paths.pending_file.unlink()

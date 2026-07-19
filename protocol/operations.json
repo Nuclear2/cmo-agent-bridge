@@ -153,6 +153,65 @@
     }
   },
   {
+    "name": "unit.catalog",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitCatalogArgs",
+    "wire_arguments_model": "UnitCatalogArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitCatalogResult",
+    "public_result_factory": "UnitCatalogResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 500},
+        "cursor": {"type": "string", "nullable": true},
+        "unit_type": {"type": "string", "nullable": true},
+        "name_contains": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.overview",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitOverviewArgs",
+    "wire_arguments_model": "UnitOverviewArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitOverviewResult",
+    "public_result_factory": "UnitOverviewResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": ["exactly_one_side_selector"],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "nullable": true},
+        "side_name": {"type": "string", "nullable": true},
+        "page_size": {"type": "integer", "minimum": 1, "maximum": 50},
+        "cursor": {"type": "string", "nullable": true},
+        "unit_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 1, "max_items": 500, "unique_items": true, "nullable": true},
+        "unit_type": {"type": "string", "nullable": true},
+        "name_contains": {"type": "string", "nullable": true}
+      },
+      "required": [],
+      "no_extra_fields": true
+    }
+  },
+  {
     "name": "unit.get",
     "target": "cmo",
     "base_class": "read",
@@ -200,6 +259,30 @@
         "unit_guid": {"type": "string", "min_length": 1}
       },
       "required": ["unit_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
+    "name": "unit.operational_status.batch",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitOperationalStatusBatchArgs",
+    "wire_arguments_model": "UnitOperationalStatusBatchArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitOperationalStatusBatchResult",
+    "public_result_factory": "UnitOperationalStatusBatchResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "unit_guids": {"type": "array", "items": {"type": "string", "min_length": 1}, "min_items": 1, "max_items": 20, "unique_items": true}
+      },
+      "required": ["unit_guids"],
       "no_extra_fields": true
     }
   },

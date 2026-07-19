@@ -70,7 +70,9 @@ def _success(
                 "window_title": "Scenario - Command: Modern Operations",
                 "state": state,
                 "rate_code": rate.value,
-                "rate_multiplier": rate.multiplier,
+                # The UI helper reports legacy labels for the two flame controls.
+                # They identify controls, not guaranteed effective multipliers.
+                "rate_multiplier": (1, 2, 5, 15, 30, 150)[rate.value],
             }
         ).encode(),
         stderr=b"",
@@ -98,13 +100,23 @@ def _controller(
         (TimeRate.X2, 2),
         (TimeRate.X5, 5),
         (TimeRate.X15, 15),
-        (TimeRate.X30, 30),
-        (TimeRate.X150, 150),
+        (TimeRate.COARSE_1_SECOND, None),
+        (TimeRate.COARSE_5_SECONDS, None),
     ],
 )
-def test_time_rate_exposes_cmo_code_and_multiplier(rate: TimeRate, multiplier: int) -> None:
+def test_time_rate_exposes_only_guaranteed_multiplier(
+    rate: TimeRate,
+    multiplier: int | None,
+) -> None:
     assert rate.value in range(6)
     assert rate.multiplier == multiplier
+
+
+def test_coarse_rates_preserve_legacy_names_without_claiming_fixed_speed() -> None:
+    assert TimeRate.X30 is TimeRate.COARSE_1_SECOND
+    assert TimeRate.X150 is TimeRate.COARSE_5_SECONDS
+    assert TimeRate.COARSE_1_SECOND.coarse_slice_seconds == 1
+    assert TimeRate.COARSE_5_SECONDS.coarse_slice_seconds == 5
 
 
 @pytest.mark.parametrize(
@@ -165,6 +177,21 @@ async def test_get_state_binds_exact_process_identity_and_parses_snapshot(tmp_pa
     assert command[command.index("-File") + 1].endswith("ui_time_controller.ps1")
     assert cwd == process.executable.parent
     assert timeout == 2.5
+
+
+async def test_get_state_accepts_legacy_x150_label_as_cpu_driven_coarse_rate(
+    tmp_path: Path,
+) -> None:
+    process = _process(tmp_path)
+    inspector = _Inspector((process,), (process,))
+    runner = _Runner(_success(process, state="running", rate=TimeRate.COARSE_5_SECONDS))
+    controller = _controller(process, runner, inspector)
+
+    state = await controller.get_state()
+
+    assert state.rate is TimeRate.COARSE_5_SECONDS
+    assert state.multiplier is None
+    assert state.rate.coarse_slice_seconds == 5
 
 
 @pytest.mark.parametrize(

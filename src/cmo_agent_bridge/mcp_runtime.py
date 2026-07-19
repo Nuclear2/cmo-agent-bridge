@@ -3,13 +3,17 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Literal, Protocol, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, TypeAdapter, ValidationError
 
+from cmo_agent_bridge.application.host_quarantine import (
+    HostQuarantineResolutionPreview,
+    HostQuarantineResolutionResult,
+)
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
     CancelQueuedOperationResult,
@@ -68,6 +72,7 @@ _ERROR_ADAPTER: TypeAdapter[dict[str, JsonValue]] = TypeAdapter(
     config=ConfigDict(strict=True),
 )
 RuntimeState = Literal["ready", "unconfigured", "not_prepared", "error"]
+_T = TypeVar("_T")
 _TERMINAL_QUEUE_STATES = frozenset(
     {
         OperationQueueState.COMPLETED,
@@ -115,7 +120,7 @@ class McpTimeState(BaseModel):
 
     state: SimulationRunState
     rate_code: int = Field(ge=0, le=5)
-    multiplier: int = Field(ge=1)
+    multiplier: int | None = Field(ge=1)
     process_pid: int = Field(ge=1)
     process_create_time: float = Field(ge=0, allow_inf_nan=False)
     window_handle: int = Field(gt=0)
@@ -548,37 +553,76 @@ class McpRuntimeManager:
     ) -> InvocationOutcome:
         try:
             runtime = await self._ensure_runtime()
-            await self._fail_fast_when_cmo_is_paused(runtime, operation)
-            return await runtime.application.execute(
-                operation,
-                arguments,
-                confirmation_token=confirmation_token,
-            )
+            contract = OPERATION_REGISTRY.resolve(operation)
+
+            async def execute_application() -> InvocationOutcome:
+                return await runtime.application.execute(
+                    operation,
+                    arguments,
+                    confirmation_token=confirmation_token,
+                )
+
+            if contract.target is ExecutionTarget.CMO:
+                return await self._with_cmo_poll_gate(
+                    runtime,
+                    operation,
+                    execute_application,
+                )
+            return await execute_application()
         except BridgeError as error:
             return _failure_outcome(error)
 
-    async def _fail_fast_when_cmo_is_paused(
+    async def _with_cmo_poll_gate(
         self,
         runtime: ApplicationRuntime,
         operation: str,
-    ) -> None:
-        """Avoid publishing Lua-backed synchronous work that cannot poll while paused."""
+        action: Callable[[], Awaitable[_T]],
+    ) -> _T:
+        """Serialize a poll-dependent exchange with UI time control.
 
-        contract = OPERATION_REGISTRY.resolve(operation)
-        if contract.target is not ExecutionTarget.CMO:
-            return
+        Holding both gates through the exchange closes the gap in which another bridge
+        client could pause CMO after the preflight but before request publication.  CMO
+        itself or a human can still pause independently, so the transport deadline remains
+        authoritative for an already-published request.
+        """
 
-        observed: UiTimeState | None = None
+        async with self._ui_gate:
+            async with self._new_ui_lock(runtime):
+                await self._raise_if_cmo_is_paused(operation)
+                return await action()
+        raise RuntimeError("UI coordination lock unexpectedly suppressed CMO exchange")
+
+    async def _raise_if_cmo_is_paused(self, operation: str) -> None:
         try:
-            async with self._ui_gate:
-                async with self._new_ui_lock(runtime):
-                    observed = await self._require_ui_controller().get_state()
-        except BridgeError:
-            # UI Automation is an advisory preflight. If it is unavailable, preserve the
-            # existing bridge path so a UI limitation cannot disable otherwise valid reads.
+            observed = await self._require_ui_controller().get_state()
+        except BridgeError as error:
+            if error.details.get("helper_code") == "MODAL_WINDOW":
+                details = error.details.copy()
+                details.update(
+                    {
+                        "operation": operation,
+                        "observed_state": "unknown_modal",
+                        "requires_lua_poll": True,
+                        "retry_suppressed": True,
+                        "next_tool": "cmo_message_log_read",
+                        "next_step": (
+                            "CMO's main window is blocked by a modal dialog, so the Lua-backed "
+                            "operation was not published. Read the commanded side's native "
+                            "message log if a session is bound, or ask the user to inspect and "
+                            "dismiss the dialog; then call cmo_time_get_state before retrying."
+                        ),
+                    }
+                )
+                raise BridgeError(
+                    ErrorCode.SCENARIO_NOT_ADVANCING,
+                    "CMO is blocked by a modal window; the Lua-backed operation was not published",
+                    details,
+                ) from error
+            # UI Automation is an advisory state probe. If it is unavailable, preserve the
+            # existing bridge path, but keep the coordination locks held through publication.
             return
 
-        if observed is None or observed.state is not SimulationRunState.PAUSED:
+        if observed.state is not SimulationRunState.PAUSED:
             return
         raise BridgeError(
             ErrorCode.SCENARIO_NOT_ADVANCING,
@@ -596,6 +640,29 @@ class McpRuntimeManager:
                     "complete the planned read batch, and restore pause in cleanup."
                 ),
             },
+        )
+
+    async def host_quarantine_preview(
+        self,
+        disposition: Literal["applied", "not_applied"],
+    ) -> HostQuarantineResolutionPreview:
+        runtime = await self._ensure_runtime()
+        return await self._with_cmo_poll_gate(
+            runtime,
+            "host.quarantine.resolve.preview",
+            lambda: runtime.host_quarantine.preview(disposition),
+        )
+
+    async def host_quarantine_confirm(
+        self,
+        disposition: Literal["applied", "not_applied"],
+        confirmation_token: str,
+    ) -> HostQuarantineResolutionResult:
+        runtime = await self._ensure_runtime()
+        return await self._with_cmo_poll_gate(
+            runtime,
+            "host.quarantine.resolve.confirm",
+            lambda: runtime.host_quarantine.confirm(disposition, confirmation_token),
         )
 
     async def submit(
@@ -975,8 +1042,11 @@ class McpRuntimeManager:
         )
 
     async def _live_scenario(self, runtime: ApplicationRuntime) -> ScenarioResult:
-        await self._fail_fast_when_cmo_is_paused(runtime, "scenario.get")
-        outcome = await runtime.application.execute("scenario.get", {})
+        outcome = await self._with_cmo_poll_gate(
+            runtime,
+            "scenario.get",
+            lambda: runtime.application.execute("scenario.get", {}),
+        )
         if not outcome.ok:
             error = outcome.error or {}
             raw_code = error.get("code")

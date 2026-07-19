@@ -158,6 +158,44 @@ class _FakeInvokeManager:
         )
 
 
+class _DumpableResult:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def model_dump(self, **_kwargs: object) -> dict[str, object]:
+        return self._payload
+
+
+class _FakeQuarantineManager:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+
+    async def host_quarantine_preview(self, disposition: str) -> _DumpableResult:
+        self.calls.append(("preview", disposition, None))
+        return _DumpableResult({"phase": "preview", "disposition": disposition})
+
+    async def host_quarantine_confirm(
+        self,
+        disposition: str,
+        confirmation_token: str,
+    ) -> _DumpableResult:
+        self.calls.append(("confirm", disposition, confirmation_token))
+        return _DumpableResult({"phase": "resolved", "disposition": disposition})
+
+
+class _FakeObsoleteQuarantineService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None]] = []
+
+    async def preview(self) -> _DumpableResult:
+        self.calls.append(("preview", None))
+        return _DumpableResult({"phase": "preview", "disposition": "not_applied"})
+
+    async def confirm(self, confirmation_token: str) -> _DumpableResult:
+        self.calls.append(("confirm", confirmation_token))
+        return _DumpableResult({"phase": "resolved", "disposition": "not_applied"})
+
+
 def _forbid_eager_build(**_kwargs: object) -> None:
     raise AssertionError("eager runtime build")
 
@@ -406,6 +444,89 @@ def test_invoke_preserves_dynamic_read_and_mutation_routing(
         )
     ]
     assert json.loads(mutation_result.stdout)["error"]["code"] == "POLICY_DENIED"
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_call", "expected_phase"),
+    [
+        ([], ("preview", "not_applied", None), "preview"),
+        (
+            ["--confirmation-token", "confirmed-token"],
+            ("confirm", "not_applied", "confirmed-token"),
+            "resolved",
+        ),
+    ],
+)
+def test_resolve_quarantine_uses_pause_aware_runtime_manager(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    expected_call: tuple[str, str, str | None],
+    expected_phase: str,
+) -> None:
+    manager = _FakeQuarantineManager()
+    roots: list[object] = []
+
+    def fake_manager(**kwargs: object) -> _FakeQuarantineManager:
+        roots.append(kwargs["game_root"])
+        return manager
+
+    monkeypatch.setattr(cli_module, "McpRuntimeManager", fake_manager)
+    monkeypatch.setattr(cli_module, "build_application_runtime", _forbid_eager_build)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "resolve-quarantine",
+            "--disposition",
+            "not_applied",
+            *extra_args,
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert roots == [None]
+    assert manager.calls == [expected_call]
+    assert json.loads(result.stdout)["phase"] == expected_phase
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected_call", "expected_phase"),
+    [
+        ([], ("preview", None), "preview"),
+        (
+            ["--confirmation-token", "confirmed-token"],
+            ("confirm", "confirmed-token"),
+            "resolved",
+        ),
+    ],
+)
+def test_abandon_obsolete_quarantine_uses_offline_maintenance_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    extra_args: list[str],
+    expected_call: tuple[str, str | None],
+    expected_phase: str,
+) -> None:
+    service = _FakeObsoleteQuarantineService()
+    roots: list[object] = []
+
+    def fake_build(**kwargs: object) -> object:
+        roots.append(kwargs["game_root"])
+        return SimpleNamespace(obsolete_quarantine=service)
+
+    monkeypatch.setattr(
+        cli_module,
+        "build_offline_maintenance_runtime",
+        fake_build,
+    )
+    result = CliRunner().invoke(
+        app,
+        ["abandon-obsolete-quarantine", *extra_args],
+    )
+
+    assert result.exit_code == 0
+    assert roots == [None]
+    assert service.calls == [expected_call]
+    assert json.loads(result.stdout)["phase"] == expected_phase
 
 
 def test_queue_cli_inspection_wait_cancel_and_summary_delegate_locally(

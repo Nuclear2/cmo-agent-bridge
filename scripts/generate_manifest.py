@@ -98,8 +98,11 @@ VALID_ARGUMENTS: dict[str, dict[str, object]] = {
     "side.list": {},
     "reference_point.list": {"side_guid": "SIDE-1"},
     "unit.list": {"side_guid": "SIDE-1"},
+    "unit.catalog": {"side_guid": "SIDE-1"},
+    "unit.overview": {"side_guid": "SIDE-1"},
     "unit.get": {"unit_guid": "UNIT-1"},
     "unit.combat_status.get": {"unit_guid": "UNIT-1"},
+    "unit.operational_status.batch": {"unit_guids": ["UNIT-1", "UNIT-2"]},
     "unit.loadout.get": {"unit_guid": "UNIT-1"},
     "contact.list": {"side_name": "Blue"},
     "mission.list": {"side_guid": "SIDE-1"},
@@ -676,7 +679,7 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
                 "mode": "add",
                 "component_id_or_name": "Every five minutes",
                 "component_type": "RegularTime",
-                "parameters_json": "{\"Interval\":300}",
+                "parameters_json": '{"Interval":300}',
             },
         },
         {
@@ -694,7 +697,7 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
                 "mode": "add",
                 "component_id_or_name": "Notify Blue",
                 "component_type": "LuaScript",
-                "parameters_json": "{\"ScriptText\":\"return true\\r\\n\"}",
+                "parameters_json": '{"ScriptText":"return true\\r\\n"}',
             },
         },
         {
@@ -755,6 +758,8 @@ INVALID_INVOCATIONS: dict[str, list[tuple[str | None, dict[str, object]]]] = {
     "side.list": [("projection_allowlist", {"fields": ["not_a_side_field"]})],
     "reference_point.list": [("exactly_one_side_selector", {})],
     "unit.list": [("exactly_one_side_selector", {"side_guid": "SIDE-1", "side_name": "Blue"})],
+    "unit.catalog": [("exactly_one_side_selector", {"side_guid": "SIDE-1", "side_name": "Blue"})],
+    "unit.overview": [("exactly_one_side_selector", {})],
     "unit.get": [("unit_get_selector_form", {})],
     "contact.list": [("exactly_one_side_selector", {})],
     "mission.list": [("exactly_one_side_selector", {})],
@@ -1282,7 +1287,7 @@ def _validate_surface(entries: list[dict[str, object]]) -> None:
         "local": sum(entry["target"] == "local" for entry in entries),
         "mcp": sum(entry["expose_mcp"] is True for entry in entries),
     }
-    expected = {"entries": 57, "cmo": 53, "local": 4, "mcp": 49}
+    expected = {"entries": 60, "cmo": 56, "local": 4, "mcp": 52}
     if actual != expected:
         raise ValueError(f"operation surface mismatch: expected {expected}, got {actual}")
     hidden = {str(entry["name"]) for entry in entries if entry["expose_mcp"] is False}

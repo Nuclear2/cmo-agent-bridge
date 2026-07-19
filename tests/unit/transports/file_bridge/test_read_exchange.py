@@ -2398,12 +2398,12 @@ async def test_response_overwrite_before_pin_is_retained_and_after_pin_is_blocke
 
 
 @pytest.mark.asyncio
-async def test_status_timeout_retry_rebuilds_two_exact_expectations_and_same_timeout(
+async def test_status_timeout_retry_rebuilds_expectations_with_one_shared_deadline(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
-    command = replace(_status_command(harness), timeout=0.02)
+    command = replace(_status_command(harness), timeout=0.1)
     peer = _peer(harness)
     peer.enqueue(StaySilent(), Respond(result=peer.result_for(command.invocation)))
     expectations: list[object] = []
@@ -2446,7 +2446,9 @@ async def test_status_timeout_retry_rebuilds_two_exact_expectations_and_same_tim
 
     assert artifact is not None
     assert artifact.accepted_response.envelope.ok is True
-    assert timeouts == [command.timeout, command.timeout]
+    assert timeouts[0] == pytest.approx(command.timeout / 2)
+    assert 0 <= timeouts[1] <= command.timeout / 2
+    assert sum(timeouts) <= command.timeout + 0.001
     assert len(expectations) == 2
     first = cast(Any, expectations[0])
     second = cast(Any, expectations[1])
@@ -2774,14 +2776,14 @@ async def test_success_happens_before_trace_and_cleanup_after_unlock(
 
 
 @pytest.mark.asyncio
-async def test_waiter_accepts_completion_after_partial_response_outlives_three_polls(
+async def test_waiter_accepts_partial_response_completion_across_shared_budget_halves(
     harness: Harness,
 ) -> None:
     transport = _transport(harness, response_poll_seconds=0.01)
     command = replace(_scenario_command(harness), timeout=0.5)
     peer = _peer(harness)
     response = Respond(result=peer.result_for(command.invocation))
-    peer.enqueue(WritePartialThenComplete(response=response, delay_seconds=0.2))
+    peer.enqueue(WritePartialThenComplete(response=response, delay_seconds=0.3))
     artifact: ResponseArtifact | None = None
 
     async with peer:
@@ -2792,6 +2794,7 @@ async def test_waiter_accepts_completion_after_partial_response_outlives_three_p
     assert (
         artifact.accepted_response.envelope.delivery_id == peer.observed_deliveries[0].delivery_id
     )
+    assert len(peer.observed_deliveries) == 1
     request = transport.ledger.get_request(command.request_id)
     assert request is not None and request.state is HostRequestState.COMPLETED
     assert harness.paths.inbox.read_bytes() == render_idle_lua()
@@ -2826,7 +2829,7 @@ async def test_first_timeout_retries_once_with_same_identity_and_second_delivery
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
-    command = replace(_scenario_command(harness), timeout=0.02)
+    command = replace(_scenario_command(harness), timeout=0.1)
     peer = _peer(harness)
     peer.enqueue(
         StaySilent(),
@@ -2982,7 +2985,7 @@ async def test_retry_epochs_are_monotonic_while_artifact_epoch_is_preserved_exac
 
     monkeypatch.setattr(transport_module, "time", BackwardsClock())
     transport = _transport(harness)
-    command = replace(_scenario_command(harness), timeout=0.02)
+    command = replace(_scenario_command(harness), timeout=0.1)
     peer = _peer(harness)
     peer.enqueue(StaySilent(), Respond(result=peer.result_for(command.invocation)))
     intents: list[DeliveryIntent] = []
@@ -3077,6 +3080,7 @@ async def test_second_timeout_adds_no_third_delivery_idles_rejects_and_reraises(
     peer = _peer(harness)
     peer.enqueue(StaySilent(), StaySilent())
     timeout_errors: list[BridgeError] = []
+    wait_budgets: list[float] = []
     intents: list[DeliveryIntent] = []
     waiter_calls = 0
     publish_calls = 0
@@ -3090,6 +3094,7 @@ async def test_second_timeout_adds_no_third_delivery_idles_rejects_and_reraises(
     ) -> ResponseArtifact:
         nonlocal waiter_calls
         waiter_calls += 1
+        wait_budgets.append(timeout_seconds)
         async with asyncio.timeout(2):
             while len(peer.observed_deliveries) < waiter_calls:
                 await asyncio.sleep(0)
@@ -3131,8 +3136,18 @@ async def test_second_timeout_adds_no_third_delivery_idles_rejects_and_reraises(
     assert caught is not None
     assert caught.value.code is ErrorCode.REQUEST_TIMEOUT
     assert len(timeout_errors) == 2
-    assert caught.value is timeout_errors[1]
+    assert caught.value.__cause__ is timeout_errors[1]
     assert caught.value is not timeout_errors[0]
+    assert wait_budgets[0] == pytest.approx(command.timeout / 2)
+    assert 0 <= wait_budgets[1] <= command.timeout / 2
+    assert sum(wait_budgets) <= command.timeout + 0.001
+    assert caught.value.details["timeout_seconds"] == command.timeout
+    assert caught.value.details["wait_attempts"] == 2
+    assert caught.value.details["second_delivery_recovery"] is True
+    assert caught.value.details["automatic_retry_exhausted"] is True
+    assert caught.value.details["do_not_retry"] is True
+    assert caught.value.details["next_tool"] == "cmo_time_get_state"
+    assert "scenario_paused_after_publication" in caught.value.details["likely_causes"]
     assert len(intents) == 2
     assert publish_calls == 2
     for intent in intents:
@@ -3248,7 +3263,12 @@ async def test_safe_failure_retains_unaccepted_response_after_terminal_unlock(
     async with transport.session() as channel:
         with pytest.raises(BridgeError) as caught:
             await channel.exchange(command)
-        assert caught.value is primary
+        if failure_kind == "second_timeout":
+            assert caught.value.code is ErrorCode.REQUEST_TIMEOUT
+            assert caught.value.__cause__ is primary
+            assert caught.value.details["timeout_seconds"] == command.timeout
+        else:
+            assert caught.value is primary
         assert response_path.exists()
 
     assert waiter_calls == (2 if failure_kind == "second_timeout" else 1)

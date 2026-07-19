@@ -90,6 +90,11 @@ Then choose the least intrusive procedure:
   extended planning. Collect a fresh decision snapshot immediately before pausing when practical,
   preserve the observed run state and rate, then call `cmo_time_set(state="paused")` and verify it.
 
+Treat `rate_code=4` and `rate_code=5` as CMO's CPU-driven coarse one-second and five-second slice
+modes, not fixed 30x and 150x multipliers. Do not translate a wall-clock sleep into assumed
+scenario-time advance. Use short observed intervals, check scenario time, and reduce compression
+before a decision horizon can be crossed.
+
 While deliberately paused, plan first and submit independent mutations in intended FIFO order. Use
 `cmo_request_list` to collect every current non-terminal `queued` or `active` UUID, then pass that
 complete set to `cmo_simulation_pulse(request_ids=[...])`. The pulse rejects an omitted non-terminal
@@ -127,20 +132,26 @@ Read only what can affect the next decision:
 5. Read relevant directed relationships from the commanded side to each other side with
    `cmo_side_posture_get`; never substitute the reverse relationship.
 6. Read friendly missions, reference points, and assigned units.
-7. Read friendly unit details, combat status, aircraft loadouts, and inventories for the forces
-   that might be committed.
-8. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
-9. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
+7. Use `cmo_unit_catalog` to establish the friendly force index, then filter by the broad type,
+   name, or GUIDs relevant to the decision.
+8. Read `cmo_unit_overview` for those slices. Use its native CMO text for assessment only; retain
+   catalog GUIDs and exact-tool results as the control plane.
+9. Read `cmo_unit_operational_status_batch` and narrower exact unit detail, combat status, loadout,
+   inventory, and doctrine only for forces that might be committed.
+10. Read commanded-side contacts, then fetch detail for contacts that could change the plan.
+11. Read effective doctrine, WRA, EMCON, sensor state, and existing weapon allocations where
    engagement or exposure is possible.
-10. Record the decision horizon, information gaps, latest useful decision time, and conservative
+12. Record the decision horizon, information gaps, latest useful decision time, and conservative
    default if an uncertainty remains unresolved.
 
 Follow paging to completion when comparing the entire force, contact set, mission set, or reference
-point set. `cmo_unit_list` scans and hydrates candidates in safety-bounded chunks; `page_size` is not
-a promise of that many matching output items. Continue with every non-null `next_cursor` even when
-`items=[]` or the page is short, and stop only when `next_cursor=null`. Do not call bridge status
-before every read; call it for health questions, failures, or multi-step work that needs the exact
-runtime identity.
+point set. For a large friendly side, default to catalog, filtered native overview, then narrow
+exact reads; do not begin with legacy full `cmo_unit_list`. If that legacy projection is explicitly
+needed, `page_size` is not a promise of that many matching output items. Continue with every
+non-null `next_cursor` even when `items=[]` or the page is short, and stop only when
+`next_cursor=null`. Run Lua-backed reads sequentially rather than with `Promise.all` or equivalent
+fan-out. Do not call bridge status before every read; call it for health questions, failures, or
+multi-step work that needs the exact runtime identity.
 
 ## Issue bounded orders
 
@@ -263,6 +274,10 @@ age, uncertainty, own noise, sensor geometry, and the datum created by weapons o
   response time and weapon reach, not from a visually neat box.
 - Keep AEW and tanker tracks behind credible protection and retain a real reserve.
 - Use a separate prosecution zone only when units should investigate beyond the patrol area.
+- Parked aircraft normally keep onboard sensors off. Do not treat an inactive parked-sensor
+  readback as a reason to force it on; configure the intended mission/EMCON state and expect sensor
+  activation and meaningful readback after launch unless the scenario explicitly models a
+  different parked behavior. Verify again after the aircraft is airborne.
 
 ### Refueling
 
@@ -413,9 +428,10 @@ authority, expected gain, and a recovery path.
   CMO is already running, do not change speed; repair the repeatable Regular Time polling event.
   Ask the user to operate time manually only when host UI control is unavailable or cannot verify
   state.
-- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Inspect UI state, read the native
-  message-log cursor when available, and inspect polling health. Use the shortest justified 1x run
-  window for a paused read; if time already advances, repair the polling event.
+- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Call `cmo_time_get_state`; treat an
+  older time observation as stale. Read the native message-log cursor when available and inspect
+  polling health. If paused, use an explicitly stale snapshot or the restrained 1x
+  release/refresh/restore flow; if time already advances, repair the polling event.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the

@@ -11,6 +11,9 @@ from cmo_agent_bridge.application.confirmation import ConfirmationTokenStore
 from cmo_agent_bridge.application.host_quarantine import (
     HostQuarantineResolutionService,
 )
+from cmo_agent_bridge.application.obsolete_quarantine import (
+    ObsoleteQuarantineAbandonmentService,
+)
 from cmo_agent_bridge.application.queue_service import QueueService
 from cmo_agent_bridge.application.queue_worker import QueueWorker
 from cmo_agent_bridge.application.ports import (
@@ -44,12 +47,15 @@ from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot, render_dispatcher
 from cmo_agent_bridge.state.session_store import SessionStore
+from cmo_agent_bridge.state.pending_journal import PendingJournalStore
+from cmo_agent_bridge.state.request_ledger import RequestLedger
 from cmo_agent_bridge.state.operation_queue import (
     OperationQueueState,
     OperationQueueStore,
 )
 from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.atomic_io import atomic_replace_bytes
+from cmo_agent_bridge.transports.file_bridge.inbox import InboxPublisher
 from cmo_agent_bridge.transports.file_bridge.lock import RootLock
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 from cmo_agent_bridge.transports.file_bridge.process_guard import PsutilCmoProcessInspector
@@ -78,6 +84,13 @@ class ApplicationRuntime:
     config: BridgeConfig
     paths: FileBridgePaths
     runtime_snapshot: RuntimeSnapshot
+
+
+@dataclass(frozen=True, slots=True)
+class OfflineMaintenanceRuntime:
+    obsolete_quarantine: ObsoleteQuarantineAbandonmentService
+    config: BridgeConfig
+    paths: FileBridgePaths
 
 
 class SystemWallClock:
@@ -386,4 +399,53 @@ def build_application_runtime(
         config=config,
         paths=paths,
         runtime_snapshot=snapshot,
+    )
+
+
+def build_offline_maintenance_runtime(
+    *,
+    game_root: Path | None = None,
+    local_app_data: Path | None = None,
+) -> OfflineMaintenanceRuntime:
+    """Build host-only maintenance without requiring a deployed Lua release."""
+
+    _store, config, paths = _loaded_config(
+        game_root=game_root,
+        local_app_data=local_app_data,
+    )
+    database = StateDatabase(paths.sqlite_file)
+    database.initialize()
+    snapshot = create_runtime_snapshot()
+    catalog = ManifestCatalog(ReleaseBinding(snapshot=snapshot, registry=OPERATION_REGISTRY))
+    root_lock = RootLock(
+        paths.lock_file,
+        timeout_seconds=config.request_timeout_seconds,
+    )
+    coordination_lock = RootLock(
+        paths.lock_file.with_name(f"{paths.root_key}.ui.lock"),
+        timeout_seconds=config.request_timeout_seconds,
+    )
+    journals = PendingJournalStore(
+        paths,
+        root_lock,
+        catalog,
+        max_journal_bytes=1_048_576,
+        replace_retry_seconds=config.replace_retry_seconds,
+    )
+    service = ObsoleteQuarantineAbandonmentService(
+        root_key=paths.root_key,
+        running_release_id=snapshot.release_id,
+        coordination_lock=coordination_lock,
+        root_lock=root_lock,
+        journals=journals,
+        ledger=RequestLedger(database, catalog),
+        queue_store=OperationQueueStore(database),
+        confirmations=ConfirmationTokenStore(database),
+        inbox=InboxPublisher(paths, config.replace_retry_seconds),
+        wall_clock=SystemWallClock(),
+    )
+    return OfflineMaintenanceRuntime(
+        obsolete_quarantine=service,
+        config=config,
+        paths=paths,
     )

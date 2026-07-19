@@ -15,6 +15,7 @@ from cmo_agent_bridge.application.queue_models import QueueWaitResult, QueuedOpe
 from cmo_agent_bridge.bootstrap import (
     POLL_ACTION_SCRIPT,
     build_application_runtime,
+    build_offline_maintenance_runtime,
     prepare_bridge,
 )
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
@@ -333,15 +334,51 @@ def resolve_quarantine(
     """HOST-ONLY manual quarantine resolution; never replays the CMO operation."""
     selected = disposition.value
     try:
-        runtime = build_application_runtime(game_root=game_root)
+        runtime = McpRuntimeManager(game_root=game_root)
         if confirmation_token is None:
-            result = asyncio.run(runtime.host_quarantine.preview(selected))
+            result = asyncio.run(runtime.host_quarantine_preview(selected))
         else:
             result = asyncio.run(
-                runtime.host_quarantine.confirm(
+                runtime.host_quarantine_confirm(
                     selected,
                     confirmation_token,
                 )
+            )
+    except BridgeError as error:
+        _fail(error, exit_code=1)
+        return
+    _emit(result.model_dump(mode="json", warnings="error"))
+
+
+@app.command("abandon-obsolete-quarantine")
+def abandon_obsolete_quarantine(
+    confirmation_token: str | None = typer.Option(
+        None,
+        "--confirmation-token",
+        help=(
+            "Token returned by the preview call. Omit it to preview abandonment "
+            "of the exact obsolete lineage before committing."
+        ),
+    ),
+    game_root: Path | None = typer.Option(
+        None,
+        "--game-root",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        help="Override the saved CMO installation root.",
+    ),
+) -> None:
+    """Abandon one obsolete quarantined lineage as not_applied, without CMO."""
+
+    try:
+        runtime = build_offline_maintenance_runtime(game_root=game_root)
+        if confirmation_token is None:
+            result = asyncio.run(runtime.obsolete_quarantine.preview())
+        else:
+            result = asyncio.run(
+                runtime.obsolete_quarantine.confirm(confirmation_token)
             )
     except BridgeError as error:
         _fail(error, exit_code=1)

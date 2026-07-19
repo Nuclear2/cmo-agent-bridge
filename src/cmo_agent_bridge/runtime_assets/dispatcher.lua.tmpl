@@ -1565,6 +1565,341 @@ local function unit_list_result(arguments)
     return Json.object({ items = items, next_cursor = next_cursor })
 end
 
+local UnitRead = { RESULT_BUDGET_BYTES = 48 * 1024 }
+
+function UnitRead.exact_get(value, name)
+    if value == nil or value == Json.null then
+        return nil
+    end
+    local ok, item = pcall(function() return value[name] end)
+    if ok then
+        return item
+    end
+    return nil
+end
+
+function UnitRead.wrapper_from_reference(reference, guid)
+    if guid ~= "" then
+        local ok, wrapper = pcall(ScenEdit_GetUnit, { guid = guid })
+        if ok and wrapper ~= nil then
+            return wrapper
+        end
+    end
+    return reference
+end
+
+function UnitRead.optional_query_text(value)
+    if value == nil or value == Json.null then
+        return Json.null
+    end
+    return lower_text(value)
+end
+
+function UnitRead.requested_unit_guids(arguments)
+    local ordered = Json.array()
+    local selected = nil
+    if arguments.unit_guids ~= nil and arguments.unit_guids ~= Json.null then
+        local values = {}
+        selected = {}
+        for _, value in ipairs(collect(arguments.unit_guids)) do
+            local guid = tostring(value)
+            if not selected[guid] then
+                selected[guid] = true
+                values[#values + 1] = guid
+            end
+        end
+        table.sort(values)
+        for _, guid in ipairs(values) do
+            ordered[#ordered + 1] = guid
+        end
+    end
+    return ordered, selected
+end
+
+function UnitRead.query_fingerprint(value)
+    local first = 5381
+    local second = 0
+    for index = 1, #value do
+        local byte = string.byte(value, index)
+        first = (first * 33 + byte) % 4294967296
+        second = (second * 65599 + byte) % 4294967296
+    end
+    return string.format("%08x%08x", first, second)
+end
+
+function UnitRead.query_hash(side_guid, arguments, selected_guids)
+    return UnitRead.query_fingerprint(Json.encode(Json.object({
+        side_guid = side_guid,
+        unit_type = UnitRead.optional_query_text(arguments.unit_type),
+        name_contains = UnitRead.optional_query_text(arguments.name_contains),
+        unit_guids = selected_guids,
+    })))
+end
+
+function UnitRead.hex_encode(value)
+    return (string.gsub(value, ".", function(character)
+        return string.format("%02x", string.byte(character))
+    end))
+end
+
+function UnitRead.hex_decode(value)
+    if #value % 2 ~= 0 or string.match(value, "^[0-9a-fA-F]*$") == nil then
+        error("unit cursor is not valid hexadecimal data")
+    end
+    return (string.gsub(value, "(%x%x)", function(byte)
+        return string.char(tonumber(byte, 16))
+    end))
+end
+
+function UnitRead.encode_cursor(kind, lineage_id, query_hash, last_guid)
+    local payload = Json.encode(Json.object({
+        version = 1,
+        kind = kind,
+        lineage_id = lineage_id,
+        query_hash = query_hash,
+        last_guid = last_guid,
+    }))
+    return "uc1." .. UnitRead.hex_encode(payload)
+end
+
+function UnitRead.decode_cursor(arguments, kind, lineage_id, query_hash)
+    local cursor = arguments.cursor
+    if cursor == nil or cursor == Json.null then
+        return ""
+    end
+    if type(cursor) ~= "string" or string.sub(cursor, 1, 4) ~= "uc1." then
+        error(kind .. " cursor is invalid")
+    end
+    local decoded = UnitRead.hex_decode(string.sub(cursor, 5))
+    local ok, payload = pcall(Json.decode, decoded)
+    if not ok or type(payload) ~= "table" then
+        error(kind .. " cursor is invalid")
+    end
+    if payload.version ~= 1 or payload.kind ~= kind then
+        error(kind .. " cursor version or kind does not match")
+    end
+    if payload.lineage_id ~= lineage_id then
+        error(kind .. " cursor belongs to a different scenario lineage")
+    end
+    if payload.query_hash ~= query_hash then
+        error(kind .. " cursor does not match this query")
+    end
+    if type(payload.last_guid) ~= "string" or payload.last_guid == "" then
+        error(kind .. " cursor has no GUID keyset position")
+    end
+    return payload.last_guid
+end
+
+function UnitRead.side_candidates(side, arguments, selected)
+    local wanted_name = nil
+    if arguments.name_contains ~= nil and arguments.name_contains ~= Json.null then
+        wanted_name = lower_text(arguments.name_contains)
+    end
+    local candidates = {}
+    for _, reference in ipairs(collect(safe_get(side, { "units", "Units" }))) do
+        -- Official UnitList entries expose exact guid/name fields. Avoid alias probing in
+        -- this hot path because each failed wrapper lookup can cross the CMO boundary.
+        local guid = text_or(UnitRead.exact_get(reference, "guid"), "")
+        local name = text_or(UnitRead.exact_get(reference, "name"), "")
+        local selected_match = selected == nil or selected[guid] == true
+        local name_match = wanted_name == nil
+            or string.find(lower_text(name), wanted_name, 1, true) ~= nil
+        if guid ~= "" and selected_match and name_match then
+            candidates[#candidates + 1] = {
+                reference = reference,
+                guid = guid,
+                name = name,
+            }
+        end
+    end
+    table.sort(candidates, function(left, right)
+        if left.guid == right.guid then
+            return left.name < right.name
+        end
+        return left.guid < right.guid
+    end)
+    return candidates
+end
+
+function UnitRead.catalog_result(arguments, lineage_id)
+    local side = resolve_side(arguments)
+    local side_guid = object_guid(side)
+    local side_name = object_name(side)
+    local selected_guids = Json.array()
+    local query_hash = UnitRead.query_hash(side_guid, arguments, selected_guids)
+    local after_guid = UnitRead.decode_cursor(arguments, "unit.catalog", lineage_id, query_hash)
+    local wanted_type = nil
+    if arguments.unit_type ~= nil and arguments.unit_type ~= Json.null then
+        wanted_type = lower_text(arguments.unit_type)
+    end
+
+    local entries = {}
+    for _, candidate in ipairs(UnitRead.side_candidates(side, arguments, nil)) do
+        local unit = UnitRead.wrapper_from_reference(candidate.reference, candidate.guid)
+        -- Catalog intentionally reads exactly the canonical property once. Do not add
+        -- safe_get aliases here: each wrapper property evaluation crosses into CMO.
+        local unit_type = text_or(UnitRead.exact_get(unit, "type"), "")
+        if wanted_type == nil or lower_text(unit_type) == wanted_type then
+            entries[#entries + 1] = {
+                guid = candidate.guid,
+                name = candidate.name,
+                type = unit_type,
+            }
+        end
+    end
+
+    local page_size = math.max(1, math.min(500, math.floor(number_or(arguments.page_size, 500))))
+    local items = Json.array()
+    local last_guid = nil
+    local has_more = false
+    local empty_result_size = #Json.encode(Json.object({
+        side_guid = side_guid,
+        side_name = side_name,
+        total_count = #entries,
+        items = Json.array(),
+        next_cursor = Json.null,
+    }))
+    local encoded_items_size = 2
+    for _, entry in ipairs(entries) do
+        if entry.guid > after_guid then
+            if #items < page_size then
+                local item = Json.object(entry)
+                local encoded_item_size = #Json.encode(item)
+                local separator_size = #items > 0 and 1 or 0
+                local candidate_items_size = encoded_items_size
+                    + separator_size
+                    + encoded_item_size
+                local candidate_result_size = empty_result_size - 2 + candidate_items_size
+                if candidate_result_size > UnitRead.RESULT_BUDGET_BYTES then
+                    if #items == 0 then
+                        error("unit.catalog one item exceeds the safe page budget")
+                    end
+                    has_more = true
+                    break
+                end
+                items[#items + 1] = item
+                encoded_items_size = candidate_items_size
+                last_guid = entry.guid
+            else
+                has_more = true
+                break
+            end
+        end
+    end
+    local next_cursor = Json.null
+    if has_more and last_guid ~= nil then
+        next_cursor = UnitRead.encode_cursor("unit.catalog", lineage_id, query_hash, last_guid)
+    end
+    return Json.object({
+        side_guid = side_guid,
+        side_name = side_name,
+        total_count = #entries,
+        items = items,
+        next_cursor = next_cursor,
+    })
+end
+
+function UnitRead.overview_entry(candidate, native_text)
+    return table.concat({
+        "--- CMO UNIT BEGIN ---",
+        "GUID: " .. candidate.guid,
+        "NAME_JSON: " .. Json.encode(candidate.name),
+        "NATIVE:",
+        native_text,
+        "--- CMO UNIT END ---",
+    }, "\n")
+end
+
+function UnitRead.overview_result(arguments, lineage_id)
+    local side = resolve_side(arguments)
+    local side_guid = object_guid(side)
+    local side_name = object_name(side)
+    local selected_guids, selected = UnitRead.requested_unit_guids(arguments)
+    local query_hash = UnitRead.query_hash(side_guid, arguments, selected_guids)
+    local after_guid = UnitRead.decode_cursor(arguments, "unit.overview", lineage_id, query_hash)
+    local wanted_type = nil
+    if arguments.unit_type ~= nil and arguments.unit_type ~= Json.null then
+        wanted_type = lower_text(arguments.unit_type)
+    end
+    local candidates = UnitRead.side_candidates(side, arguments, selected)
+    local page_size = math.max(1, math.min(50, math.floor(number_or(arguments.page_size, 40))))
+    local parts = {}
+    local item_count = 0
+    local last_scanned_guid = nil
+    local stopped_before_candidate = false
+
+    for _, candidate in ipairs(candidates) do
+        if candidate.guid > after_guid then
+            local unit = UnitRead.wrapper_from_reference(candidate.reference, candidate.guid)
+            local type_matches = true
+            if wanted_type ~= nil then
+                -- The type filter uses one canonical property read; the overview body
+                -- itself is produced by CMO's native serializer.
+                type_matches = lower_text(UnitRead.exact_get(unit, "type")) == wanted_type
+            end
+            if not type_matches then
+                last_scanned_guid = candidate.guid
+            else
+                local ok, native_text = pcall(tostring, unit)
+                if not ok then
+                    native_text = "<CMO native serialization failed: "
+                        .. text_or(native_text, "unknown error")
+                        .. ">"
+                end
+                local entry = UnitRead.overview_entry(candidate, tostring(native_text))
+                local candidate_parts = {}
+                for index, existing in ipairs(parts) do
+                    candidate_parts[index] = existing
+                end
+                candidate_parts[#candidate_parts + 1] = entry
+                local candidate_text = table.concat(candidate_parts, "\n\n")
+                local encoded_probe = Json.encode(Json.object({
+                    side_guid = side_guid,
+                    side_name = side_name,
+                    item_count = item_count + 1,
+                    text = candidate_text,
+                    next_cursor = Json.null,
+                }))
+                if #encoded_probe > UnitRead.RESULT_BUDGET_BYTES then
+                    if item_count == 0 then
+                        error("unit.overview native text for one unit exceeds the safe page budget")
+                    end
+                    stopped_before_candidate = true
+                    break
+                end
+                parts[#parts + 1] = entry
+                item_count = item_count + 1
+                last_scanned_guid = candidate.guid
+                if item_count >= page_size then
+                    break
+                end
+            end
+        end
+    end
+
+    local last_candidate_guid = candidates[#candidates] ~= nil and candidates[#candidates].guid or nil
+    local has_more = stopped_before_candidate
+        or (last_scanned_guid ~= nil
+            and last_candidate_guid ~= nil
+            and last_scanned_guid < last_candidate_guid)
+    local next_cursor = Json.null
+    if has_more and last_scanned_guid ~= nil then
+        next_cursor = UnitRead.encode_cursor(
+            "unit.overview",
+            lineage_id,
+            query_hash,
+            last_scanned_guid
+        )
+    end
+    return Json.object({
+        side_guid = side_guid,
+        side_name = side_name,
+        item_count = item_count,
+        text = table.concat(parts, "\n\n"),
+        next_cursor = next_cursor,
+    })
+end
+
 local function unit_get_result(arguments)
     local selector
     if arguments.unit_guid ~= nil and arguments.unit_guid ~= Json.null then
@@ -1592,6 +1927,52 @@ local function read_unit_by_guid(unit_guid, label)
         error(label .. ": " .. text_or(unit, "unit was not found"))
     end
     return unit
+end
+
+function UnitRead.operational_status_from_wrapper(unit, unit_guid)
+    local mission = UnitRead.exact_get(unit, "mission")
+    local mission_guid = Json.null
+    local mission_name = Json.null
+    if mission ~= nil and mission ~= Json.null then
+        if type(mission) == "string" then
+            mission_name = nullable_text(mission)
+        else
+            mission_guid = nullable_text(UnitRead.exact_get(mission, "guid"))
+            mission_name = nullable_text(UnitRead.exact_get(mission, "name"))
+        end
+    end
+    local loadout_dbid = nullable_integer(UnitRead.exact_get(unit, "loadoutdbid"))
+    if loadout_dbid ~= Json.null and loadout_dbid <= 0 then
+        loadout_dbid = Json.null
+    end
+    return Json.object({
+        unit_guid = unit_guid,
+        name = text_or(UnitRead.exact_get(unit, "name"), ""),
+        type = text_or(UnitRead.exact_get(unit, "type"), ""),
+        latitude = number_or(UnitRead.exact_get(unit, "latitude"), 0),
+        longitude = number_or(UnitRead.exact_get(unit, "longitude"), 0),
+        altitude = number_or(UnitRead.exact_get(unit, "altitude"), 0),
+        speed = number_or(UnitRead.exact_get(unit, "speed"), 0),
+        heading = number_or(UnitRead.exact_get(unit, "heading"), 0),
+        operating = boolean_or(UnitRead.exact_get(unit, "isOperating"), false),
+        condition = text_or(UnitRead.exact_get(unit, "condition"), ""),
+        unit_state = text_or(UnitRead.exact_get(unit, "unitstate"), ""),
+        fuel_state = text_or(UnitRead.exact_get(unit, "fuelstate"), ""),
+        weapon_state = text_or(UnitRead.exact_get(unit, "weaponstate"), ""),
+        mission_guid = mission_guid,
+        mission_name = mission_name,
+        loadout_dbid = loadout_dbid,
+    })
+end
+
+function UnitRead.operational_status_batch_result(arguments)
+    local items = Json.array()
+    for _, value in ipairs(collect(arguments.unit_guids)) do
+        local unit_guid = tostring(value)
+        local unit = read_unit_by_guid(unit_guid, "ScenEdit_GetUnit failed")
+        items[#items + 1] = UnitRead.operational_status_from_wrapper(unit, unit_guid)
+    end
+    return Json.object({ items = items })
 end
 
 local function unit_damage_result(unit)
@@ -2278,7 +2659,7 @@ local function unit_refuel_result(arguments)
     return unit_command_snapshot(unit_guid, "refuel")
 end
 
-local function unit_attack_contact_result(arguments)
+local function unit_attack_contact_preflight(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local attacker_guid = tostring(arguments.attacker_unit_guid)
@@ -2305,6 +2686,20 @@ local function unit_attack_contact_result(arguments)
     if not contact_ok or contact == nil then
         error("contact was not found for the observing side")
     end
+
+    return {
+        side_selector = side_selector,
+        attacker_guid = attacker_guid,
+        contact_guid = contact_guid,
+        contact = contact,
+    }
+end
+
+local function unit_attack_contact_result(arguments, context)
+    local side_selector = context.side_selector
+    local attacker_guid = context.attacker_guid
+    local contact_guid = context.contact_guid
+    local contact = context.contact
 
     local mode_values = { auto = 0, manual_weapon = 1, manual_target = 2 }
     local mode = tostring(arguments.mode)
@@ -6714,12 +7109,16 @@ local function lua_call_result(arguments)
     error("lua.call function is not enabled")
 end
 
-local function response_error(code, message, details)
-    return Json.object({
+local function response_error(code, message, details, mutation_not_started)
+    local failure = Json.object({
         code = code,
         message = message,
         details = details or Json.object(),
     })
+    if mutation_not_started ~= nil then
+        failure.mutation_not_started = mutation_not_started
+    end
+    return failure
 end
 
 local function export_anchor()
@@ -6937,6 +7336,7 @@ local function dispatch()
     end
 
     local handler
+    local preflight
     if operation == "bridge.status" then
         handler = function() return status_result(lineage_id, activation_id) end
     elseif operation == "scenario.get" then
@@ -6949,10 +7349,16 @@ local function dispatch()
         handler = function() return side_posture_get_result(arguments) end
     elseif operation == "unit.list" then
         handler = function() return unit_list_result(arguments) end
+    elseif operation == "unit.catalog" then
+        handler = function() return UnitRead.catalog_result(arguments, lineage_id) end
+    elseif operation == "unit.overview" then
+        handler = function() return UnitRead.overview_result(arguments, lineage_id) end
     elseif operation == "unit.get" then
         handler = function() return unit_get_result(arguments) end
     elseif operation == "unit.combat_status.get" then
         handler = function() return unit_combat_status_result(arguments) end
+    elseif operation == "unit.operational_status.batch" then
+        handler = function() return UnitRead.operational_status_batch_result(arguments) end
     elseif operation == "unit.loadout.get" then
         handler = function() return unit_loadout_get_result(arguments) end
     elseif operation == "unit.inventory.get" then
@@ -6974,7 +7380,8 @@ local function dispatch()
     elseif operation == "unit.refuel" then
         handler = function() return unit_refuel_result(arguments) end
     elseif operation == "unit.attack_contact" then
-        handler = function() return unit_attack_contact_result(arguments) end
+        preflight = function() return unit_attack_contact_preflight(arguments) end
+        handler = function(context) return unit_attack_contact_result(arguments, context) end
     elseif operation == "unit.cargo.transfer" then
         handler = function() return unit_cargo_transfer_result(arguments) end
     elseif operation == "unit.cargo.unload" then
@@ -7051,8 +7458,45 @@ local function dispatch()
         )
     end
 
+    local handler_context = nil
+    if preflight ~= nil then
+        local preflight_ok, preflight_result = pcall(preflight)
+        if not preflight_ok then
+            local mutation_not_started = Json.object({
+                schema_version = 1,
+                stage = "handler_preflight",
+                request_id = delivery.request_id,
+                request_hash = delivery.request_hash,
+                operation = operation,
+                mutation_barrier_written = false,
+                execute_started = false,
+            })
+            local failure = response_error(
+                "CMO_LUA_ERROR",
+                "CMO Lua handler preflight failed",
+                Json.object({
+                    operation = operation,
+                    reason = text_or(preflight_result, "unknown error"),
+                }),
+                mutation_not_started
+            )
+            return emit_response(
+                delivery,
+                envelope(
+                    delivery,
+                    lineage_id,
+                    activation_id,
+                    scenario_time,
+                    Json.null,
+                    failure
+                )
+            )
+        end
+        handler_context = preflight_result
+    end
+
     claim_delivery(delivery)
-    local ok, result = pcall(handler)
+    local ok, result = pcall(handler, handler_context)
     if not ok then
         local failure = response_error(
             "CMO_LUA_ERROR",

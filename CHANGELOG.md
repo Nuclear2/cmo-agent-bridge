@@ -4,6 +4,41 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-19 (Preview)
+
+这一版重做了大型想定的单位读取路径，也收紧了暂停、超时和失联目标附近的状态边界。
+
+### Added
+
+- 新增 `cmo_unit_catalog`、`cmo_unit_overview` 和
+  `cmo_unit_operational_status_batch`：先建立轻量 GUID/名称/类型目录，再读取 CMO 原生概览，最后只对
+  与当前决策有关的单位获取窄结构化状态。旧 `cmo_unit_list` 保留兼容，但不再作为大型想定评估的
+  默认入口。
+- catalog 与 overview 游标绑定想定 lineage 和查询条件；overview 同时受页数和响应字节预算约束，
+  避免把全军原生文本一次性塞入 MCP 上下文。
+- 新增两阶段 CLI 维护命令 `abandon-obsolete-quarantine`：当旧 bridge release 的原想定已经永久废弃、
+  无法再按原 lineage 完成普通隔离裁决时，可将精确绑定的历史请求登记为 `not_applied`。该流程不接触
+  CMO、不重放原操作，并保留数据库审计记录；当前 release 的普通隔离处理仍使用
+  `resolve-quarantine`。
+
+### Fixed
+
+- Lua-backed 同步调用在同一主机时间协调门内完成最终暂停检查和文件交换，减少多个 MCP 客户端在
+  检查后、发布前发生暂停切换的竞态；CLI quarantine 处理也复用相同门禁。
+- 响应重投继续保留恢复机会，但两次等待共享一次总超时预算，不再把一次 30 秒超时拖成约 60 秒。
+- 手动攻击在接触已失联时于 mutation barrier 前确定性拒绝，并携带“未开始执行”证据，不再把一个
+  没有调用 `ScenEdit_AttackContact` 的请求留在未知结果隔离中。
+
+### Changed
+
+- `rate_code=4/5` 明确为由机器性能决定的一秒/五秒粗粒度模式；CMO 可能显示 30x/150x 标签，但它们
+  不是固定倍率，Agent 必须以实际想定时间设置检查点。
+- `operate-cmo` 改为顺序执行 Lua 读取；任何状态读取卡住或超时后先检查主机时间状态，再选择已有
+  快照、受控 1x 刷新或轮询修复，禁止并发堆叠和盲重试。
+- Skill 明确停场飞机通常保持机载传感器关闭，应按任务与 EMCON 规划，并在起飞后验证激活和读回，
+  除非想定明确设计了不同的停场行为。
+- 项目版本升级到 `0.5.0`。
+
 ## [0.4.0] - 2026-07-19 (Preview)
 
 这一版新增不依赖 Lua 轮询的 CMO 原生消息日志读取，并把剧本消息纳入推演态势评估与暂停诊断。
@@ -263,6 +298,7 @@
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.5.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.4.0
 [0.3.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.2
 [0.3.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.3.1

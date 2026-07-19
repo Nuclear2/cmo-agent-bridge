@@ -65,17 +65,21 @@ class _FakeUiTimeController:
         pause_result: UiTimeState | None = None,
         play_error: BridgeError | None = None,
         play_failure_state: UiTimeState | None = None,
+        get_state_error: BridgeError | None = None,
     ) -> None:
         self.state = state
         self.pause_error = pause_error
         self.pause_result = pause_result
         self.play_error = play_error
         self.play_failure_state = play_failure_state
+        self.get_state_error = get_state_error
         self.calls: list[tuple[str, TimeRate | None]] = []
         self.played = asyncio.Event()
 
     async def get_state(self) -> UiTimeState:
         self.calls.append(("get_state", None))
+        if self.get_state_error is not None:
+            raise self.get_state_error
         return self.state
 
     async def pause(self) -> UiTimeState:
@@ -237,6 +241,43 @@ class _FakeBridgeApplication:
         )
 
 
+class _BlockingBridgeApplication(_FakeBridgeApplication):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def execute(
+        self,
+        operation: str,
+        arguments: Mapping[str, JsonValue],
+        *,
+        confirmation_token: str | None = None,
+    ) -> InvocationOutcome:
+        self.started.set()
+        await self.release.wait()
+        return await super().execute(
+            operation,
+            arguments,
+            confirmation_token=confirmation_token,
+        )
+
+
+class _FakeHostQuarantine:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str, str | None]] = []
+        self.preview_result = cast(Any, object())
+        self.confirm_result = cast(Any, object())
+
+    async def preview(self, disposition: str) -> Any:
+        self.calls.append(("preview", disposition, None))
+        return self.preview_result
+
+    async def confirm(self, disposition: str, token: str) -> Any:
+        self.calls.append(("confirm", disposition, token))
+        return self.confirm_result
+
+
 class _ScenarioBridgeApplication:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, JsonValue], str | None]] = []
@@ -286,6 +327,7 @@ def _manager(
     controller: _FakeUiTimeController,
     queue_service: _FakeQueueService | None = None,
     application: _FakeBridgeApplication | None = None,
+    host_quarantine: _FakeHostQuarantine | None = None,
 ) -> tuple[McpRuntimeManager, _FakeQueueService, _FakeBridgeApplication]:
     game_root = tmp_path / "CMO"
     game_root.mkdir()
@@ -312,7 +354,7 @@ def _manager(
     bridge_application = application or _FakeBridgeApplication()
     runtime = ApplicationRuntime(
         application=cast(BridgeApplication, bridge_application),
-        host_quarantine=cast(Any, None),
+        host_quarantine=cast(Any, host_quarantine),
         queue_service=cast(Any, queue),
         queue_worker=cast(Any, _FakeQueueWorker()),
         config=BridgeConfig(game_root=game_root, request_timeout_seconds=1.0),
@@ -415,6 +457,125 @@ async def test_running_cmo_backed_execute_reaches_bridge_application(
 
     assert outcome.ok is True
     assert application.calls == [("bridge.status", {}, None)]
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_modal_window_blocks_lua_exchange_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(
+        _ui_state(SimulationRunState.RUNNING, TimeRate.X15),
+        get_state_error=BridgeError(
+            ErrorCode.STATE_CONFLICT,
+            "CMO UI time control failed: the main window is blocked",
+            {"helper_code": "MODAL_WINDOW", "window_title": "Scenario message"},
+        ),
+    )
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+
+    outcome = await manager.execute("bridge.status", {})
+
+    assert outcome.ok is False
+    assert outcome.error is not None
+    assert outcome.error["code"] == ErrorCode.SCENARIO_NOT_ADVANCING.value
+    details = cast(dict[str, JsonValue], outcome.error["details"])
+    assert details["operation"] == "bridge.status"
+    assert details["helper_code"] == "MODAL_WINDOW"
+    assert details["retry_suppressed"] is True
+    assert details["next_tool"] == "cmo_message_log_read"
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_cmo_exchange_holds_ui_time_gate_until_response_finishes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.RUNNING, TimeRate.X15))
+    application = _BlockingBridgeApplication()
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        application=application,
+    )
+
+    read_task = asyncio.create_task(manager.execute("bridge.status", {}))
+    await asyncio.wait_for(application.started.wait(), timeout=1.0)
+    pause_task = asyncio.create_task(manager.time_set(state="paused"))
+    await asyncio.sleep(0)
+
+    assert pause_task.done() is False
+    assert controller.calls == [("get_state", None)]
+
+    application.release.set()
+    outcome = await read_task
+    pause_result = await pause_task
+
+    assert outcome.ok is True
+    assert pause_result.after.state is SimulationRunState.PAUSED
+    assert controller.calls == [
+        ("get_state", None),
+        ("get_state", None),
+        ("pause", None),
+        ("get_state", None),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("phase", ["preview", "confirm"])
+async def test_paused_host_quarantine_fails_before_session_handshake(
+    phase: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    host_quarantine = _FakeHostQuarantine()
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        host_quarantine=host_quarantine,
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        if phase == "preview":
+            await manager.host_quarantine_preview("not_applied")
+        else:
+            await manager.host_quarantine_confirm("not_applied", "token")
+
+    assert caught.value.code is ErrorCode.SCENARIO_NOT_ADVANCING
+    assert caught.value.details["operation"] == f"host.quarantine.resolve.{phase}"
+    assert caught.value.details["retry_suppressed"] is True
+    assert host_quarantine.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_running_host_quarantine_preview_holds_gate_and_delegates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.RUNNING, TimeRate.X15))
+    host_quarantine = _FakeHostQuarantine()
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        host_quarantine=host_quarantine,
+    )
+
+    result = await manager.host_quarantine_preview("applied")
+
+    assert result is host_quarantine.preview_result
+    assert host_quarantine.calls == [("preview", "applied", None)]
     assert controller.calls == [("get_state", None)]
 
 

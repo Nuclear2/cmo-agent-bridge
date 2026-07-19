@@ -432,6 +432,103 @@
     },
     {
       "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.catalog:valid",
+      "invariant_id": null,
+      "operation": "unit.catalog",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "cursor": null,
+        "name_contains": null,
+        "page_size": 500,
+        "side_guid": "SIDE-1",
+        "side_name": null,
+        "unit_type": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.catalog:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.catalog",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      },
+      "id": "unit.catalog:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "unit.catalog",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": "Blue"
+      }
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.overview:valid",
+      "invariant_id": null,
+      "operation": "unit.overview",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "cursor": null,
+        "name_contains": null,
+        "page_size": 40,
+        "side_guid": "SIDE-1",
+        "side_name": null,
+        "unit_guids": null,
+        "unit_type": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.overview:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.overview",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "unit.overview:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "unit.overview",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
         "unit_guid": "UNIT-1"
       },
       "id": "unit.get:valid",
@@ -501,6 +598,48 @@
       "wire_arguments": {
         "__unexpected__": true,
         "unit_guid": "UNIT-1"
+      }
+    },
+    {
+      "caller_arguments": {
+        "unit_guids": [
+          "UNIT-1",
+          "UNIT-2"
+        ]
+      },
+      "id": "unit.operational_status.batch:valid",
+      "invariant_id": null,
+      "operation": "unit.operational_status.batch",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "unit_guids": [
+          "UNIT-1",
+          "UNIT-2"
+        ]
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "unit_guids": [
+          "UNIT-1",
+          "UNIT-2"
+        ]
+      },
+      "id": "unit.operational_status.batch:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.operational_status.batch",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "unit_guids": [
+          "UNIT-1",
+          "UNIT-2"
+        ]
       }
     },
     {
@@ -5200,5 +5339,5 @@
       }
     }
   ],
-  "manifest_sha256": "f0c3511a00d740e89235851136bd5ecc1f0ef7b4409608c1d929f006e143612e"
+  "manifest_sha256": "242af5394a3d1390e47c93aeb6cae5f38b72ca7bd2f4c9ce6c6c7e427e4f0ff7"
 }

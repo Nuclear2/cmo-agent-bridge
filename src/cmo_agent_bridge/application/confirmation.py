@@ -41,6 +41,9 @@ DESTRUCTIVE_CONFIRMATION_FORMAT: Final[Literal["cmo-agent-bridge/destructive-con
 HOST_QUARANTINE_CONFIRMATION_FORMAT: Final[
     Literal["cmo-agent-bridge/host-quarantine-confirmation/1"]
 ] = "cmo-agent-bridge/host-quarantine-confirmation/1"
+OBSOLETE_QUARANTINE_ABANDONMENT_CONFIRMATION_FORMAT: Final[
+    Literal["cmo-agent-bridge/obsolete-quarantine-abandonment-confirmation/1"]
+] = "cmo-agent-bridge/obsolete-quarantine-abandonment-confirmation/1"
 
 
 def _invalid_argument(message: str) -> BridgeError:
@@ -249,6 +252,62 @@ class HostQuarantineConfirmationDescriptor(BaseModel):
         return value
 
 
+class ObsoleteQuarantineAbandonmentConfirmationDescriptor(BaseModel):
+    """Exact binding for abandoning one obsolete scenario lineage.
+
+    This is deliberately distinct from the ordinary host-quarantine workflow:
+    a token issued for one workflow cannot authorize the other.
+    """
+
+    model_config = ConfigDict(
+        extra="forbid", frozen=True, strict=True, revalidate_instances="always"
+    )
+
+    format: Literal[
+        "cmo-agent-bridge/obsolete-quarantine-abandonment-confirmation/1"
+    ]
+    root_key: Sha256
+    required_release_id: Sha256
+    request_id: UUID
+    request_hash: Sha256
+    original_journal_revision: StrictInt
+    scenario_lineage_id: UUID
+    original_activation_id: UUID
+    disposition: Literal["not_applied"]
+
+    @field_validator(
+        "format",
+        "root_key",
+        "required_release_id",
+        "request_hash",
+        "disposition",
+        mode="before",
+    )
+    @classmethod
+    def validate_exact_strings(cls, value: object) -> object:
+        if type(value) is not str:
+            raise ValueError("obsolete abandonment descriptor strings must be exact")
+        return value
+
+    @field_validator(
+        "request_id",
+        "scenario_lineage_id",
+        "original_activation_id",
+        mode="before",
+    )
+    @classmethod
+    def validate_exact_uuids(cls, value: object) -> object:
+        if type(value) is not UUID:
+            raise ValueError("obsolete abandonment descriptor UUIDs must be exact")
+        return value
+
+    @field_validator("original_journal_revision")
+    @classmethod
+    def validate_revision(cls, value: int) -> int:
+        if type(value) is not int or value < 0:
+            raise ValueError("obsolete abandonment journal revision must be non-negative")
+        return value
+
 def _require_destructive_descriptor(
     value: DestructiveConfirmationDescriptor,
 ) -> DestructiveConfirmationDescriptor:
@@ -318,6 +377,43 @@ def host_quarantine_confirmation_binding(
         binding_format=HOST_QUARANTINE_CONFIRMATION_FORMAT,
         binding_sha256=hashlib.sha256(
             canonical_host_quarantine_confirmation_bytes(candidate)
+        ).hexdigest(),
+        lineage_id=candidate.scenario_lineage_id,
+        activation_id=candidate.original_activation_id,
+    )
+
+
+def canonical_obsolete_quarantine_abandonment_confirmation_bytes(
+    descriptor: ObsoleteQuarantineAbandonmentConfirmationDescriptor,
+) -> bytes:
+    if type(descriptor) is not ObsoleteQuarantineAbandonmentConfirmationDescriptor:
+        raise TypeError("obsolete abandonment confirmation descriptor must be exact")
+    candidate = ObsoleteQuarantineAbandonmentConfirmationDescriptor.model_validate(
+        descriptor.model_dump(mode="python", round_trip=True, warnings=False)
+    )
+    return json.dumps(
+        candidate.model_dump(mode="json", round_trip=True, warnings=False),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def obsolete_quarantine_abandonment_confirmation_binding(
+    descriptor: ObsoleteQuarantineAbandonmentConfirmationDescriptor,
+) -> ConfirmationBinding:
+    if type(descriptor) is not ObsoleteQuarantineAbandonmentConfirmationDescriptor:
+        raise TypeError("obsolete abandonment confirmation descriptor must be exact")
+    candidate = ObsoleteQuarantineAbandonmentConfirmationDescriptor.model_validate(
+        descriptor.model_dump(mode="python", round_trip=True, warnings=False)
+    )
+    return ConfirmationBinding(
+        root_key=candidate.root_key,
+        operation="host.quarantine.abandon_obsolete_lineage",
+        binding_format=OBSOLETE_QUARANTINE_ABANDONMENT_CONFIRMATION_FORMAT,
+        binding_sha256=hashlib.sha256(
+            canonical_obsolete_quarantine_abandonment_confirmation_bytes(candidate)
         ).hexdigest(),
         lineage_id=candidate.scenario_lineage_id,
         activation_id=candidate.original_activation_id,

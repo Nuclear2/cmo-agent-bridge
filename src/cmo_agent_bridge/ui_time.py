@@ -32,12 +32,22 @@ class TimeRate(IntEnum):
     X2 = 1
     X5 = 2
     X15 = 3
-    X30 = 4
-    X150 = 5
+    COARSE_1_SECOND = 4
+    COARSE_5_SECONDS = 5
+
+    # Backward-compatible aliases for callers that persisted the old names.  CMO's
+    # flame controls may be labelled 30x/150x in the UI, but their effective speed
+    # is CPU-driven unless high-simulation-speed synchronisation is enabled.
+    X30 = COARSE_1_SECOND
+    X150 = COARSE_5_SECONDS
 
     @property
-    def multiplier(self) -> int:
-        return (1, 2, 5, 15, 30, 150)[self.value]
+    def multiplier(self) -> int | None:
+        return (1, 2, 5, 15, None, None)[self.value]
+
+    @property
+    def coarse_slice_seconds(self) -> int | None:
+        return (None, None, None, None, 1, 5)[self.value]
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,7 +59,7 @@ class UiTimeState:
     window_title: str
 
     @property
-    def multiplier(self) -> int:
+    def multiplier(self) -> int | None:
         return self.rate.multiplier
 
 
@@ -220,7 +230,12 @@ def _parse_success_payload(payload: dict[str, object], process: ProcessInfo) -> 
         rate = TimeRate(cast(int, rate_code))
     except ValueError as error:
         raise _bridge_failure("UI helper returned an unknown simulation state or rate", cause=error)
-    if rate.multiplier != rate_multiplier:
+    # The helper preserves legacy UI label values (30/150) for the two flame
+    # controls so it can identify older CMO builds.  Those labels are not a
+    # guarantee of effective simulation speed and are deliberately not exposed
+    # as multipliers by ``UiTimeState``.
+    helper_multiplier = (1, 2, 5, 15, 30, 150)[rate.value]
+    if helper_multiplier != rate_multiplier:
         raise _bridge_failure(
             "UI helper returned contradictory time-compression values",
             details={"rate_code": rate.value, "rate_multiplier": rate_multiplier},

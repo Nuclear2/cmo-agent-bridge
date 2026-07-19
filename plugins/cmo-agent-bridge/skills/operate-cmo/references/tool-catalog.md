@@ -37,10 +37,14 @@ Never infer `CURRENT` from an official Lua function. Never call a proposed tool 
   observing side. A mission lookup requires one side selector and exactly one mission GUID or
   name.
 - Contact GUIDs belong to the observing side and are not interchangeable with actual unit GUIDs.
-- Follow `next_cursor` until null when a complete list matters. Reuse the same `page_size`.
-  `cmo_unit_list` scans and hydrates candidates in safety-bounded chunks, so `page_size` does not
-  guarantee that many matching output items. A short page or `items=[]` is non-terminal whenever
-  `next_cursor` is non-null; only `next_cursor=null` ends the scan.
+- Follow `next_cursor` until null when a complete list matters. Reuse the same `page_size`. For
+  broad friendly-force assessment, default to `cmo_unit_catalog`, filtered
+  `cmo_unit_overview`, then narrow exact or registered batch reads. Do not default to legacy full
+  `cmo_unit_list`; if it is explicitly needed, a short page or `items=[]` is non-terminal whenever
+  `next_cursor` is non-null.
+- Run Lua-backed synchronous reads sequentially. `Promise.all` or equivalent fan-out cannot make
+  the single CMO polling/inbox path parallel and can leave later calls waiting on stale time-state
+  preflight observations.
 - Ordinary mutation tools return `QueuedOperationReceipt` with `request_id`, operation, FIFO
   sequence, `queued` state, and submission time. They do not return CMO's eventual result.
 - Use `cmo_request_get` or `cmo_request_wait` to obtain the terminal queue status and result. Treat
@@ -117,14 +121,17 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require every current non-terminal durable request UUID, force 1x, wait for that complete set and/or the bridge handshake, then attempt to re-pause and restore prior compression with explicit verification |
 | `cmo_message_log_status` | none | Host-only inspection of native message logging, the timestamp file bound to the exact `Command.exe` process, and the persisted scenario session; does not contact Lua or change CMO configuration |
 | `cmo_message_log_read` | exact side name; optional cursor; `start=now|recent`; page size; optional unscoped/raw flags | Read side-prefixed native messages while running or paused; establish a forward cursor with `start=now` and use `has_more` for forward paging; `recent` returns one latest-N recovery tail |
-| `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, actual compression multiplier, and projected score state |
+| `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, CMO's reported compression value, and projected score state; coarse values are labels, not guaranteed effective multipliers |
 | `cmo_scenario_context_get` | none | Read the saved scenario description, only the live current player's side briefing, plain-text projections, and that side's five victory-score thresholds; reports unsaved/missing/incompatible sources instead of exposing another side |
-| `cmo_scenario_time_compression_set` | code `0..5` | Queued Lua mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=coarse one-second slices (30x readback)`, or `5=coarse five-second slices (150x readback)`; it cannot execute while polling is frozen and is not a way to release a paused scenario |
+| `cmo_scenario_time_compression_set` | code `0..5` | Queued Lua mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=CPU-driven coarse one-second slices`, or `5=CPU-driven coarse five-second slices`; codes 4/5 may show legacy 30x/150x labels but are not fixed clocks; it cannot execute while polling is frozen and is not a way to release a paused scenario |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
-| `cmo_unit_list` | one side selector, filters, paging | Browse one side's units; continue every non-null cursor even after a short or empty filtered page; adversary use is author or umpire only |
+| `cmo_unit_catalog` | exactly one side selector; optional type/name filter, page size, opaque cursor | Fast friendly-force index for stable GUID/name/type selection; use first for a large-side assessment |
+| `cmo_unit_overview` | exactly one side selector; optional GUID subset, type/name filter, page size, opaque cursor | Return paged native CMO unit text for Agent assessment; treat it as a content plane, not a stable mutation schema |
+| `cmo_unit_list` | one side selector, filters, paging | Legacy full structured browse; expensive on large sides, so use only when that projection is explicitly required; adversary use is author or umpire only |
 | `cmo_unit_get` | GUID, or side plus name | Read full projected unit detail |
+| `cmo_unit_operational_status_batch` | 1..20 unique unit GUIDs | Read narrow operational status for selected catalog candidates in one bounded batch |
 | `cmo_unit_combat_status_get` | unit GUID | Read actual damage, fuel quantities, readiness or airborne time, loadout ID, and engagement state |
 | `cmo_unit_loadout_get` | unit GUID | Read current aircraft loadout and carried weapon quantities |
 | `cmo_unit_inventory_get` | unit GUID | Read sensors, mounts, magazines, cargo, and component or weapon state |
@@ -172,6 +179,10 @@ operation. Never use a pulse while CMO is already running: a running handshake o
 should proceed at the current compression unless its decision horizon justifies a temporary
 slowdown or deliberate pause.
 
+For both host UI and queued time control, treat `rate_code=4` and `rate_code=5` as CPU-driven coarse
+slice modes. Never derive a safe wall-clock wait from the legacy 30x/150x labels; observe scenario
+time and checkpoint before the next consequential decision horizon.
+
 `cmo_simulation_pulse` accepts only a verified paused start. Before release, call
 `cmo_request_list` and include every current non-terminal `queued` or `active` UUID in `request_ids`.
 The default empty list is valid only when no non-terminal durable work exists. An incomplete set is
@@ -212,7 +223,7 @@ Every tool in this subsection is a durable queued mutation and returns `QueuedOp
 | `cmo_unit_rtb` | unit GUID | Submit RTB; poll combat status |
 | `cmo_unit_refuel` | receiver GUID; optional tanker GUID or tanker mission GUID list | Request refueling using one unambiguous tanker selector |
 | `cmo_unit_attack_contact` | observing side, attacker GUID, contact GUID, mode; optional weapon allocation | Submit auto target, manual target, or explicit weapon allocation |
-| `cmo_unit_sensor_set` | unit GUID, sensor GUID, active state | Change an existing sensor; read inventory and EMCON first |
+| `cmo_unit_sensor_set` | unit GUID, sensor GUID, active state | Change an existing sensor; read inventory and EMCON first; parked aircraft normally keep onboard sensors off, so expect activation/readback after launch unless scenario-specific behavior requires otherwise |
 | `cmo_unit_cargo_transfer` | source, destination, cargo selector and quantity | Move modeled cargo between eligible units; non-idempotent |
 | `cmo_unit_cargo_unload` | carrier and cargo selector | Unload modeled cargo at the current location; non-idempotent |
 | `cmo_mission_create` | side GUID, unique name, category, discriminated mission details; parent pool for package | Create an inactive ordinary mission, task pool, or package for patrol, support, strike, ferry, mining, mine-clearing, or cargo work |

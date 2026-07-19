@@ -76,10 +76,20 @@ or retrying Lua polling.
   then restore `cmo_time_set(state="paused", rate_code=<preserved>)` in cleanup and verify it. Do
   not deliberate between reads while this acquisition window is open.
 
-Never blindly retry `SCENARIO_NOT_ADVANCING` or a paused-read timeout. Re-check the host UI state,
-read new native messages with the retained message-log cursor when available, then either use a
-stale snapshot deliberately or open one explicit controlled read window. A scenario message may
-explain why CMO paused, but it does not make a Lua-backed read callable while paused.
+Run Lua-backed synchronous reads sequentially. Do not fan them out with `Promise.all` or equivalent
+client concurrency: the bridge has one polling/inbox path, so fan-out only creates a queue of
+stale preflight observations and cascading timeouts.
+
+Never blindly retry a stalled or timed-out state read, including unit, contact, mission, doctrine,
+scenario, or bridge status. First call `cmo_time_get_state` for fresh host time status. If CMO is
+paused or the prior observation is stale, read new native messages with the retained message-log
+cursor when available, then either use a stale snapshot deliberately or follow the restrained
+release/refresh/restore flow above. A scenario message may explain why CMO paused, but it does not
+make a Lua-backed read callable while paused.
+
+If the error reports `helper_code=MODAL_WINDOW`, the synchronous request was not published. Read
+the commanded side's native message log when the session is bound; otherwise ask the user to
+inspect and dismiss the dialog. Recheck `cmo_time_get_state` before retrying any Lua-backed read.
 
 ## Select one operating mode
 
@@ -135,6 +145,22 @@ one. If the context tool cannot recover the description or current-side briefing
 campaign objective: ask the user before autonomous planning, while still allowing a fully explicit
 bounded order. Treat missing `[LOADDOC]` content or truncation as an explicit information gap. In
 editor work, the tool reads the last saved scenario snapshot and cannot see unsaved briefing edits.
+
+## Read large friendly forces in layers
+
+For an opening assessment or large-side refresh, use the least expensive data plane that answers
+the next decision:
+
+1. Use `cmo_unit_catalog` to establish friendly GUIDs, names, broad types, and a filterable force
+   index.
+2. Read `cmo_unit_overview` only for the relevant type, name slice, or selected GUIDs. Treat its
+   native CMO text as Agent-readable context, not a stable wire schema for mutations.
+3. Call narrow exact tools, including `cmo_unit_operational_status_batch`, unit detail, combat
+   status, loadout, inventory, and doctrine, only for candidates that could affect the decision.
+
+Do not default to the legacy full `cmo_unit_list` for pre-battle assessment. Its full wrapper-field
+projection is intentionally expensive in large scenarios. Preserve the `LIVE_PLAYER` boundary:
+friendly forces use unit tools, while adversaries remain contact-derived.
 
 ## Track native scenario messages
 
@@ -318,6 +344,11 @@ Intervene in scenario time only as much as the decision requires:
    Agent must judge this from the decision horizon and consequences; ordinary mission adjustments,
    assignments, doctrine changes, and isolated orders do not justify pausing by themselves.
 
+Treat `rate_code=4` and `rate_code=5` as CMO's CPU-driven coarse one-second and five-second slice
+modes, not fixed 30x and 150x clocks. Their legacy UI labels or readbacks do not bound actual
+scenario-time advance. Use short observed intervals and scenario-time checkpoints; never convert
+a fixed wall-clock wait into assumed scenario-time advance at either coarse rate.
+
 For a deliberate pause, preserve the observed run/pause state and compression, collect the fresh
 state needed for planning, then pause. Plan and enqueue independent mutations while time is stopped.
 Before a controlled 1x pulse, list the durable queue and include every current non-terminal
@@ -349,9 +380,10 @@ and never resubmit a durable request because a pulse or local wait timed out.
    read the resulting state.
 6. Send only fields that should change. Preserve ordered zones and courses. An empty ordered list
    is an explicit clear when the tool contract permits it.
-7. Follow every list tool's `next_cursor` until null when completeness matters. `cmo_unit_list`
-   scans candidates in safety-bounded chunks, so a filtered page may be short or empty while a
-   non-null cursor still means more candidates remain. Only `next_cursor=null` ends that scan.
+7. Follow every list tool's `next_cursor` until null when completeness matters. Prefer
+   `cmo_unit_catalog` and filtered `cmo_unit_overview` for broad friendly-force reads. If a legacy
+   full `cmo_unit_list` is explicitly necessary, its filtered page may be short or empty while a
+   non-null cursor still means more candidates remain; only `next_cursor=null` ends that scan.
 8. Do not resubmit a mutation because `cmo_request_wait` timed out. Query the same request ID until
    it is terminal. After a synchronous read timeout, recover polling and read again without
    duplicating any already submitted mutation.

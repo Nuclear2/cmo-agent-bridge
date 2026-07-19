@@ -108,7 +108,9 @@ Build the picture with:
 
 - `cmo_scenario_get`, `cmo_scenario_context_get`, `cmo_side_list`,
   `cmo_side_posture_get`, and existing missions;
-- friendly `cmo_unit_list/get`, combat status, loadouts, inventories, doctrine, WRA, and EMCON;
+- a friendly `cmo_unit_catalog` force index, filtered native `cmo_unit_overview` slices, then narrow
+  exact unit detail, combat status, loadout, inventory, doctrine, WRA, and EMCON for decision-relevant
+  candidates; do not default a large-side assessment to legacy full `cmo_unit_list`;
 - observer-side contacts, including age, uncertainty area, detection sources, emissions, possible
   matches, BDA, and weapon allocations;
 - reference points and mission zones that define defended areas, patrol areas, axes, and support
@@ -227,8 +229,8 @@ scenario's decisive events occur in minutes.
 
 For each window:
 
-1. read the contacts, missions, assigned units, combat status, inventories, sensors, and existing
-   allocations relevant to the next decision;
+1. refresh only the contacts, missions, assigned units, catalog/overview slices, exact combat
+   status, inventories, sensors, and existing allocations relevant to the next decision;
 2. compare observed indicators with the decision-support matrix;
 3. submit one bounded set of orders, retaining request IDs and resolving dependencies;
 4. explicitly select the execution compression and let asynchronous actions develop;
@@ -386,6 +388,9 @@ functional loss, system-level effect, and the need for another attack.
   latest useful decision time is merely activity.
 - Use support tracks and patrol areas to create persistent or periodic coverage. Review sensor
   state and EMCON together; an active sensor can improve detection while exposing the emitter.
+- Treat inactive onboard sensors on parked aircraft as normal unless the scenario says otherwise.
+  Plan the intended mission and EMCON state, then verify activation and readback after launch rather
+  than forcing a parked aircraft's sensor on merely to satisfy pre-launch readback.
 - Plan phases when useful: silent or passive transit, limited surveillance emissions, then
   engagement emissions. Identify the primary emitter, a backup source, and the platforms that
   should remain passive. If silence makes the warning-identification-engagement timeline
