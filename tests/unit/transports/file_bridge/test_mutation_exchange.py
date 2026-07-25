@@ -108,6 +108,13 @@ DELIVERY_ID = UUID("11111111-1111-4111-8111-111111119001")
 LINEAGE_ID = UUID("33333333-3333-4333-8333-333333333333")
 ACTIVATION_ID = UUID("44444444-4444-4444-8444-444444444444")
 
+# These successful-response tests cross fsync-backed file and SQLite durability
+# boundaries before waiting on an asynchronously scheduled fake peer. Windows CI
+# can legitimately take more than 300 ms to observe that response under load, so
+# they need a deadline that cannot mask the intended assertions with an unrelated
+# transport timeout.
+_DURABLE_RESPONSE_TEST_TIMEOUT = 1.0
+
 
 def _forbidden(*_args: object, **_kwargs: object) -> Never:
     raise AssertionError("forbidden side effect was reached")
@@ -2311,7 +2318,7 @@ async def test_unit_set_real_peer_completed_is_artifact_first_terminal_and_unlin
             "name": "海鹰 Alpha",
             "speed": 18.0,
         },
-        timeout=0.3,
+        timeout=_DURABLE_RESPONSE_TEST_TIMEOUT,
     )
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
@@ -3567,7 +3574,7 @@ async def test_completed_cleanup_queue_runtime_error_before_append_is_nonfatal_a
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     response_path = harness.paths.response_path(command.request_id)
     expected_settlement = _completed_artifact(command).accepted_response.settlement
     assert type(expected_settlement) is CompletedSettlement
@@ -4343,7 +4350,7 @@ async def test_idle_published_journal_save_failure_uses_exact_cas_handoff_withou
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected_settlement = _completed_artifact(command).accepted_response.settlement
@@ -5090,7 +5097,7 @@ async def test_terminal_sqlite_transition_failure_rereads_once_without_retry(
     failure_mode: str,
     settlement_kind: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     trace: list[str] = []
     peer = _peer(harness, trace=trace)
     expected_error: ResponseError | None = None
@@ -5448,7 +5455,7 @@ async def test_terminal_journal_delete_failure_rereads_once_without_retry(
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     expected = _completed_artifact(command).accepted_response.settlement
     assert type(expected) is CompletedSettlement
     trace: list[str] = []
@@ -5681,7 +5688,7 @@ async def test_response_accepted_journal_save_failure_rereads_once_without_resav
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     expected = _completed_artifact(command).accepted_response.settlement
     assert type(expected) is CompletedSettlement
     trace: list[str] = []
@@ -6056,7 +6063,7 @@ async def test_response_record_failure_rereads_delivery_once_without_retry(
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     expected = _completed_artifact(command).accepted_response.settlement
     assert type(expected) is CompletedSettlement
     trace: list[str] = []
@@ -6436,7 +6443,7 @@ async def test_response_accepted_request_transition_failure_rereads_once_without
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected = _completed_artifact(command).accepted_response.settlement
@@ -6820,7 +6827,7 @@ async def test_response_request_observation_edges_fail_closed(
     boundary: str,
     observation: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected = _completed_artifact(command).accepted_response.settlement
@@ -7153,7 +7160,7 @@ async def test_artifact_aftercommit_base_exception_finishes_safety_before_identi
     boundary: str,
     signal_kind: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected = _completed_artifact(command).accepted_response.settlement
@@ -7599,7 +7606,7 @@ async def test_response_record_finalizer_hands_nested_request_failure_to_next_ga
     monkeypatch: pytest.MonkeyPatch,
     request_failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected = _completed_artifact(command).accepted_response.settlement
@@ -7853,7 +7860,7 @@ async def test_recovery_adapter_runtime_error_after_response_acceptance_is_not_r
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected = _completed_artifact(command).accepted_response.settlement
@@ -8135,7 +8142,7 @@ async def test_completed_recovery_failure_is_artifact_first_quarantined_without_
     monkeypatch: pytest.MonkeyPatch,
     failure_mode: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected_settlement = _completed_artifact(command).accepted_response.settlement
@@ -8565,7 +8572,7 @@ async def test_idle_publication_failure_preserves_response_accepted_without_retr
     monkeypatch: pytest.MonkeyPatch,
     failure_case: str,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     expected_settlement = _completed_artifact(command).accepted_response.settlement
@@ -9509,7 +9516,7 @@ async def test_invalid_not_started_raw_response_is_parser_quarantined_without_ar
     expected_location: tuple[str, ...] | None,
     expected_validation_message: str | None,
 ) -> None:
-    command = _command(harness, timeout=0.3)
+    command = _command(harness, timeout=_DURABLE_RESPONSE_TEST_TIMEOUT)
     response_path = harness.paths.response_path(command.request_id)
     trace: list[str] = []
     peer = _peer(harness, trace=trace)
