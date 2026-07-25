@@ -374,7 +374,9 @@ and never resubmit a durable request because a pulse or local wait timed out.
    submitting dependent geometry, targets, doctrine, support, or assignments. Read the assembled
    mission back; activate only after the gate is met.
 4. Read actual combat status, loadout, inventory, fuel, damage, readiness, sensor state, and
-   existing weapon allocations before committing a force.
+   existing weapon allocations before committing a force. Before a manual weapon allocation, call
+   `cmo_unit_engagement_options_get` for the exact observer-side contact and attacker. Treat
+   `appears_possible` as a nominal screening result, never as a complete firing solution.
 5. Treat launch, RTB, refuel, attack, special-action execution, cargo movement, and other
    asynchronous results as accepted orders, not completed effects. Advance or observe time and
    read the resulting state.

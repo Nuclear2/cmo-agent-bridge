@@ -135,6 +135,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_unit_combat_status_get` | unit GUID | Read actual damage, fuel quantities, readiness or airborne time, loadout ID, and engagement state |
 | `cmo_unit_loadout_get` | unit GUID | Read current aircraft loadout and carried weapon quantities |
 | `cmo_unit_inventory_get` | unit GUID | Read sensors, mounts, magazines, cargo, and component or weapon state |
+| `cmo_unit_engagement_options_get` | observing side GUID, attacker unit GUID, contact GUID; optional weapon DBID, mount DBID, quantity | Screen all carried weapons or one intended salvo against immediate loadout/mount quantity, observer-side contact domain and geometry, and nominal database range; `appears_possible` is not a complete firing solution |
 | `cmo_contact_list` | observing side, filters, paging | Browse contacts exactly as one side observes them |
 | `cmo_contact_get` | observing side, contact GUID | Read age, uncertainty, classification, detections, emissions, BDA, and combat relationships |
 | `cmo_contact_weapon_allocations_get` | observing side, contact GUID | Inspect allocations already made against one contact |
@@ -145,6 +146,15 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_doctrine_wra_get` | doctrine scope, weapon, target type | Read WRA salvo, shooters, firing range, and self-defence range |
 | `cmo_special_action_list` | side, paging | List existing player-facing special actions |
 | `cmo_score_get` | side | Read the side's current victory-point score |
+
+`cmo_unit_engagement_options_get` returns
+`within_nominal_range`, `below_nominal_minimum`, `beyond_nominal_maximum`,
+`no_domain_capability`, or `unknown` for each weapon, plus
+`known_no`, `appears_possible`, or `indeterminate`. It uses the contact geometry observed by the
+specified side and excludes magazine reload stock from immediately available fire. Missing or
+unserializable range data remains `unknown`; it is not converted into a hard rejection. Even a
+nominal pass does not model every kinematic, altitude/aspect/speed, launch-limit, mount
+arc/damage, director, sensor, doctrine, WRA/ROE, weather, or target-quality constraint.
 
 For all CMO-backed synchronous rows in this table, a handshake pulse is not a read window: it
 returns to pause before it returns. If fresh reads are needed from a paused scenario, inspect the
@@ -222,7 +232,7 @@ Every tool in this subsection is a durable queued mutation and returns `QueuedOp
 | `cmo_unit_launch` | unit GUID | Submit launch; poll combat status for actual progress |
 | `cmo_unit_rtb` | unit GUID | Submit RTB; poll combat status |
 | `cmo_unit_refuel` | receiver GUID; optional tanker GUID or tanker mission GUID list | Request refueling using one unambiguous tanker selector |
-| `cmo_unit_attack_contact` | observing side, attacker GUID, contact GUID, mode; optional weapon allocation | Submit auto target, manual target, or explicit weapon allocation |
+| `cmo_unit_attack_contact` | observing side, attacker GUID, contact GUID, mode; optional weapon allocation and `allow_out_of_nominal_range` | Submit auto target, manual target, or explicit weapon allocation; manual weapon mode blocks known nominal range/domain failures by default, while the explicit override permits intentional preallocation but never bypasses missing ammunition or an unavailable selected mount |
 | `cmo_unit_sensor_set` | unit GUID, sensor GUID, active state | Change an existing sensor; read inventory and EMCON first; parked aircraft normally keep onboard sensors off, so expect activation/readback after launch unless scenario-specific behavior requires otherwise |
 | `cmo_unit_cargo_transfer` | source, destination, cargo selector and quantity | Move modeled cargo between eligible units; non-idempotent |
 | `cmo_unit_cargo_unload` | carrier and cargo selector | Unload modeled cargo at the current location; non-idempotent |

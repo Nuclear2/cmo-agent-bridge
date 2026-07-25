@@ -13,6 +13,23 @@ VERSION_REFERENCE = re.compile(
     r"(?:releases/(?:download|tag)/v|--branch\s+v)"
     r"(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"
 )
+ARTIFACT_VERSION_REFERENCES = (
+    re.compile(
+        r"cmo_agent_bridge-"
+        r"(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"
+        r"(?=-py3-none-any\.whl|\.tar\.gz)"
+    ),
+    re.compile(
+        r"operate-cmo-skill-"
+        r"(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"
+        r"(?=\.zip|[\"'])"
+    ),
+    re.compile(
+        r"cmo-agent-bridge-plugin-"
+        r"(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)"
+        r"(?=\.zip|[\"'])"
+    ),
+)
 INSTALLER_VERSION = re.compile(
     r"(?m)^\s*\[string\]\$Version\s*=\s*'"
     r"(?P<version>\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)'"
@@ -21,12 +38,22 @@ PUBLIC_INSTALLATION_FILES = (
     ROOT / "README.md",
     ROOT / "docs" / "quickstart.md",
     ROOT / "docs" / "installation.md",
+    ROOT / "docs" / "frameworks" / "README.md",
     ROOT / "docs" / "frameworks" / "codex.md",
     ROOT / "docs" / "frameworks" / "generic-mcp.md",
     PLUGIN_ROOT / "skills" / "operate-cmo" / "references" / "setup.md",
     PLUGIN_ROOT / ".mcp.json",
     PLUGIN_ROOT / ".claude-mcp.json",
 )
+PUBLIC_VERSIONED_ARTIFACT_FILES = {
+    ROOT / "README.md",
+    ROOT / "docs" / "quickstart.md",
+    ROOT / "docs" / "installation.md",
+    ROOT / "docs" / "frameworks" / "generic-mcp.md",
+    PLUGIN_ROOT / "skills" / "operate-cmo" / "references" / "setup.md",
+    PLUGIN_ROOT / ".mcp.json",
+    PLUGIN_ROOT / ".claude-mcp.json",
+}
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -44,10 +71,25 @@ def test_public_installation_references_use_current_version() -> None:
 
     for path in PUBLIC_INSTALLATION_FILES:
         text = path.read_text(encoding="utf-8")
-        versions = {match.group("version") for match in VERSION_REFERENCE.finditer(text)}
-        assert versions, f"No pinned public release reference found in {path.relative_to(ROOT)}"
-        assert versions == expected, (
-            f"Stale public release reference in {path.relative_to(ROOT)}: {sorted(versions)}"
+        release_versions = {
+            match.group("version") for match in VERSION_REFERENCE.finditer(text)
+        }
+        artifact_versions = {
+            match.group("version")
+            for pattern in ARTIFACT_VERSION_REFERENCES
+            for match in pattern.finditer(text)
+        }
+        if path in PUBLIC_VERSIONED_ARTIFACT_FILES:
+            assert artifact_versions, (
+                f"No versioned release artifact found in {path.relative_to(ROOT)}"
+            )
+        assert release_versions, (
+            f"No pinned public release reference found in {path.relative_to(ROOT)}"
+        )
+        observed = release_versions | artifact_versions
+        assert observed == expected, (
+            f"Stale public release or artifact reference in {path.relative_to(ROOT)}: "
+            f"{sorted(observed)}"
         )
 
 

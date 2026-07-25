@@ -112,7 +112,9 @@ Build the picture with:
   exact unit detail, combat status, loadout, inventory, doctrine, WRA, and EMCON for decision-relevant
   candidates; do not default a large-side assessment to legacy full `cmo_unit_list`;
 - observer-side contacts, including age, uncertainty area, detection sources, emissions, possible
-  matches, BDA, and weapon allocations;
+  matches, BDA, and weapon allocations; for candidate shooter/contact pairs, use
+  `cmo_unit_engagement_options_get` to screen immediate inventory, observed geometry, target
+  domain, and nominal weapon envelopes without crossing the player information boundary;
 - reference points and mission zones that define defended areas, patrol areas, axes, and support
   tracks.
 
@@ -165,7 +167,7 @@ Run action-reaction-counteraction for each friendly course against both the adve
 and most dangerous courses. Test:
 
 - detection and identification before engagement;
-- range, timing, launch, transit, on-station, recovery, and turnaround;
+- route and engagement range, timing, launch, transit, on-station, recovery, and turnaround;
 - hostile fighter, missile, IADS, surface, submarine, and mine reactions as applicable;
 - loss or displacement of an airbase, carrier, AEW aircraft, tanker, major sensor, or command node;
 - weapons and fuel consumption over the required duration;
@@ -296,8 +298,11 @@ Actively look for disconfirming evidence and for activity that should be present
 | Required task | Candidate unit or mission | Readiness and timing | Sensor/weapon fit | Range and endurance | Support dependency | Recovery or second-sortie cost | Suitable? |
 |---|---|---|---|---|---|---|---|
 
-Use actual combat status, loadout, inventory, and host stocks. A unit that can launch but cannot
-reach, remain, recover, or regenerate within the decision horizon is not a feasible assignment.
+Use actual combat status, loadout, inventory, host stocks, and
+`cmo_unit_engagement_options_get` for the exact candidate/contact geometry. A nominal
+`appears_possible` result is one input, not a complete firing solution. A unit that can launch but
+cannot reach, engage, remain, recover, or regenerate within the decision horizon is not a feasible
+assignment.
 
 ### Friendly course comparison
 
@@ -378,7 +383,13 @@ functional loss, system-level effect, and the need for another attack.
   strike require different geometry or activation gates. Add exact strike targets and inspect
   existing allocations before manual engagement.
 - Check loadout, route distance, flight size, minimum aircraft, tanker availability, target
-  uncertainty, WRA, weapon inventory, recovery capacity, and a fallback target or abort gate.
+  uncertainty, WRA, weapon inventory, recovery capacity, and a fallback target or abort gate. For
+  each intended manual shooter/contact pairing, screen all carried weapons in one
+  `cmo_unit_engagement_options_get` call, then select the weapon, mount if needed, and quantity.
+  Treat `known_no` as a hard planning failure. Override it only when the sole failure is known
+  nominal range/domain geometry and deliberate preallocation is part of the course; insufficient
+  inventory or an unavailable selected mount remains a hard no. Treat `unknown` as a
+  decision-relevant information gap.
 - For a late-breaking contact, use the condensed find-fix-track-target-engage-assess logic, but do
   not compress identification or scenario ROE out of the process.
 

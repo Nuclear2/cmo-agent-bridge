@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ntpath
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 from typing import Callable, Protocol, cast
@@ -22,6 +23,8 @@ class _ProcessLike(Protocol):
     @property
     def pid(self) -> int: ...
 
+    def name(self) -> str: ...
+
     def exe(self) -> str: ...
 
     def create_time(self) -> float: ...
@@ -36,6 +39,7 @@ class _FakeProcess:
         executable: str,
         create_time: float,
         *,
+        process_name: str | None = None,
         running: bool = True,
         failure_phase: str | None = None,
         failure: BaseException | None = None,
@@ -43,6 +47,7 @@ class _FakeProcess:
     ) -> None:
         self._pid = pid
         self._executable = executable
+        self._process_name = ntpath.basename(executable) if process_name is None else process_name
         self._create_time = create_time
         self._running = running
         self._failure_phase = failure_phase
@@ -58,6 +63,10 @@ class _FakeProcess:
     def pid(self) -> int:
         self._event("pid")
         return self._pid
+
+    def name(self) -> str:
+        self._event("name")
+        return self._process_name
 
     def exe(self) -> str:
         self._event("exe")
@@ -162,6 +171,7 @@ def test_psutil_scan_builds_fresh_processes_and_reads_one_object_consistently(
     for instance in constructed:
         assert [phase for token, phase in events if token == id(instance)] == [
             "pid",
+            "name",
             "exe",
             "create_time",
             "is_running",
@@ -217,7 +227,13 @@ def test_empty_disappeared_and_no_longer_running_candidates_are_ignored(
 ) -> None:
     command = _command_exe(tmp_path)
     value = str(command) if executable == "{command}" else executable
-    candidate = _FakeProcess(10, value, 1000.0, running=running)
+    candidate = _FakeProcess(
+        10,
+        value,
+        1000.0,
+        process_name="Command.exe",
+        running=running,
+    )
     _install_process_factory(monkeypatch, [10], lambda _pid: candidate)
 
     assert PsutilCmoProcessInspector().matching_processes(command) == ()
@@ -233,6 +249,7 @@ def test_empty_executable_is_skipped_before_create_time_is_read(
         10,
         "",
         1000.0,
+        process_name="Command.exe",
         failure_phase="create_time",
         failure=RuntimeError("create time must not be read"),
         events=events,
@@ -240,7 +257,7 @@ def test_empty_executable_is_skipped_before_create_time_is_read(
     _install_process_factory(monkeypatch, [10], lambda _pid: candidate)
 
     assert PsutilCmoProcessInspector().matching_processes(command) == ()
-    assert [phase for _token, phase in events] == ["pid", "exe"]
+    assert [phase for _token, phase in events] == ["pid", "name", "exe"]
 
 
 def test_unrelated_inaccessible_executable_does_not_block_exact_target_match(
@@ -271,6 +288,26 @@ def test_unrelated_inaccessible_executable_does_not_block_exact_target_match(
     )
 
 
+def test_nonmatching_process_name_skips_expensive_identity_reads(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    command = _command_exe(tmp_path)
+    events: list[tuple[int, str]] = []
+    unrelated = _FakeProcess(
+        10,
+        str(tmp_path / "uvx.exe"),
+        1000.0,
+        failure_phase="exe",
+        failure=RuntimeError("non-candidate executable must not be read"),
+        events=events,
+    )
+    _install_process_factory(monkeypatch, [10], lambda _pid: unrelated)
+
+    assert PsutilCmoProcessInspector().matching_processes(command) == ()
+    assert [phase for _token, phase in events] == ["pid", "name"]
+
+
 def test_non_file_executable_candidate_is_not_silently_ignored(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -278,7 +315,12 @@ def test_non_file_executable_candidate_is_not_silently_ignored(
     command = _command_exe(tmp_path)
     directory = tmp_path / "not-an-executable"
     directory.mkdir()
-    candidate = _FakeProcess(10, str(directory), 1000.0)
+    candidate = _FakeProcess(
+        10,
+        str(directory),
+        1000.0,
+        process_name="Command.exe",
+    )
     _install_process_factory(monkeypatch, [10], lambda _pid: candidate)
 
     with pytest.raises(BridgeError) as caught:
@@ -287,7 +329,10 @@ def test_non_file_executable_candidate_is_not_silently_ignored(
     assert caught.value.code is ErrorCode.STATE_CONFLICT
 
 
-@pytest.mark.parametrize("phase", ["construct", "pid", "exe", "create_time", "is_running"])
+@pytest.mark.parametrize(
+    "phase",
+    ["construct", "pid", "name", "exe", "create_time", "is_running"],
+)
 @pytest.mark.parametrize(
     "failure_factory",
     [

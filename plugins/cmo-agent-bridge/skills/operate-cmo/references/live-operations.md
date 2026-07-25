@@ -160,8 +160,10 @@ multi-step work that needs the exact runtime identity.
   it.
 - Before changing a contact posture, compare classification, age, uncertainty, emissions,
   detections, side posture, and ROE. Proximity alone does not establish hostility.
-- Before a manual attack, read the attacker's inventory and existing allocations against the
-  contact.
+- Before a manual attack, read existing allocations and call
+  `cmo_unit_engagement_options_get` with the exact observing side, attacker, and contact. Omit
+  `weapon_dbid` to screen all immediately carried loadout/mount weapons in one call; add a weapon,
+  mount, and quantity filter when testing the intended salvo.
 - Before mission activation or launch, read damage, actual fuel, ready/airborne time, loadout,
   sensors, and weapons. Coarse fuel and weapon state strings are not sufficient.
 - Prefer mission and doctrine control for sustained behavior. Use direct movement, sensor, launch,
@@ -241,11 +243,26 @@ contact into adversary ground truth merely to simplify target assignment.
    needed to tell them apart.
 4. Read side posture and effective doctrine. Change contact posture only when identification,
    authority, and requested ROE justify it.
-5. Before manual allocation, inspect weapons already assigned to the contact and the attacker's
-   current inventory.
-6. Issue one bounded attack order. Do not add another salvo merely because effects are not yet
-   visible.
-7. Advance or observe time, then reread allocations, firing state, contact state, BDA, and friendly
+5. Before manual allocation, inspect weapons already assigned to the contact, then call
+   `cmo_unit_engagement_options_get` for the exact attacker/contact pair. Use its observer-side
+   horizontal/slant geometry, target domain, immediate loadout/mount quantities, and nominal
+   database envelope to choose a weapon and quantity.
+6. Interpret the screening result conservatively:
+
+   - `known_no` means the requested inventory is unavailable or a known nominal boundary fails; do
+     not submit the ordinary manual allocation.
+   - `appears_possible` means only that immediate inventory and nominal domain/range checks passed.
+     It is not a complete firing solution.
+   - `indeterminate` or `range_status="unknown"` is an information gap, not proof of feasibility or
+     infeasibility. Consider track uncertainty, altitude/aspect/speed, launch limits, mount
+     arc/damage, directors or illumination, sensors, doctrine, WRA/ROE, weather, and target quality.
+7. Issue one bounded attack order. The default manual-weapon preflight rejects known too-close,
+   too-far, or no-domain choices before mutation. Use
+   `allow_out_of_nominal_range=true` only for an explicitly intended preallocation while geometry
+   is expected to close; it never bypasses missing ammunition or an unavailable selected mount.
+8. Treat a completed attack result as assignment acceptance, not weapon release. Do not loop on
+   `firing_at_contact_guids` or add another salvo merely because firing is not immediate.
+9. Advance or observe time, then reread allocations, firing state, contact state, BDA, and friendly
    fuel and weapons.
 
 ## Operate naval and submarine forces

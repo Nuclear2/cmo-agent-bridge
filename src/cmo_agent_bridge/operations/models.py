@@ -318,6 +318,15 @@ class UnitLoadoutGetArgs(StrictModel):
     unit_guid: NonEmptyStr
 
 
+class UnitEngagementOptionsGetArgs(StrictModel):
+    side_guid: NonEmptyStr
+    attacker_unit_guid: NonEmptyStr
+    contact_guid: NonEmptyStr
+    weapon_dbid: int | None = Field(default=None, ge=1)
+    mount_dbid: int | None = Field(default=None, ge=1)
+    quantity: int = Field(default=1, ge=1)
+
+
 class ContactListArgs(SideSelector, PageArgs):
     contact_type: str | None = None
 
@@ -633,6 +642,7 @@ class UnitAttackContactArgs(StrictModel):
     mount_dbid: int | None = Field(default=None, ge=1)
     weapon_dbid: int | None = Field(default=None, ge=1)
     quantity: int | None = Field(default=None, ge=1)
+    allow_out_of_nominal_range: bool = False
 
     @model_validator(mode="after")
     def validate_mode_fields(self) -> Self:
@@ -642,6 +652,10 @@ class UnitAttackContactArgs(StrictModel):
                 raise ValueError("manual_weapon mode requires weapon_dbid and quantity")
         elif any(value is not None for value in weapon_fields):
             raise ValueError("weapon allocation fields require manual_weapon mode")
+        if self.allow_out_of_nominal_range and self.mode != "manual_weapon":
+            raise ValueError(
+                "allow_out_of_nominal_range requires manual_weapon mode"
+            )
         return self
 
 
@@ -1418,6 +1432,59 @@ class UnitLoadoutResult(StrictModel):
     name: str
     ready_time_seconds: float | None
     weapons: list[UnitLoadoutWeaponResult]
+
+
+EngagementTargetDomain = Literal["air", "surface", "subsurface", "land", "unknown"]
+EngagementRangeStatus = Literal[
+    "within_nominal_range",
+    "below_nominal_minimum",
+    "beyond_nominal_maximum",
+    "no_domain_capability",
+    "unknown",
+]
+EngagementAssessment = Literal["known_no", "appears_possible", "indeterminate"]
+
+
+class EngagementWeaponSourceResult(StrictModel):
+    source: Literal["loadout", "mount"]
+    mount_guid: str | None
+    mount_dbid: int | None
+    mount_name: str | None
+    mount_status: str | None
+    quantity: int = Field(ge=0)
+    available: bool
+
+
+class EngagementWeaponOptionResult(StrictModel):
+    weapon_dbid: int = Field(ge=1)
+    weapon_name: str
+    weapon_type_code: int | None
+    requested_quantity: int = Field(ge=1)
+    available_quantity: int = Field(ge=0)
+    quantity_sufficient: bool
+    sources: list[EngagementWeaponSourceResult]
+    nominal_min_range_nm: float | None
+    nominal_max_range_nm: float | None
+    valid_target_types: list[str]
+    range_status: EngagementRangeStatus
+    assessment: EngagementAssessment
+    limitations: list[str]
+
+
+class UnitEngagementOptionsResult(StrictModel):
+    attacker_unit_guid: NonEmptyStr
+    contact_guid: NonEmptyStr
+    contact_name: str
+    contact_type: str
+    contact_type_code: int | None
+    target_domain: EngagementTargetDomain
+    horizontal_range_nm: float | None
+    slant_range_nm: float | None
+    requested_quantity: int = Field(ge=1)
+    weapon_dbid: int | None
+    mount_dbid: int | None
+    options: list[EngagementWeaponOptionResult]
+    limitations: list[str]
 
 
 class UnitResult(StrictModel):

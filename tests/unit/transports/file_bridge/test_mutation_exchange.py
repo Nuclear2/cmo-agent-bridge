@@ -3698,10 +3698,10 @@ async def test_unit_add_real_peer_completed_preserves_nonempty_guid_and_terminal
     recovery_schema = command.invocation.recovery_schema
     assert recovery_schema is not None
     assert command.invocation.result_schema.schema_id == (
-        "261d2dc87488e46d344f020815f6901c5db5087ba97e523eaa253a4c24a11414"
+        "0cce847cf40885563c81010511ff9c8cd742bbcfa4780ddf2a30747c58abfdac"
     )
     assert recovery_schema.schema_id == (
-        "82952b360417c2248d02137dc5175c4b994fd1c322cbed72531b2d0e302a23df"
+        "395e1f92a2ceac1864188fe918e4c23d9e2d8900faa4e7a0b0a47d70f37403dc"
     )
     trace: list[str] = []
     peer = _peer(harness, trace=trace)
@@ -3753,10 +3753,10 @@ async def test_dynamic_apply_profile_completed_freezes_effective_mutation_and_ro
     assert command.invocation.contract.base_class is OperationClass.DYNAMIC
     assert command.invocation.effective_class is OperationClass.MUTATION
     assert command.invocation.result_schema.schema_id == (
-        "7def52ddce328f54233debf0fd5587576730994c560aed2c02fd8fa255ef1f17"
+        "41f8a95a06a9ffc0017c8e3a36e4790423b64883be6ffb0f62dcb85922792f3d"
     )
     assert recovery_schema.schema_id == (
-        "fbb53f9bd3bace1dda8dea99cf9fad23b87d1d9563e914ad20a262dd8b62487f"
+        "df6caf5aca7878c485c87c128b9146f3ca4824e8cac18e1f5fd3244fb097b847"
     )
     different_step = OPERATION_REGISTRY.resolve_invocation(
         "compat.probe.step",
@@ -3814,10 +3814,10 @@ async def test_trusted_unit_delete_completed_uses_frozen_proof_without_reauthori
     assert command.invocation.contract.base_class is OperationClass.DESTRUCTIVE
     assert command.invocation.effective_class is OperationClass.DESTRUCTIVE
     assert command.invocation.result_schema.schema_id == (
-        "06ab0efd05895cd1820db49d5cd6a3ba0ea011c32d3b8f4931a4fd95f8c0351a"
+        "51e386e539c81f289031809e2b6148b6901dfac015a482618edc31baf39ffa09"
     )
     assert recovery_schema.schema_id == (
-        "dd801972343609b28a1ff5d1f067b8757e374b386388bf02ef563f7705f274a2"
+        "b9b4bcecbdb4efe7ae67b283c237ea89ea956471adc29d86edcaf78fda581d2f"
     )
     assert command.invocation.public_arguments.model_dump(mode="json") == {
         "unit_guid": "UNIT-DELETE"
@@ -9062,10 +9062,10 @@ async def test_unit_add_missing_guid_raw_response_is_parser_failure_without_arti
     assert recovery_schema is not None
     assert command.invocation.effective_class is OperationClass.MUTATION
     assert command.invocation.result_schema.schema_id == (
-        "261d2dc87488e46d344f020815f6901c5db5087ba97e523eaa253a4c24a11414"
+        "0cce847cf40885563c81010511ff9c8cd742bbcfa4780ddf2a30747c58abfdac"
     )
     assert recovery_schema.schema_id == (
-        "82952b360417c2248d02137dc5175c4b994fd1c322cbed72531b2d0e302a23df"
+        "395e1f92a2ceac1864188fe918e4c23d9e2d8900faa4e7a0b0a47d70f37403dc"
     )
     expected_error_payload: dict[str, JsonValue] = {
         "code": ErrorCode.PROTOCOL_ERROR.value,

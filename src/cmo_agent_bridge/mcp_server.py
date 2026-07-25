@@ -66,6 +66,7 @@ from cmo_agent_bridge.operations.models import (
     SpecialActionListResult,
     UnitCombatStatusResult,
     UnitCatalogResult,
+    UnitEngagementOptionsResult,
     UnitInventoryResult,
     UnitLoadoutResult,
     UnitOperationalStatusBatchResult,
@@ -904,6 +905,41 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         structured_output=True,
     )
 
+    async def unit_engagement_options_get(
+        side_guid: Annotated[str, Field(min_length=1)],
+        attacker_unit_guid: Annotated[str, Field(min_length=1)],
+        contact_guid: Annotated[str, Field(min_length=1)],
+        weapon_dbid: Annotated[int | None, Field(ge=1)] = None,
+        mount_dbid: Annotated[int | None, Field(ge=1)] = None,
+        quantity: Annotated[int, Field(ge=1)] = 1,
+    ) -> UnitEngagementOptionsResult:
+        return await _invoke(
+            application,
+            "unit.engagement_options.get",
+            {
+                "side_guid": side_guid,
+                "attacker_unit_guid": attacker_unit_guid,
+                "contact_guid": contact_guid,
+                "weapon_dbid": weapon_dbid,
+                "mount_dbid": mount_dbid,
+                "quantity": quantity,
+            },
+            UnitEngagementOptionsResult,
+        )
+
+    server.add_tool(
+        unit_engagement_options_get,
+        name="cmo_unit_engagement_options_get",
+        title="Assess CMO unit engagement options",
+        description=(
+            "Compare one unit's immediately carried weapons with an observed contact's domain "
+            "and current range. Results use nominal database envelopes and are not a complete "
+            "firing solution; appears_possible can still be rejected by CMO."
+        ),
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
     async def unit_inventory_get(
         unit_guid: Annotated[str, Field(min_length=1)],
     ) -> UnitInventoryResult:
@@ -1301,6 +1337,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         mount_dbid: Annotated[int | None, Field(ge=1)] = None,
         weapon_dbid: Annotated[int | None, Field(ge=1)] = None,
         quantity: Annotated[int | None, Field(ge=1)] = None,
+        allow_out_of_nominal_range: bool = False,
     ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
@@ -1313,6 +1350,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
                 "mount_dbid": mount_dbid,
                 "weapon_dbid": weapon_dbid,
                 "quantity": quantity,
+                "allow_out_of_nominal_range": allow_out_of_nominal_range,
             },
             QueuedOperationReceipt,
         )
@@ -1324,6 +1362,8 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         description=_queued_mutation_description(
             "Submit an auto, manual-target, or manual-weapon attack command. Success means the "
             "command was accepted, not completed; poll cmo_unit_combat_status_get for progress. "
+            "Manual weapon attacks reject known out-of-envelope choices unless "
+            "allow_out_of_nominal_range=true; use cmo_unit_engagement_options_get first. "
             "Manual weapon allocation is non-idempotent and can allocate additional weapons if "
             "repeated."
         ),

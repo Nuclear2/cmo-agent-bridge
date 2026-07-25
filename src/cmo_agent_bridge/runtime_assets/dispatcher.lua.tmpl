@@ -2659,7 +2659,300 @@ local function unit_refuel_result(arguments)
     return unit_command_snapshot(unit_guid, "refuel")
 end
 
-local function unit_attack_contact_preflight(arguments)
+CMO_AGENT_BRIDGE_ENGAGEMENT = {}
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.target_domain(contact)
+    local type_code = nullable_enum_integer(
+        safe_get(contact, { "typed", "Typed", "type_code", "TypeCode" })
+    )
+    if type_code ~= Json.null then
+        if type_code == 0 or type_code == 1 or type_code == 13 then
+            return type_code, "air"
+        elseif type_code == 2 or type_code == 14 then
+            return type_code, "surface"
+        elseif type_code == 3 or type_code == 9 or type_code == 10 or type_code == 16 then
+            return type_code, "subsurface"
+        elseif type_code == 5
+            or type_code == 7
+            or type_code == 8
+            or type_code == 15
+            or type_code == 18
+            or type_code == 19
+            or type_code == 20
+        then
+            return type_code, "land"
+        end
+    end
+
+    local type_text = lower_text(
+        safe_get(contact, { "type", "Type", "type_description", "TypeDescription" })
+    )
+    if string.find(type_text, "land", 1, true) ~= nil
+        or string.find(type_text, "facility", 1, true) ~= nil
+        or string.find(type_text, "base", 1, true) ~= nil
+        or string.find(type_text, "installation", 1, true) ~= nil
+        or string.find(type_text, "aimpoint", 1, true) ~= nil
+    then
+        return type_code, "land"
+    elseif string.find(type_text, "sub", 1, true) ~= nil
+        or string.find(type_text, "torpedo", 1, true) ~= nil
+        or string.find(type_text, "mine", 1, true) ~= nil
+    then
+        return type_code, "subsurface"
+    elseif string.find(type_text, "surface", 1, true) ~= nil
+        or string.find(type_text, "ship", 1, true) ~= nil
+    then
+        return type_code, "surface"
+    elseif string.find(type_text, "air", 1, true) ~= nil
+        or string.find(type_text, "missile", 1, true) ~= nil
+    then
+        return type_code, "air"
+    end
+    return type_code, "unknown"
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.point(value)
+    local latitude = nullable_number(safe_get(value, { "latitude", "Latitude", "lat" }))
+    local longitude = nullable_number(safe_get(value, { "longitude", "Longitude", "lon" }))
+    if latitude == Json.null or longitude == Json.null then
+        return nil
+    end
+    local point = { latitude = latitude, longitude = longitude }
+    local altitude = nullable_number(
+        safe_get(value, { "altitude", "Altitude", "alt", "depth", "Depth" })
+    )
+    if altitude ~= Json.null then
+        point.altitude = altitude
+    end
+    return point
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.ranges(attacker, contact)
+    local from_point = CMO_AGENT_BRIDGE_ENGAGEMENT.point(attacker)
+    local to_point = CMO_AGENT_BRIDGE_ENGAGEMENT.point(contact)
+    if from_point == nil or to_point == nil then
+        return Json.null, Json.null
+    end
+    local horizontal_ok, horizontal = pcall(Tool_Range, from_point, to_point)
+    local slant_ok, slant = pcall(Tool_Range, from_point, to_point, true)
+    if not horizontal_ok then
+        horizontal = nil
+    end
+    if not slant_ok then
+        slant = nil
+    end
+    return nullable_number(horizontal), nullable_number(slant)
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.mount_available(status)
+    local normalized = lower_text(status)
+    return normalized == "" or normalized == "operational"
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.add_weapon_source(options_by_dbid, weapon, source)
+    local weapon_dbid = integer_or(
+        safe_get(weapon, { "wpn_dbid", "WpnDBID", "dbid", "DBID" }),
+        0
+    )
+    if weapon_dbid <= 0 then
+        return
+    end
+    local option = options_by_dbid[weapon_dbid]
+    if option == nil then
+        option = {
+            weapon_dbid = weapon_dbid,
+            weapon_name = text_or(
+                safe_get(weapon, { "wpn_name", "WpnName", "name", "Name" }),
+                ""
+            ),
+            weapon_type_code = nullable_enum_integer(
+                safe_get(weapon, { "wpn_type", "WpnType", "type", "Type" })
+            ),
+            loadout_quantity = 0,
+            mount_quantity = 0,
+            available_quantity = 0,
+            sources = Json.array(),
+        }
+        options_by_dbid[weapon_dbid] = option
+    end
+    local quantity = math.max(
+        0,
+        integer_or(
+            safe_get(weapon, { "wpn_current", "WpnCurrent", "current", "Current" }),
+            0
+        )
+    )
+    source.quantity = quantity
+    option.sources[#option.sources + 1] = Json.object(source)
+    if source.available == true then
+        if source.source == "loadout" then
+            option.loadout_quantity = option.loadout_quantity + quantity
+        else
+            option.mount_quantity = option.mount_quantity + quantity
+        end
+        -- Aircraft can expose the same stores through both loadout and mount
+        -- records. Compare those two pools instead of double-counting them, but
+        -- sum distinct real mounts so 2+2 rounds is not misreported as only 2.
+        option.available_quantity = math.max(
+            option.loadout_quantity,
+            option.mount_quantity
+        )
+    end
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.inventory(attacker, mount_filter)
+    local options_by_dbid = {}
+    if mount_filter == nil then
+        local loadout = safe_get(attacker, { "loadout", "Loadout" })
+        if loadout == nil or loadout == Json.null then
+            local attacker_guid = object_guid(attacker)
+            local loadout_ok, actual_loadout = pcall(
+                ScenEdit_GetLoadout,
+                { unitname = attacker_guid, LoadoutID = 0 }
+            )
+            if loadout_ok then
+                loadout = actual_loadout
+            end
+        end
+        if loadout ~= nil and loadout ~= Json.null then
+            for _, weapon in ipairs(
+                collect_ordered(safe_get(loadout, { "weapons", "Weapons" }))
+            ) do
+                CMO_AGENT_BRIDGE_ENGAGEMENT.add_weapon_source(options_by_dbid, weapon, {
+                    source = "loadout",
+                    mount_guid = Json.null,
+                    mount_dbid = Json.null,
+                    mount_name = Json.null,
+                    mount_status = Json.null,
+                    available = true,
+                })
+            end
+        end
+    end
+
+    for _, mount in ipairs(
+        collect_ordered(safe_get(attacker, { "mounts", "Mounts" }))
+    ) do
+        local mount_dbid = integer_or(
+            safe_get(mount, { "mount_dbid", "MountDBID", "dbid", "DBID" }),
+            0
+        )
+        if mount_filter == nil or mount_dbid == mount_filter then
+            local mount_status = nullable_text(
+                safe_get(mount, { "mount_status", "MountStatus", "status", "Status" })
+            )
+            local available = CMO_AGENT_BRIDGE_ENGAGEMENT.mount_available(mount_status)
+            for _, weapon in ipairs(
+                collect_ordered(
+                    safe_get(mount, { "mount_weapons", "MountWeapons", "weapons", "Weapons" })
+                )
+            ) do
+                CMO_AGENT_BRIDGE_ENGAGEMENT.add_weapon_source(options_by_dbid, weapon, {
+                    source = "mount",
+                    mount_guid = nullable_text(
+                        safe_get(mount, { "mount_GUID", "mount_guid", "guid", "GUID" })
+                    ),
+                    mount_dbid = mount_dbid > 0 and mount_dbid or Json.null,
+                    mount_name = nullable_text(
+                        safe_get(mount, { "mount_name", "MountName", "name", "Name" })
+                    ),
+                    mount_status = mount_status,
+                    available = available,
+                })
+            end
+        end
+    end
+    return options_by_dbid
+end
+
+CMO_AGENT_BRIDGE_ENGAGEMENT.DOMAIN_RANGE_FIELDS = {
+    air = { "air", "Air", "AIR" },
+    surface = { "surface", "Surface", "SURFACE" },
+    subsurface = { "subsurface", "Subsurface", "SUBSURFACE" },
+    land = { "land", "Land", "LAND" },
+}
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.valid_target_types(weapon)
+    local result = Json.array()
+    for _, value in ipairs(
+        collect_ordered(safe_get(weapon, { "validTargetList", "ValidTargetList" }))
+    ) do
+        local scalar = nullable_scalar(value)
+        if scalar ~= Json.null then
+            result[#result + 1] = tostring(scalar)
+        end
+    end
+    return result
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.weapon_envelope(weapon_dbid, domain)
+    local query_ok, weapon = pcall(ScenEdit_QueryDB, "weapon", weapon_dbid)
+    if not query_ok or weapon == nil or weapon == false then
+        return nil, Json.null, Json.null, Json.array(), false
+    end
+    local range_record = nil
+    local aliases = CMO_AGENT_BRIDGE_ENGAGEMENT.DOMAIN_RANGE_FIELDS[domain]
+    if aliases ~= nil then
+        range_record = safe_get(
+            safe_get(weapon, { "ranges", "Ranges" }),
+            aliases
+        )
+    end
+    local minimum = Json.null
+    local maximum = Json.null
+    if range_record ~= nil and range_record ~= Json.null then
+        minimum = nullable_number(safe_get(range_record, { "min", "Min", "minimum" }))
+        maximum = nullable_number(safe_get(range_record, { "max", "Max", "maximum" }))
+    end
+    return weapon,
+        minimum,
+        maximum,
+        CMO_AGENT_BRIDGE_ENGAGEMENT.valid_target_types(weapon),
+        true
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.range_status(
+    domain,
+    query_succeeded,
+    minimum,
+    maximum,
+    horizontal,
+    slant
+)
+    if domain == "unknown" or not query_succeeded then
+        return "unknown"
+    end
+    -- A missing/unserializable field is uncertainty, not proof that the weapon
+    -- lacks domain capability. Only an explicit non-positive maximum proves that.
+    if maximum == Json.null then
+        return "unknown"
+    end
+    if maximum <= 0 then
+        return "no_domain_capability"
+    end
+    -- Only slant range can prove that a target is below the minimum. Falling
+    -- back to horizontal distance would create false "too close" negatives
+    -- when vertical separation is large.
+    if minimum ~= Json.null and minimum > 0 then
+        if slant == Json.null then
+            return "unknown"
+        end
+        if slant < minimum then
+            return "below_nominal_minimum"
+        end
+    end
+    -- Only horizontal range can conservatively prove that a target exceeds the
+    -- nominal maximum; slant range alone can be inflated by vertical separation.
+    if horizontal == Json.null then
+        return "unknown"
+    end
+    if horizontal > maximum then
+        return "beyond_nominal_maximum"
+    end
+    return "within_nominal_range"
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.context(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local attacker_guid = tostring(arguments.attacker_unit_guid)
@@ -2691,8 +2984,171 @@ local function unit_attack_contact_preflight(arguments)
         side_selector = side_selector,
         attacker_guid = attacker_guid,
         contact_guid = contact_guid,
+        attacker = attacker_before,
         contact = contact,
     }
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.result(arguments, context)
+    local attacker = context.attacker
+    local contact = context.contact
+    local contact_type_code, domain = CMO_AGENT_BRIDGE_ENGAGEMENT.target_domain(contact)
+    local horizontal, slant = CMO_AGENT_BRIDGE_ENGAGEMENT.ranges(attacker, contact)
+    local mount_filter = nil
+    if arguments.mount_dbid ~= nil and arguments.mount_dbid ~= Json.null then
+        mount_filter = integer_or(arguments.mount_dbid, 0)
+    end
+    local weapon_filter = nil
+    if arguments.weapon_dbid ~= nil and arguments.weapon_dbid ~= Json.null then
+        weapon_filter = integer_or(arguments.weapon_dbid, 0)
+    end
+    local requested_quantity = math.max(1, integer_or(arguments.quantity, 1))
+    local options_by_dbid = CMO_AGENT_BRIDGE_ENGAGEMENT.inventory(
+        attacker,
+        mount_filter
+    )
+    if weapon_filter ~= nil and options_by_dbid[weapon_filter] == nil then
+        options_by_dbid[weapon_filter] = {
+            weapon_dbid = weapon_filter,
+            weapon_name = "",
+            weapon_type_code = Json.null,
+            loadout_quantity = 0,
+            mount_quantity = 0,
+            available_quantity = 0,
+            sources = Json.array(),
+        }
+    end
+
+    local weapon_dbids = {}
+    for weapon_dbid, _ in pairs(options_by_dbid) do
+        if weapon_filter == nil or weapon_dbid == weapon_filter then
+            weapon_dbids[#weapon_dbids + 1] = weapon_dbid
+        end
+    end
+    table.sort(weapon_dbids)
+
+    local options = Json.array()
+    for _, weapon_dbid in ipairs(weapon_dbids) do
+        local carried = options_by_dbid[weapon_dbid]
+        local weapon, minimum, maximum, valid_targets, query_succeeded =
+            CMO_AGENT_BRIDGE_ENGAGEMENT.weapon_envelope(weapon_dbid, domain)
+        local weapon_name = carried.weapon_name
+        if weapon_name == "" and weapon ~= nil then
+            weapon_name = text_or(safe_get(weapon, { "name", "Name" }), "")
+        end
+        local range_status = CMO_AGENT_BRIDGE_ENGAGEMENT.range_status(
+            domain,
+            query_succeeded,
+            minimum,
+            maximum,
+            horizontal,
+            slant
+        )
+        local quantity_sufficient = carried.available_quantity >= requested_quantity
+        local assessment
+        if not quantity_sufficient
+            or range_status == "below_nominal_minimum"
+            or range_status == "beyond_nominal_maximum"
+            or range_status == "no_domain_capability"
+        then
+            assessment = "known_no"
+        elseif range_status == "within_nominal_range" then
+            assessment = "appears_possible"
+        else
+            assessment = "indeterminate"
+        end
+
+        local limitations = Json.array()
+        if not quantity_sufficient then
+            limitations[#limitations + 1] =
+                "Requested quantity is not immediately available in the selected loadout or mount."
+        end
+        if not query_succeeded then
+            limitations[#limitations + 1] =
+                "CMO did not return database details for this weapon."
+        elseif range_status == "unknown" then
+            limitations[#limitations + 1] =
+                "The observed target domain or current geometry was not available."
+        end
+        options[#options + 1] = Json.object({
+            weapon_dbid = weapon_dbid,
+            weapon_name = weapon_name,
+            weapon_type_code = carried.weapon_type_code,
+            requested_quantity = requested_quantity,
+            available_quantity = carried.available_quantity,
+            quantity_sufficient = quantity_sufficient,
+            sources = carried.sources,
+            nominal_min_range_nm = minimum,
+            nominal_max_range_nm = maximum,
+            valid_target_types = valid_targets,
+            range_status = range_status,
+            assessment = assessment,
+            limitations = limitations,
+        })
+    end
+
+    return Json.object({
+        attacker_unit_guid = context.attacker_guid,
+        contact_guid = context.contact_guid,
+        contact_name = text_or(safe_get(contact, { "name", "Name" }), ""),
+        contact_type = text_or(
+            safe_get(contact, { "type", "Type", "type_description", "TypeDescription" }),
+            ""
+        ),
+        contact_type_code = contact_type_code,
+        target_domain = domain,
+        horizontal_range_nm = horizontal,
+        slant_range_nm = slant,
+        requested_quantity = requested_quantity,
+        weapon_dbid = weapon_filter ~= nil and weapon_filter or Json.null,
+        mount_dbid = mount_filter ~= nil and mount_filter or Json.null,
+        options = options,
+        limitations = Json.array({
+            "Nominal database ranges are not a complete firing solution.",
+            "Observed contact geometry may be uncertain or stale.",
+            "CMO may still reject or delay fire because of kinematics, launch limits, mount arcs or damage, directors, sensors, doctrine, WRA/ROE, weather, and target quality.",
+        }),
+    })
+end
+
+function CMO_AGENT_BRIDGE_ENGAGEMENT.get_result(arguments)
+    local context = CMO_AGENT_BRIDGE_ENGAGEMENT.context(arguments)
+    return CMO_AGENT_BRIDGE_ENGAGEMENT.result(arguments, context)
+end
+
+local function unit_attack_contact_preflight(arguments)
+    local context = CMO_AGENT_BRIDGE_ENGAGEMENT.context(arguments)
+    if tostring(arguments.mode) ~= "manual_weapon" then
+        return context
+    end
+
+    local engagement = CMO_AGENT_BRIDGE_ENGAGEMENT.result(arguments, context)
+    local option = engagement.options[1]
+    local requested_quantity = math.max(1, integer_or(arguments.quantity, 1))
+    if option == nil or option.available_quantity < requested_quantity then
+        if arguments.mount_dbid ~= nil and arguments.mount_dbid ~= Json.null then
+            error(
+                "specified mount does not have the requested weapon quantity immediately available"
+            )
+        end
+        error("requested weapon quantity is not immediately available")
+    end
+    if arguments.allow_out_of_nominal_range ~= true then
+        local blocked_statuses = {
+            below_nominal_minimum = true,
+            beyond_nominal_maximum = true,
+            no_domain_capability = true,
+        }
+        if blocked_statuses[option.range_status] == true then
+            error(
+                "manual weapon allocation rejected by nominal envelope: "
+                    .. tostring(option.range_status)
+                    .. "; set allow_out_of_nominal_range=true to preallocate intentionally"
+            )
+        end
+    end
+    context.engagement_option = option
+    return context
 end
 
 local function unit_attack_contact_result(arguments, context)
@@ -3389,11 +3845,14 @@ local function contact_weapon_allocations_get_result(arguments)
         contact_guid,
         side_guid
     )
-    if not ok or allocations == nil then
+    if not ok then
         error(
             "ScenEdit_WeaponAllocation failed: "
                 .. text_or(allocations, "no allocation table returned")
         )
+    end
+    if allocations == nil then
+        allocations = {}
     end
     local results = Json.array()
     for _, allocation in ipairs(collect_ordered(allocations)) do
@@ -3636,6 +4095,20 @@ local function nullable_flight_size(value)
         return rendered_size(rendered_value)
     end
     return rendered_size(value)
+end
+
+-- Build 1868 renders mission Size structs as type-name strings in the public
+-- detail table. The Mission wrapper retains the exact integer on its core object.
+local function mission_core_size_value(mission, field)
+    local core = safe_get(mission, { "__mission" })
+    if core == nil or core == Json.null then
+        return Json.null
+    end
+    local size = safe_get(core, { field })
+    if size == nil or size == Json.null then
+        return Json.null
+    end
+    return nullable_integer(safe_get(size, { "value" }))
 end
 
 local function nullable_flight_quantity(value)
@@ -4139,13 +4612,12 @@ local function mission_full_result(mission, side)
             end
         end
         local flight_field = mission_class == "strike" and "StrikeFlightSize" or "FlightSize"
-        flight_size = nullable_flight_size(
-            mission_option_value(
-                details,
-                option_details,
-                { flight_field, string.lower(flight_field) }
+        flight_size = mission_core_size_value(mission, "FlightSize")
+        if flight_size == Json.null then
+            flight_size = nullable_flight_size(
+                mission_option_value(details, option_details, { flight_field })
             )
-        )
+        end
         local use_flight_field = mission_class == "strike"
             and "StrikeUseFlightSize"
             or "UseFlightSize"
@@ -4243,13 +4715,12 @@ local function mission_full_result(mission, side)
         local group_field = mission_class == "strike"
             and "StrikeGroupSize"
             or "GroupSize"
-        group_size = nullable_flight_size(
-            mission_option_value(
-                details,
-                option_details,
-                { group_field, string.lower(group_field) }
+        group_size = mission_core_size_value(mission, "GroupSize")
+        if group_size == Json.null then
+            group_size = nullable_flight_size(
+                mission_option_value(details, option_details, { group_field })
             )
-        )
+        end
         local use_group_field = mission_class == "strike"
             and "StrikeUseGroupSize"
             or "UseGroupSize"
@@ -5048,53 +5519,28 @@ local function mission_update_result(arguments)
     if not ok or updated == nil or updated == false then
         error("ScenEdit_SetMission failed: " .. text_or(updated, "no mission returned"))
     end
-    local returned_actual = nil
-    if object_guid(updated) ~= "" then
-        local projection_ok, projection = pcall(mission_full_result, updated, side)
-        if projection_ok then
-            returned_actual = projection
-        end
-    end
-    local _, actual = mission_readback(side, side_selector, mission_guid)
+    local actual = mission_full_result(updated, side)
     if arguments.flight_size ~= nil and arguments.flight_size ~= Json.null then
         local requested = integer_or(arguments.flight_size, 1)
-        local returned_value = returned_actual ~= nil
-            and returned_actual.flight_size
-            or Json.null
-        local refreshed_value = actual.flight_size
+        local returned_value = actual.flight_size
         local returned_observed = returned_value ~= nil and returned_value ~= Json.null
-        local refreshed_observed = refreshed_value ~= nil and refreshed_value ~= Json.null
         if returned_observed and returned_value ~= requested then
             error(
                 "flight_size readback mismatch: requested="
                     .. diagnostic_value(requested)
                     .. "; observed="
                     .. diagnostic_value(returned_value)
-                    .. "; path=ScenEdit_SetMission.return"
+                    .. "; path=ScenEdit_SetMission.return.__mission.FlightSize.value"
             )
         end
-        if refreshed_observed and refreshed_value ~= requested then
-            error(
-                "flight_size readback mismatch: requested="
-                    .. diagnostic_value(requested)
-                    .. "; observed="
-                    .. diagnostic_value(refreshed_value)
-                    .. "; path=ScenEdit_GetMission.refresh"
-            )
-        end
-        if not returned_observed and not refreshed_observed then
+        if not returned_observed then
             error(
                 "flight_size could not be verified: requested="
                     .. diagnostic_value(requested)
                     .. "; returned="
                     .. diagnostic_value(returned_value)
-                    .. "; refreshed="
-                    .. diagnostic_value(refreshed_value)
-                    .. "; paths=ScenEdit_SetMission.return,ScenEdit_GetMission.refresh"
+                    .. "; path=ScenEdit_SetMission.return.__mission.FlightSize.value"
             )
-        end
-        if not refreshed_observed then
-            actual.flight_size = returned_value
         end
     end
     local scalar_checks = {
@@ -7122,59 +7568,109 @@ local function response_error(code, message, details, mutation_not_started)
 end
 
 local function export_anchor()
+    local cached = CMO_AGENT_BRIDGE_EXPORT_ANCHOR
+    if type(cached) == "table"
+        and type(cached.side_selector) == "string"
+        and cached.side_selector ~= ""
+    then
+        local unit_guid = cached.unit_guid
+        if type(unit_guid) ~= "string" or unit_guid == "" then
+            unit_guid = nil
+        end
+        return cached.side_selector, unit_guid, true
+    end
+
     local ok, wrappers = pcall(VP_GetSides)
     if not ok or wrappers == nil then
-        return nil, nil
+        return nil, nil, false
     end
-    local first_side = nil
-    for _, side in ipairs(collect(wrappers)) do
-        local side_selector = text_or(
-            safe_get(side, { "guid", "Guid", "GUID", "name", "Name" }),
-            ""
-        )
-        if side_selector ~= "" and first_side == nil then
-            first_side = side_selector
-        end
-        for _, unit in ipairs(collect(safe_get(side, { "units", "Units" }))) do
-            local unit_guid = text_or(safe_get(unit, { "guid", "Guid", "GUID" }), "")
-            if side_selector ~= "" and unit_guid ~= "" then
-                return side_selector, unit_guid
+    local scan_ok, side_selector, unit_guid = pcall(function()
+        local first_side = nil
+        for _, side in pairs(wrappers) do
+            local candidate_side = text_or(
+                safe_get(side, { "guid", "Guid", "GUID", "name", "Name" }),
+                ""
+            )
+            if candidate_side ~= "" and first_side == nil then
+                first_side = candidate_side
+            end
+            local units = safe_get(side, { "units", "Units" })
+            if units ~= nil then
+                for _, unit in pairs(units) do
+                    local candidate_unit = text_or(
+                        safe_get(unit, { "guid", "Guid", "GUID" }),
+                        ""
+                    )
+                    if candidate_side ~= "" and candidate_unit ~= "" then
+                        return candidate_side, candidate_unit
+                    end
+                end
             end
         end
+        return first_side, nil
+    end)
+    if not scan_ok then
+        return nil, nil, false
     end
-    return first_side, nil
+    if side_selector ~= nil then
+        CMO_AGENT_BRIDGE_EXPORT_ANCHOR = {
+            side_selector = side_selector,
+            unit_guid = unit_guid,
+        }
+    end
+    return side_selector, unit_guid, false
 end
 
 local function write_response(request_id, envelope_json)
-    local side_selector, unit_guid = export_anchor()
-    if side_selector == nil then
-        print("CMO_AGENT_BRIDGE|EXPORT_FAILED|no side is available for ScenEdit_ExportInst")
-        return false
+    local function attempt(side_selector, unit_guid)
+        if side_selector == nil then
+            return false, "no side is available for ScenEdit_ExportInst"
+        end
+        local units = {}
+        if unit_guid ~= nil then
+            units[1] = unit_guid
+        end
+        local ok, result = pcall(
+            ScenEdit_ExportInst,
+            side_selector,
+            units,
+            {
+                filename = "CMOAgentBridge_Response_" .. request_id .. ".inst",
+                name = "CMO Agent Bridge Response",
+                comment = envelope_json,
+            }
+        )
+        if not ok then
+            return false, text_or(result, "unknown error")
+        end
+        local exported_count = tonumber(result)
+        if exported_count == nil or exported_count < 1 then
+            return false, "no unit was exported"
+        end
+        return true, nil
     end
-    local units = {}
-    if unit_guid ~= nil then
-        units[1] = unit_guid
+
+    local side_selector, unit_guid, used_cached_anchor = export_anchor()
+    local written, failure = attempt(side_selector, unit_guid)
+    if written then
+        return true
     end
-    local ok, result = pcall(
-        ScenEdit_ExportInst,
-        side_selector,
-        units,
-        {
-            filename = "CMOAgentBridge_Response_" .. request_id .. ".inst",
-            name = "CMO Agent Bridge Response",
-            comment = envelope_json,
-        }
-    )
-    if not ok then
-        print("CMO_AGENT_BRIDGE|EXPORT_FAILED|" .. text_or(result, "unknown error"))
-        return false
+
+    -- The cached unit may have been destroyed or transferred since the previous
+    -- response. Refresh once in the same tick; fresh-anchor failures remain on
+    -- the normal polling retry path.
+    CMO_AGENT_BRIDGE_EXPORT_ANCHOR = nil
+    if used_cached_anchor then
+        side_selector, unit_guid = export_anchor()
+        written, failure = attempt(side_selector, unit_guid)
+        if written then
+            return true
+        end
+        CMO_AGENT_BRIDGE_EXPORT_ANCHOR = nil
     end
-    local exported_count = tonumber(result)
-    if exported_count == nil or exported_count < 1 then
-        print("CMO_AGENT_BRIDGE|EXPORT_FAILED|no unit was exported")
-        return false
-    end
-    return true
+
+    print("CMO_AGENT_BRIDGE|EXPORT_FAILED|" .. text_or(failure, "unknown error"))
+    return false
 end
 
 local function envelope(delivery, lineage_id, activation_id, scenario_time, result, failure)
@@ -7361,6 +7857,10 @@ local function dispatch()
         handler = function() return UnitRead.operational_status_batch_result(arguments) end
     elseif operation == "unit.loadout.get" then
         handler = function() return unit_loadout_get_result(arguments) end
+    elseif operation == "unit.engagement_options.get" then
+        handler = function()
+            return CMO_AGENT_BRIDGE_ENGAGEMENT.get_result(arguments)
+        end
     elseif operation == "unit.inventory.get" then
         handler = function() return unit_inventory_get_result(arguments) end
     elseif operation == "unit.set" then

@@ -34,6 +34,8 @@ from cmo_agent_bridge.operations.models import (
     UnitAttackContactArgs,
     UnitAddArgs,
     UnitCombatStatusResult,
+    UnitEngagementOptionsGetArgs,
+    UnitEngagementOptionsResult,
     UnitGetArgs,
     UnitLoadoutResult,
     UnitRefuelArgs,
@@ -58,6 +60,7 @@ EXPECTED_NAMES = {
     "unit.combat_status.get",
     "unit.operational_status.batch",
     "unit.loadout.get",
+    "unit.engagement_options.get",
     "unit.inventory.get",
     "contact.list",
     "contact.get",
@@ -120,11 +123,11 @@ def test_operation_kind_values_are_stable() -> None:
 
 
 def test_registry_surface_is_locked(registry: OperationRegistry) -> None:
-    assert len(registry) == 60
+    assert len(registry) == 61
     assert registry.names == EXPECTED_NAMES
-    assert registry.count(target="cmo") == 56
+    assert registry.count(target="cmo") == 57
     assert registry.count(target="local") == 4
-    assert registry.count(expose_mcp=True) == 52
+    assert registry.count(expose_mcp=True) == 53
     assert registry.hidden_names == {
         "bridge.reconcile",
         "unit.delete",
@@ -492,6 +495,65 @@ def test_unit_operational_read_results_keep_wrapper_details_typed(
     assert isinstance(loadout_result, UnitLoadoutResult)
     assert loadout_result.weapons[0].current == 4
 
+    engagement = registry.resolve_invocation(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-1",
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+        },
+    )
+    assert engagement.public_arguments == UnitEngagementOptionsGetArgs(
+        side_guid="SIDE-1",
+        attacker_unit_guid="UNIT-1",
+        contact_guid="CONTACT-1",
+    )
+    engagement_result = engagement.result_adapter.validate_python(
+        {
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+            "contact_name": "Bogey",
+            "contact_type": "Air",
+            "contact_type_code": 0,
+            "target_domain": "air",
+            "horizontal_range_nm": 45.0,
+            "slant_range_nm": 45.1,
+            "requested_quantity": 1,
+            "weapon_dbid": 2001,
+            "mount_dbid": None,
+            "options": [
+                {
+                    "weapon_dbid": 2001,
+                    "weapon_name": "AAM",
+                    "weapon_type_code": 2002,
+                    "requested_quantity": 1,
+                    "available_quantity": 4,
+                    "quantity_sufficient": True,
+                    "sources": [
+                        {
+                            "source": "loadout",
+                            "mount_guid": None,
+                            "mount_dbid": None,
+                            "mount_name": None,
+                            "mount_status": None,
+                            "quantity": 4,
+                            "available": True,
+                        }
+                    ],
+                    "nominal_min_range_nm": 2.0,
+                    "nominal_max_range_nm": 100.0,
+                    "valid_target_types": ["Aircraft"],
+                    "range_status": "within_nominal_range",
+                    "assessment": "appears_possible",
+                    "limitations": [],
+                }
+            ],
+            "limitations": ["Not a complete firing solution."],
+        }
+    )
+    assert isinstance(engagement_result, UnitEngagementOptionsResult)
+    assert engagement_result.options[0].assessment == "appears_possible"
+
 
 def test_unit_command_and_attack_results_require_acceptance(
     registry: OperationRegistry,
@@ -702,6 +764,7 @@ def test_unit_attack_contact_mode_controls_weapon_allocation_fields() -> None:
             "mount_dbid": 3001,
             "weapon_dbid": 2001,
             "quantity": 2,
+            "allow_out_of_nominal_range": True,
         }
     )
     for invalid in (
@@ -710,6 +773,7 @@ def test_unit_attack_contact_mode_controls_weapon_allocation_fields() -> None:
         {**common, "mode": "manual_weapon", "quantity": 2},
         {**common, "mode": "auto", "weapon_dbid": 2001, "quantity": 2},
         {**common, "mode": "manual_target", "mount_dbid": 3001},
+        {**common, "mode": "auto", "allow_out_of_nominal_range": True},
     ):
         with pytest.raises(ValidationError):
             UnitAttackContactArgs.model_validate(invalid)
@@ -1209,5 +1273,5 @@ def test_generated_manifest_is_canonical_and_complete() -> None:
         raw, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     ).encode()
     assert MANIFEST_SHA256 == hashlib.sha256(canonical).hexdigest()
-    assert len(OPERATIONS) == 60
+    assert len(OPERATIONS) == 61
     assert {entry["name"] for entry in OPERATIONS} == EXPECTED_NAMES

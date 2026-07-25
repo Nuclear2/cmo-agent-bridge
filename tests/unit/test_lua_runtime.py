@@ -249,7 +249,7 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
                 }
             ),
             "target": _lua_table(lua, {"guid": "CONTACT-BLUE-1"}),
-            "firingAt": lua.table_from({0: "CONTACT-BLUE-1"}),
+            "firingAt": lua.table_from([]),
             "firedOn": lua.table_from({0: "UNIT-RED-1"}),
             "targetedBy": lua.table_from({0: "UNIT-RED-2"}),
             "loadout": _lua_table(
@@ -450,6 +450,7 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
             "guid": "CONTACT-BLUE-1",
             "name": "Bogey One",
             "fromside": owner_side,
+            "typed": 0,
             "type": "Air",
             "type_description": "Aircraft",
             "classificationlevel": "KnownClass",
@@ -546,6 +547,7 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
             "guid": "CONTACT-BLUE-0",
             "name": "Unknown Surface",
             "fromside": owner_side,
+            "typed": 2,
             "type": "Surface",
             "type_description": "Unknown surface contact",
             "classificationlevel": "KnownDomain",
@@ -699,15 +701,25 @@ def _run_lua(
     wire_argument_overrides: dict[str, object] | None = None,
     expect_ok: bool = True,
     repeat_dispatches: int = 1,
-    clear_session_cache_between_dispatches: bool = False,
+    clear_delivery_cache_between_dispatches: bool = False,
     remove_g_table_before_dispatch: bool = False,
     export_failures_before_success: int = 0,
     zero_export_results_before_success: int = 0,
+    stale_export_anchor_after_first_success: bool = False,
     large_unit_count: int | None = None,
     large_unit_name_chars: int | None = None,
     target_guid_aliases: dict[str, str] | None = None,
     target_api_return_mode: str = "normal",
     flight_size_readback_mode: str = "normal",
+    engagement_horizontal_range_nm: float = 50.0,
+    engagement_slant_range_nm: float | None = 50.1,
+    weapon_air_min_range_nm: float | None = 2.0,
+    weapon_air_max_range_nm: float | None = 100.0,
+    weapon_query_returns_none: bool = False,
+    weapon_allocation_returns_nil: bool = False,
+    engagement_contact_type_code: int | None = 0,
+    engagement_contact_type_text: str = "Air",
+    additional_weapon_mount_quantity: int | None = None,
     mission_create_finalize_failure: bool = False,
     mission_delete_mode: str = "normal",
 ) -> _LuaRun:
@@ -723,6 +735,7 @@ def _run_lua(
         "named_enum",
         "value_then_code",
         "name_then_description",
+        "build_1868_core",
         "missing",
         "conflict",
     }
@@ -758,6 +771,61 @@ def _run_lua(
     globals_ = cast(Any, lua.globals())
     scenario = _scenario(lua, player_side=player_side)
     fixture = _cmo_fixture(lua)
+    engagement_contact = fixture.contacts[1]
+    engagement_contact["typed"] = engagement_contact_type_code
+    engagement_contact["type"] = engagement_contact_type_text
+    if additional_weapon_mount_quantity is not None:
+        aircraft = fixture.units_by_guid["UNIT-BLUE-1"]
+        mounts = aircraft["mounts"]
+        mounts[len(mounts) + 1] = _lua_table(
+            lua,
+            {
+                "mount_GUID": "MOUNT-BLUE-2",
+                "mount_dbid": 601,
+                "mount_name": "Test Launcher 2",
+                "mount_status": "Operational",
+                "mount_statusR": "",
+                "mount_damage": "None",
+                "mount_weapons": lua.table_from(
+                    [
+                        _lua_table(
+                            lua,
+                            {
+                                "wpn_guid": "MOUNT-WEAPON-2",
+                                "wpn_dbid": 301,
+                                "wpn_name": "Test AAM",
+                                "wpn_type": 2001,
+                                "wpn_current": additional_weapon_mount_quantity,
+                                "wpn_maxcap": additional_weapon_mount_quantity,
+                                "wpn_default": additional_weapon_mount_quantity,
+                            },
+                        )
+                    ]
+                ),
+            },
+        )
+    if flight_size_readback_mode == "build_1868_core":
+        patrol = fixture.missions_by_guid["MISSION-BLUE-1"]
+        patrol["__mission"] = _lua_table(
+            lua,
+            {
+                "FlightSize": _lua_table(lua, {"value": 2}),
+                "GroupSize": _lua_table(lua, {"value": 1}),
+            },
+        )
+        patrol["patrolmission"]["FlightSize"] = "Command_Core.Mission+_FlightSize"
+        patrol["patrolmission"]["GroupSize"] = "Command_Core.Mission+_GroupSize"
+
+        strike = fixture.missions_by_guid["MISSION-BLUE-0"]
+        strike["__mission"] = _lua_table(
+            lua,
+            {
+                "FlightSize": _lua_table(lua, {"value": 4}),
+                "GroupSize": _lua_table(lua, {"value": 1}),
+            },
+        )
+        strike["strikemission"]["StrikeFlightSize"] = "Command_Core.Mission+_FlightSize"
+        strike["strikemission"]["StrikeGroupSize"] = "Command_Core.Mission+_GroupSize"
     target_guid_aliases = target_guid_aliases or {}
     if target_guid_aliases:
         for mission in fixture.missions_by_guid.values():
@@ -786,6 +854,7 @@ def _run_lua(
             "set_reference_point": [],
             "delete_reference_point": [],
             "add_mission": [],
+            "get_mission": [],
             "set_mission": [],
             "delete_mission": [],
             "assign_target": [],
@@ -798,6 +867,8 @@ def _run_lua(
             "refuel_unit": [],
             "attack_contact": [],
             "get_contact": [],
+            "query_db": [],
+            "tool_range": [],
             "set_time_compression": [],
             "get_side_posture": [],
             "weapon_allocation": [],
@@ -829,6 +900,7 @@ def _run_lua(
             "set_event_action": [],
             "add_special_action": [],
             "set_special_action": [],
+            "get_sides": [],
             "export_inst": [],
         },
     }
@@ -880,6 +952,7 @@ def _run_lua(
         return fixture.missions if is_blue_side(side) else None
 
     def get_mission(side: object, selector: object) -> Any | None:
+        capture_call("get_mission", (str(side), str(selector)))
         if not is_blue_side(side):
             return None
         value = str(selector)
@@ -1182,9 +1255,48 @@ def _run_lua(
         if attacker is None or contact is None:
             return False
         attacker["target"] = contact
-        attacker["firingAt"] = lua.table_from({0: str(contact_guid)})
         contact["targetedBy"] = lua.table_from({0: str(attacker_guid)})
         return True
+
+    def query_db(object_type: object, dbid: object) -> Any | None:
+        call = (str(object_type), int(cast(int, dbid)))
+        capture_call("query_db", call)
+        if call != ("weapon", 301) or weapon_query_returns_none:
+            return None
+        air_range: dict[str, object] = {}
+        if weapon_air_min_range_nm is not None:
+            air_range["min"] = weapon_air_min_range_nm
+        if weapon_air_max_range_nm is not None:
+            air_range["max"] = weapon_air_max_range_nm
+        return _lua_table(
+            lua,
+            {
+                "dbid": 301,
+                "name": "Test AAM",
+                "type": "GuidedWeapon",
+                "ranges": _lua_table(
+                    lua,
+                    {"air": _lua_table(lua, air_range)},
+                ),
+                "validTargetList": lua.table_from(["Aircraft", "GuidedWeapon"]),
+            },
+        )
+
+    def tool_range(
+        from_here: Any,
+        to_here: Any,
+        use_slant: object = False,
+    ) -> float | None:
+        capture_call("tool_range", bool(use_slant))
+        assert from_here["latitude"] is not None
+        assert from_here["longitude"] is not None
+        assert to_here["latitude"] is not None
+        assert to_here["longitude"] is not None
+        return (
+            engagement_slant_range_nm
+            if bool(use_slant)
+            else engagement_horizontal_range_nm
+        )
 
     def delete_unit(descriptor: Any) -> bool:
         guid = str(descriptor["guid"])
@@ -1489,6 +1601,15 @@ def _run_lua(
             if descriptor[zone_field] is not None:
                 details[zone_field] = zone_wrapper(descriptor[zone_field])
         flight_field = "StrikeFlightSize" if mission_type == 1 else "FlightSize"
+        group_field = "StrikeGroupSize" if mission_type == 1 else "GroupSize"
+        if flight_size_readback_mode == "build_1868_core":
+            core = mission["__mission"]
+            if descriptor[flight_field] is not None:
+                core["FlightSize"]["value"] = descriptor[flight_field]
+                details[flight_field] = "Command_Core.Mission+_FlightSize"
+            if descriptor[group_field] is not None:
+                core["GroupSize"]["value"] = descriptor[group_field]
+                details[group_field] = "Command_Core.Mission+_GroupSize"
         if descriptor[flight_field] is not None:
             if flight_size_readback_mode == "returned_only":
                 returned_data = table_dict(mission)
@@ -1497,12 +1618,9 @@ def _run_lua(
                 details[flight_field] = None
                 return returned
             if flight_size_readback_mode == "conflict":
-                returned_data = table_dict(mission)
-                returned_data[details_name] = _lua_table(lua, table_dict(details))
-                returned = _lua_table(lua, returned_data)
                 requested = int(cast(int, descriptor[flight_field]))
                 details[flight_field] = 4 if requested != 4 else 2
-                return returned
+                return mission
             if flight_size_readback_mode == "named_enum":
                 size_name = {
                     0: "None",
@@ -1827,6 +1945,8 @@ def _run_lua(
                 str(side_guid),
             ),
         )
+        if weapon_allocation_returns_nil:
+            return None
         return lua.table_from(
             [
                 _lua_table(
@@ -2229,15 +2349,21 @@ def _run_lua(
         capture_call("execute_special_action", guid)
         return "Ok" if guid in special_actions else None
 
+    def get_sides() -> Any:
+        capture_call("get_sides", None)
+        return fixture.sides
+
     globals_.VP_GetScenario = lambda: scenario
     globals_.VP_SetTimeCompression = set_time_compression
-    globals_.VP_GetSides = lambda: fixture.sides
+    globals_.VP_GetSides = get_sides
     globals_.GetBuildNumber = lambda: "Command: Modern Operations Build 1868.4"
     globals_.ScenEdit_CurrentTime = lambda: 1_768_478_400
     globals_.ScenEdit_GetUnit = get_unit
     globals_.ScenEdit_GetContacts = get_contacts
     globals_.ScenEdit_GetContact = get_contact
     globals_.ScenEdit_GetSidePosture = get_side_posture
+    globals_.ScenEdit_QueryDB = query_db
+    globals_.Tool_Range = tool_range
     globals_.ScenEdit_WeaponAllocation = weapon_allocation
     globals_.ScenEdit_GetMissions = get_missions
     globals_.ScenEdit_GetMission = get_mission
@@ -2303,6 +2429,12 @@ def _run_lua(
             raise RuntimeError("simulated ExportInst failure")
         if export_attempts <= zero_export_results_before_success:
             return 0
+        if stale_export_anchor_after_first_success and export_attempts == 2:
+            blue = fixture.sides[2]
+            blue["units"] = lua.table_from(
+                [_lua_table(lua, {"guid": "UNIT-BLUE-0", "name": "Bravo Destroyer"})]
+            )
+            return 0
         captured["side"] = side
         captured["units"] = tuple(cast(str, units[index]) for index in range(1, len(units) + 1))
         captured["comment"] = file_data["comment"]
@@ -2328,7 +2460,7 @@ def _run_lua(
         globals_._G = None
     failed_export_attempts = export_failures_before_success + zero_export_results_before_success
     for index in range(repeat_dispatches):
-        if index > 0 and clear_session_cache_between_dispatches:
+        if index > 0 and clear_delivery_cache_between_dispatches:
             globals_.CMO_AGENT_BRIDGE_RESPONSE_CACHE = None
         expected_dispatch = index >= failed_export_attempts
         assert lua.execute(dispatcher) is expected_dispatch
@@ -2869,7 +3001,7 @@ def test_lua_unit_combat_status_returns_damage_fuel_and_engagement_state() -> No
         }
     ]
     assert result["target_contact_guid"] == "CONTACT-BLUE-1"
-    assert result["firing_at_contact_guids"] == ["CONTACT-BLUE-1"]
+    assert result["firing_at_contact_guids"] == []
     assert result["fired_on_by_unit_guids"] == ["UNIT-RED-1"]
     assert result["targeted_by_unit_guids"] == ["UNIT-RED-2"]
 
@@ -2962,6 +3094,219 @@ def test_lua_unit_refuel_accepts_a_mission_set_and_returns_command_snapshot() ->
     assert cast(dict[str, JsonValue], run.result)["accepted"] is True
 
 
+def test_lua_unit_engagement_options_get_assesses_all_carried_weapons_once() -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "quantity": 2,
+        },
+    )
+
+    result = cast(dict[str, JsonValue], run.result)
+    options = cast(list[dict[str, JsonValue]], result["options"])
+    assert result["target_domain"] == "air"
+    assert result["contact_type_code"] == 0
+    assert result["horizontal_range_nm"] == 50.0
+    assert result["slant_range_nm"] == 50.1
+    assert len(options) == 1
+    option = options[0]
+    assert option["weapon_dbid"] == 301
+    assert option["available_quantity"] == 4
+    assert option["quantity_sufficient"] is True
+    assert option["nominal_min_range_nm"] == 2.0
+    assert option["nominal_max_range_nm"] == 100.0
+    assert option["range_status"] == "within_nominal_range"
+    assert option["assessment"] == "appears_possible"
+    assert [source["source"] for source in cast(list[dict[str, JsonValue]], option["sources"])] == [
+        "loadout",
+        "mount",
+    ]
+    assert run.api_calls["query_db"] == (("weapon", 301),)
+    assert run.api_calls["tool_range"] == (False, True)
+
+
+def test_lua_unit_engagement_options_get_sums_distinct_matching_mounts() -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "weapon_dbid": 301,
+            "mount_dbid": 601,
+            "quantity": 5,
+        },
+        additional_weapon_mount_quantity=3,
+    )
+
+    option = cast(
+        list[dict[str, JsonValue]],
+        cast(dict[str, JsonValue], run.result)["options"],
+    )[0]
+    assert option["available_quantity"] == 5
+    assert option["quantity_sufficient"] is True
+    assert len(cast(list[dict[str, JsonValue]], option["sources"])) == 2
+
+
+@pytest.mark.parametrize(
+    ("contact_type_code", "contact_type", "expected_domain"),
+    [
+        (0, "Air", "air"),
+        (2, "Surface", "surface"),
+        (3, "Submarine", "subsurface"),
+        (7, "Facility_Fixed", "land"),
+    ],
+)
+def test_lua_unit_engagement_options_get_maps_official_contact_domains(
+    contact_type_code: int,
+    contact_type: str,
+    expected_domain: str,
+) -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+        },
+        engagement_contact_type_code=contact_type_code,
+        engagement_contact_type_text=contact_type,
+    )
+
+    result = cast(dict[str, JsonValue], run.result)
+    assert result["contact_type_code"] == contact_type_code
+    assert result["target_domain"] == expected_domain
+
+
+@pytest.mark.parametrize(
+    ("contact_type", "expected_domain"),
+    [
+        ("Subsurface", "subsurface"),
+        ("AirBase", "land"),
+    ],
+)
+def test_lua_unit_engagement_options_get_text_fallback_avoids_overlapping_domains(
+    contact_type: str,
+    expected_domain: str,
+) -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+        },
+        engagement_contact_type_code=None,
+        engagement_contact_type_text=contact_type,
+    )
+
+    result = cast(dict[str, JsonValue], run.result)
+    assert result["contact_type_code"] is None
+    assert result["target_domain"] == expected_domain
+
+
+@pytest.mark.parametrize(
+    ("horizontal_range", "slant_range", "expected_status"),
+    [
+        (1.5, 1.5, "below_nominal_minimum"),
+        (125.0, 125.1, "beyond_nominal_maximum"),
+    ],
+)
+def test_lua_unit_engagement_options_get_reports_known_nominal_range_failures(
+    horizontal_range: float,
+    slant_range: float,
+    expected_status: str,
+) -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "weapon_dbid": 301,
+        },
+        engagement_horizontal_range_nm=horizontal_range,
+        engagement_slant_range_nm=slant_range,
+    )
+
+    option = cast(
+        list[dict[str, JsonValue]],
+        cast(dict[str, JsonValue], run.result)["options"],
+    )[0]
+    assert option["range_status"] == expected_status
+    assert option["assessment"] == "known_no"
+
+
+def test_lua_unit_engagement_options_get_treats_missing_maximum_as_unknown() -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "weapon_dbid": 301,
+        },
+        weapon_air_max_range_nm=None,
+    )
+
+    option = cast(
+        list[dict[str, JsonValue]],
+        cast(dict[str, JsonValue], run.result)["options"],
+    )[0]
+    assert option["range_status"] == "unknown"
+    assert option["assessment"] == "indeterminate"
+
+
+def test_lua_unit_engagement_options_get_does_not_infer_too_close_without_slant() -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "weapon_dbid": 301,
+        },
+        engagement_horizontal_range_nm=1.0,
+        engagement_slant_range_nm=None,
+    )
+
+    option = cast(
+        list[dict[str, JsonValue]],
+        cast(dict[str, JsonValue], run.result)["options"],
+    )[0]
+    assert option["range_status"] == "unknown"
+    assert option["assessment"] == "indeterminate"
+
+
+def test_lua_unit_engagement_options_get_filters_mount_and_reports_no_domain_capability() -> None:
+    run = _run_lua(
+        "unit.engagement_options.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "weapon_dbid": 301,
+            "mount_dbid": 601,
+            "quantity": 2,
+        },
+        weapon_air_max_range_nm=0,
+    )
+
+    option = cast(
+        list[dict[str, JsonValue]],
+        cast(dict[str, JsonValue], run.result)["options"],
+    )[0]
+    assert option["available_quantity"] == 2
+    assert option["range_status"] == "no_domain_capability"
+    assert option["assessment"] == "known_no"
+    assert [source["source"] for source in cast(list[dict[str, JsonValue]], option["sources"])] == [
+        "mount"
+    ]
+
+
 def test_lua_unit_attack_contact_preserves_contact_guid_and_manual_allocation() -> None:
     run = _run_lua(
         "unit.attack_contact",
@@ -2970,7 +3315,7 @@ def test_lua_unit_attack_contact_preserves_contact_guid_and_manual_allocation() 
             "attacker_unit_guid": "UNIT-BLUE-1",
             "contact_guid": "CONTACT-BLUE-1",
             "mode": "manual_weapon",
-            "mount_dbid": 88,
+            "mount_dbid": 601,
             "weapon_dbid": 301,
             "quantity": 2,
         },
@@ -2980,7 +3325,7 @@ def test_lua_unit_attack_contact_preserves_contact_guid_and_manual_allocation() 
         (
             "UNIT-BLUE-1",
             "CONTACT-BLUE-1",
-            {"mode": 1, "mount": 88, "weapon": 301, "qty": 2},
+            {"mode": 1, "mount": 601, "weapon": 301, "qty": 2},
         ),
     )
     assert run.result == {
@@ -2989,9 +3334,114 @@ def test_lua_unit_attack_contact_preserves_contact_guid_and_manual_allocation() 
         "mode": "manual_weapon",
         "accepted": True,
         "primary_target_contact_guid": "CONTACT-BLUE-1",
-        "firing_at_contact_guids": ["CONTACT-BLUE-1"],
+        "firing_at_contact_guids": [],
         "targeted_by_attacker": True,
     }
+
+
+def test_lua_unit_attack_contact_rejects_known_out_of_range_before_mutation() -> None:
+    run = _run_lua(
+        "unit.attack_contact",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "mode": "manual_weapon",
+            "weapon_dbid": 301,
+            "quantity": 1,
+        },
+        expect_ok=False,
+        engagement_horizontal_range_nm=125.0,
+        engagement_slant_range_nm=125.1,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "beyond_nominal_maximum" in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert run.api_calls["attack_contact"] == ()
+
+
+def test_lua_unit_attack_contact_allows_intentional_out_of_range_preallocation() -> None:
+    run = _run_lua(
+        "unit.attack_contact",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "mode": "manual_weapon",
+            "weapon_dbid": 301,
+            "quantity": 1,
+            "allow_out_of_nominal_range": True,
+        },
+        engagement_horizontal_range_nm=125.0,
+        engagement_slant_range_nm=125.1,
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["accepted"] is True
+    assert len(run.api_calls["attack_contact"]) == 1
+
+
+@pytest.mark.parametrize("with_mount", [False, True])
+def test_lua_unit_attack_contact_never_bypasses_missing_inventory(
+    with_mount: bool,
+) -> None:
+    arguments: dict[str, object] = {
+        "side_guid": "SIDE-BLUE",
+        "attacker_unit_guid": "UNIT-BLUE-1",
+        "contact_guid": "CONTACT-BLUE-1",
+        "mode": "manual_weapon",
+        "weapon_dbid": 301,
+        "quantity": 5,
+        "allow_out_of_nominal_range": True,
+    }
+    if with_mount:
+        arguments["mount_dbid"] = 999
+    run = _run_lua("unit.attack_contact", arguments, expect_ok=False)
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "available" in str(details["reason"])
+    assert run.api_calls["attack_contact"] == ()
+
+
+def test_lua_unit_attack_contact_does_not_block_unknown_nominal_range() -> None:
+    run = _run_lua(
+        "unit.attack_contact",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "mode": "manual_weapon",
+            "weapon_dbid": 301,
+            "quantity": 1,
+        },
+        weapon_query_returns_none=True,
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["accepted"] is True
+    assert len(run.api_calls["attack_contact"]) == 1
+
+
+def test_lua_unit_attack_contact_does_not_block_horizontal_only_too_close_guess() -> None:
+    run = _run_lua(
+        "unit.attack_contact",
+        {
+            "side_guid": "SIDE-BLUE",
+            "attacker_unit_guid": "UNIT-BLUE-1",
+            "contact_guid": "CONTACT-BLUE-1",
+            "mode": "manual_weapon",
+            "weapon_dbid": 301,
+            "quantity": 1,
+        },
+        engagement_horizontal_range_nm=1.0,
+        engagement_slant_range_nm=None,
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["accepted"] is True
+    assert len(run.api_calls["attack_contact"]) == 1
 
 
 def test_lua_unit_attack_contact_rejects_attacker_from_another_side() -> None:
@@ -4202,7 +4652,10 @@ def test_lua_mission_update_maps_strike_execution_controls_and_verifies_them() -
     assert result["preplanned_only"] is False
 
 
-@pytest.mark.parametrize("readback_mode", ["returned_only", "named_enum"])
+@pytest.mark.parametrize(
+    "readback_mode",
+    ["returned_only", "named_enum", "build_1868_core"],
+)
 def test_lua_mission_update_verifies_flight_size_across_build_1868_wrapper_shapes(
     readback_mode: str,
 ) -> None:
@@ -4217,6 +4670,41 @@ def test_lua_mission_update_verifies_flight_size_across_build_1868_wrapper_shape
     )
 
     assert cast(dict[str, JsonValue], run.result)["flight_size"] == 2
+
+
+def test_lua_mission_get_reads_build_1868_core_size_values() -> None:
+    run = _run_lua(
+        "mission.get",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+        },
+        flight_size_readback_mode="build_1868_core",
+    )
+
+    result = cast(dict[str, JsonValue], run.result)
+    assert result["flight_size"] == 2
+    assert result["group_size"] == 1
+
+
+def test_lua_mission_update_verifies_build_1868_core_group_size() -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "group_size": 4,
+        },
+        flight_size_readback_mode="build_1868_core",
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["group_size"] == 4
+    # One pre-read plus the fake SetMission implementation's internal lookup;
+    # the dispatcher must not issue a third post-write ScenEdit_GetMission call.
+    assert run.api_calls["get_mission"] == (
+        ("SIDE-BLUE", "MISSION-BLUE-1"),
+        ("SIDE-BLUE", "MISSION-BLUE-1"),
+    )
 
 
 @pytest.mark.parametrize(
@@ -4257,7 +4745,7 @@ def test_lua_mission_update_rejects_unobservable_flight_size_with_diagnostics() 
     reason = str(details["reason"])
     assert "flight_size could not be verified" in reason
     assert "requested=number(2)" in reason
-    assert "ScenEdit_SetMission.return,ScenEdit_GetMission.refresh" in reason
+    assert "ScenEdit_SetMission.return.__mission.FlightSize.value" in reason
 
 
 def test_lua_mission_update_rejects_conflicting_flight_size_readbacks() -> None:
@@ -4277,7 +4765,7 @@ def test_lua_mission_update_rejects_conflicting_flight_size_readbacks() -> None:
     reason = str(details["reason"])
     assert "flight_size readback mismatch" in reason
     assert "observed=number(4)" in reason
-    assert "path=ScenEdit_GetMission.refresh" in reason
+    assert "path=ScenEdit_SetMission.return.__mission.FlightSize.value" in reason
 
 
 @pytest.mark.parametrize(
@@ -4553,16 +5041,32 @@ def test_lua_named_global_cache_does_not_require_g_table() -> None:
     assert run.result["observed_time_compression"] == 30
 
 
-def test_lua_engine_reload_boundary_clears_session_cache_and_allows_reexecution() -> None:
+def test_lua_delivery_cache_clear_allows_reexecution_and_reuses_export_anchor() -> None:
     run = _run_lua(
         "scenario.time_compression.set",
         {"code": 3},
         repeat_dispatches=2,
-        clear_session_cache_between_dispatches=True,
+        clear_delivery_cache_between_dispatches=True,
     )
 
     assert run.api_calls["set_time_compression"] == (3, 3)
     assert len(run.api_calls["export_inst"]) == 2
+    assert run.api_calls["get_sides"] == (None,)
+
+
+def test_lua_stale_cached_export_anchor_is_refreshed_and_retried_once() -> None:
+    run = _run_lua(
+        "scenario.time_compression.set",
+        {"code": 3},
+        repeat_dispatches=2,
+        clear_delivery_cache_between_dispatches=True,
+        stale_export_anchor_after_first_success=True,
+    )
+
+    assert run.api_calls["set_time_compression"] == (3, 3)
+    assert len(run.api_calls["export_inst"]) == 3
+    assert run.api_calls["get_sides"] == (None, None)
+    assert run.export_units == ("UNIT-BLUE-0",)
 
 
 def test_lua_export_failure_retries_cached_envelope_without_rerunning_handler() -> None:
@@ -4681,6 +5185,19 @@ def test_lua_contact_weapon_allocations_get_normalizes_official_six_fields() -> 
                 "quantity_fired": 1,
             }
         ],
+    }
+
+
+def test_lua_contact_weapon_allocations_get_normalizes_nil_as_empty() -> None:
+    run = _run_lua(
+        "contact.weapon_allocations.get",
+        {"side_guid": "SIDE-BLUE", "contact_guid": "CONTACT-BLUE-1"},
+        weapon_allocation_returns_nil=True,
+    )
+
+    assert run.result == {
+        "contact_guid": "CONTACT-BLUE-1",
+        "allocations": [],
     }
 
 

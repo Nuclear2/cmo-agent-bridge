@@ -311,6 +311,35 @@
     }
   },
   {
+    "name": "unit.engagement_options.get",
+    "target": "cmo",
+    "base_class": "read",
+    "public_arguments_model": "UnitEngagementOptionsGetArgs",
+    "wire_arguments_model": "UnitEngagementOptionsGetArgs",
+    "wire_resolver": "model",
+    "effective_class_resolver": "constant",
+    "wire_result_factory": "UnitEngagementOptionsResult",
+    "public_result_factory": "UnitEngagementOptionsResult",
+    "recovery_factory": "none",
+    "confirmation_required": false,
+    "expose_mcp": true,
+    "trusted_fields": [],
+    "invariant_ids": [],
+    "arguments_ast": {
+      "type": "object",
+      "properties": {
+        "side_guid": {"type": "string", "min_length": 1},
+        "attacker_unit_guid": {"type": "string", "min_length": 1},
+        "contact_guid": {"type": "string", "min_length": 1},
+        "weapon_dbid": {"type": "integer", "minimum": 1, "nullable": true},
+        "mount_dbid": {"type": "integer", "minimum": 1, "nullable": true},
+        "quantity": {"type": "integer", "minimum": 1}
+      },
+      "required": ["side_guid", "attacker_unit_guid", "contact_guid"],
+      "no_extra_fields": true
+    }
+  },
+  {
     "name": "contact.list",
     "target": "cmo",
     "base_class": "read",
@@ -740,7 +769,8 @@
         "mode": {"type": "string", "enum": ["auto", "manual_weapon", "manual_target"]},
         "mount_dbid": {"type": "integer", "minimum": 1, "nullable": true},
         "weapon_dbid": {"type": "integer", "minimum": 1, "nullable": true},
-        "quantity": {"type": "integer", "minimum": 1, "nullable": true}
+        "quantity": {"type": "integer", "minimum": 1, "nullable": true},
+        "allow_out_of_nominal_range": {"type": "boolean"}
       },
       "required": ["side_guid", "attacker_unit_guid", "contact_guid", "mode"],
       "no_extra_fields": true

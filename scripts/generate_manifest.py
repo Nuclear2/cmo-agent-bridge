@@ -104,6 +104,11 @@ VALID_ARGUMENTS: dict[str, dict[str, object]] = {
     "unit.combat_status.get": {"unit_guid": "UNIT-1"},
     "unit.operational_status.batch": {"unit_guids": ["UNIT-1", "UNIT-2"]},
     "unit.loadout.get": {"unit_guid": "UNIT-1"},
+    "unit.engagement_options.get": {
+        "side_guid": "SIDE-1",
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+    },
     "contact.list": {"side_name": "Blue"},
     "mission.list": {"side_guid": "SIDE-1"},
     "mission.get": {"side_guid": "SIDE-1", "mission_guid": "MISSION-1"},
@@ -414,6 +419,29 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
         {"unit_guid": "UNIT-1", "tanker_guid": "TANKER-1"},
         {"unit_guid": "UNIT-1", "tanker_mission_guids": ["MISSION-1", "MISSION-2"]},
     ],
+    "unit.engagement_options.get": [
+        {
+            "side_guid": "SIDE-1",
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+            "weapon_dbid": 2001,
+            "quantity": 2,
+        },
+        {
+            "side_guid": "SIDE-1",
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+            "mount_dbid": 3001,
+        },
+        {
+            "side_guid": "SIDE-1",
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+            "weapon_dbid": 2001,
+            "mount_dbid": 3001,
+            "quantity": 1,
+        },
+    ],
     "unit.attack_contact": [
         {
             "side_guid": "SIDE-1",
@@ -435,6 +463,7 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
             "mount_dbid": 3001,
             "weapon_dbid": 2001,
             "quantity": 1,
+            "allow_out_of_nominal_range": True,
         },
     ],
     "mission.update": [
@@ -878,6 +907,16 @@ INVALID_INVOCATIONS: dict[str, list[tuple[str | None, dict[str, object]]]] = {
                 "quantity": 1,
             },
         ),
+        (
+            "unit_attack_contact_mode_fields",
+            {
+                "side_guid": "SIDE-1",
+                "attacker_unit_guid": "UNIT-1",
+                "contact_guid": "CONTACT-1",
+                "mode": "auto",
+                "allow_out_of_nominal_range": True,
+            },
+        ),
     ],
     "mission.create": [
         (
@@ -1287,7 +1326,7 @@ def _validate_surface(entries: list[dict[str, object]]) -> None:
         "local": sum(entry["target"] == "local" for entry in entries),
         "mcp": sum(entry["expose_mcp"] is True for entry in entries),
     }
-    expected = {"entries": 60, "cmo": 56, "local": 4, "mcp": 52}
+    expected = {"entries": 61, "cmo": 57, "local": 4, "mcp": 53}
     if actual != expected:
         raise ValueError(f"operation surface mismatch: expected {expected}, got {actual}")
     hidden = {str(entry["name"]) for entry in entries if entry["expose_mcp"] is False}

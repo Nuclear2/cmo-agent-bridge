@@ -177,6 +177,13 @@ try {
         if ($uiHelperEntries.Count -ne 1) {
             throw "Release wheel must contain exactly one packaged UI time helper."
         }
+        $dispatcherEntries = @(
+            $wheelArchive.Entries |
+                Where-Object FullName -eq 'cmo_agent_bridge/runtime_assets/dispatcher.lua.tmpl'
+        )
+        if ($dispatcherEntries.Count -ne 1) {
+            throw "Release wheel must contain exactly one packaged Lua dispatcher template."
+        }
     }
     finally {
         $wheelArchive.Dispose()

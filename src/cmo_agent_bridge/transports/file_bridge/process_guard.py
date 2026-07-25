@@ -75,6 +75,7 @@ class PsutilCmoProcessInspector:
     def matching_processes(self, command_exe: Path) -> tuple[ProcessInfo, ...]:
         target = _target_executable(command_exe)
         target_key = _windows_normalized(target)
+        target_name = ntpath.basename(target_key)
         try:
             pids = psutil.pids()
         except _IGNORED_PROCESS_ERRORS as error:
@@ -87,6 +88,9 @@ class PsutilCmoProcessInspector:
             try:
                 process = psutil.Process(requested_pid)
                 pid = process.pid
+                process_name = process.name()
+                if ntpath.normcase(process_name) != target_name:
+                    continue
                 executable_text = process.exe()
                 if not executable_text:
                     continue

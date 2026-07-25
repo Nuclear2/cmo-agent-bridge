@@ -674,6 +674,116 @@
     },
     {
       "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.engagement_options.get:valid",
+      "invariant_id": null,
+      "operation": "unit.engagement_options.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": null,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.engagement_options.get:valid-2",
+      "invariant_id": null,
+      "operation": "unit.engagement_options.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": null,
+        "quantity": 2,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": 3001,
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.engagement_options.get:valid-3",
+      "invariant_id": null,
+      "operation": "unit.engagement_options.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": 3001,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": 3001,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      },
+      "id": "unit.engagement_options.get:valid-4",
+      "invariant_id": null,
+      "operation": "unit.engagement_options.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mount_dbid": 3001,
+        "quantity": 1,
+        "side_guid": "SIDE-1",
+        "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.engagement_options.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "unit.engagement_options.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {
         "side_name": "Blue"
       },
       "id": "contact.list:valid",
@@ -1784,6 +1894,7 @@
       "trusted_enrichment": {},
       "valid": true,
       "wire_arguments": {
+        "allow_out_of_nominal_range": false,
         "attacker_unit_guid": "UNIT-1",
         "contact_guid": "CONTACT-1",
         "mode": "manual_weapon",
@@ -1807,6 +1918,7 @@
       "trusted_enrichment": {},
       "valid": true,
       "wire_arguments": {
+        "allow_out_of_nominal_range": false,
         "attacker_unit_guid": "UNIT-1",
         "contact_guid": "CONTACT-1",
         "mode": "auto",
@@ -1830,6 +1942,7 @@
       "trusted_enrichment": {},
       "valid": true,
       "wire_arguments": {
+        "allow_out_of_nominal_range": false,
         "attacker_unit_guid": "UNIT-1",
         "contact_guid": "CONTACT-1",
         "mode": "manual_target",
@@ -1841,6 +1954,7 @@
     },
     {
       "caller_arguments": {
+        "allow_out_of_nominal_range": true,
         "attacker_unit_guid": "UNIT-1",
         "contact_guid": "CONTACT-1",
         "mode": "manual_weapon",
@@ -1856,6 +1970,7 @@
       "trusted_enrichment": {},
       "valid": true,
       "wire_arguments": {
+        "allow_out_of_nominal_range": true,
         "attacker_unit_guid": "UNIT-1",
         "contact_guid": "CONTACT-1",
         "mode": "manual_weapon",
@@ -1933,6 +2048,28 @@
         "quantity": 1,
         "side_guid": "SIDE-1",
         "weapon_dbid": 2001
+      }
+    },
+    {
+      "caller_arguments": {
+        "allow_out_of_nominal_range": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "side_guid": "SIDE-1"
+      },
+      "id": "unit.attack_contact:invalid-invariant-3",
+      "invariant_id": "unit_attack_contact_mode_fields",
+      "operation": "unit.attack_contact",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "allow_out_of_nominal_range": true,
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "mode": "auto",
+        "side_guid": "SIDE-1"
       }
     },
     {
@@ -5339,5 +5476,5 @@
       }
     }
   ],
-  "manifest_sha256": "242af5394a3d1390e47c93aeb6cae5f38b72ca7bd2f4c9ce6c6c7e427e4f0ff7"
+  "manifest_sha256": "81019505d2d4a7de530e0c651c4cdd97deab071d02406ddb3600319aa7c7e9b6"
 }

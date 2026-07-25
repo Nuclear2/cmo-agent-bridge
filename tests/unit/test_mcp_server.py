@@ -549,6 +549,50 @@ def _unit_loadout_result() -> dict[str, JsonValue]:
     }
 
 
+def _unit_engagement_options_result() -> dict[str, JsonValue]:
+    return {
+        "attacker_unit_guid": "UNIT-1",
+        "contact_guid": "CONTACT-1",
+        "contact_name": "Bogey #1",
+        "contact_type": "Air",
+        "contact_type_code": 0,
+        "target_domain": "air",
+        "horizontal_range_nm": 45.0,
+        "slant_range_nm": 45.1,
+        "requested_quantity": 2,
+        "weapon_dbid": 2001,
+        "mount_dbid": None,
+        "options": [
+            {
+                "weapon_dbid": 2001,
+                "weapon_name": "AAM",
+                "weapon_type_code": 200,
+                "requested_quantity": 2,
+                "available_quantity": 4,
+                "quantity_sufficient": True,
+                "sources": [
+                    {
+                        "source": "loadout",
+                        "mount_guid": None,
+                        "mount_dbid": None,
+                        "mount_name": None,
+                        "mount_status": None,
+                        "quantity": 4,
+                        "available": True,
+                    }
+                ],
+                "nominal_min_range_nm": 2.0,
+                "nominal_max_range_nm": 100.0,
+                "valid_target_types": ["Aircraft"],
+                "range_status": "within_nominal_range",
+                "assessment": "appears_possible",
+                "limitations": [],
+            }
+        ],
+        "limitations": ["Not a complete firing solution."],
+    }
+
+
 def _unit_command_result(command: str) -> dict[str, JsonValue]:
     return {
         "unit_guid": "UNIT-1",
@@ -1057,6 +1101,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_unit_combat_status_get",
         "cmo_unit_operational_status_batch",
         "cmo_unit_loadout_get",
+        "cmo_unit_engagement_options_get",
         "cmo_unit_inventory_get",
         "cmo_unit_sensor_set",
         "cmo_unit_magazine_adjust",
@@ -1947,6 +1992,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     unit_assignment = _unit_assign_mission_result()
     combat_status = _unit_combat_status_result()
     loadout = _unit_loadout_result()
+    engagement_options = _unit_engagement_options_result()
     launch = _unit_command_result("launch")
     rtb = _unit_command_result("rtb")
     refuel = _unit_command_result("refuel")
@@ -1975,6 +2021,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
             "unit.get": _success(unit),
             "unit.combat_status.get": _success(combat_status),
             "unit.loadout.get": _success(loadout),
+            "unit.engagement_options.get": _success(engagement_options),
             "unit.set": _success(unit_set),
             "unit.assign_mission": _success(unit_assignment),
             "unit.loadout.set": _success(loadout),
@@ -2033,6 +2080,16 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     unit_loadout_get_response = await server.call_tool(
         "cmo_unit_loadout_get",
         {"unit_guid": "UNIT-1"},
+    )
+    unit_engagement_options_response = await server.call_tool(
+        "cmo_unit_engagement_options_get",
+        {
+            "side_guid": "SIDE-1",
+            "attacker_unit_guid": "UNIT-1",
+            "contact_guid": "CONTACT-1",
+            "weapon_dbid": 2001,
+            "quantity": 2,
+        },
     )
     unit_set_response = await server.call_tool(
         "cmo_unit_set",
@@ -2094,6 +2151,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
             "mount_dbid": 3001,
             "weapon_dbid": 2001,
             "quantity": 2,
+            "allow_out_of_nominal_range": True,
         },
     )
     contact_response = await server.call_tool(
@@ -2235,6 +2293,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     assert _structured_result(unit_get_response) == unit
     assert _structured_result(unit_combat_status_response) == combat_status
     assert _structured_result(unit_loadout_get_response) == loadout
+    assert _structured_result(unit_engagement_options_response) == engagement_options
     _assert_queued_result(unit_set_response, "unit.set")
     _assert_queued_result(unit_assign_mission_response, "unit.assign_mission")
     _assert_queued_result(unit_loadout_set_response, "unit.loadout.set")
@@ -2296,6 +2355,18 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
         _Call(
             "unit.loadout.get",
             {"unit_guid": "UNIT-1"},
+            None,
+        ),
+        _Call(
+            "unit.engagement_options.get",
+            {
+                "side_guid": "SIDE-1",
+                "attacker_unit_guid": "UNIT-1",
+                "contact_guid": "CONTACT-1",
+                "weapon_dbid": 2001,
+                "mount_dbid": None,
+                "quantity": 2,
+            },
             None,
         ),
         _Call(
@@ -2378,6 +2449,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
                 "mount_dbid": 3001,
                 "weapon_dbid": 2001,
                 "quantity": 2,
+                "allow_out_of_nominal_range": True,
             },
             None,
         ),
