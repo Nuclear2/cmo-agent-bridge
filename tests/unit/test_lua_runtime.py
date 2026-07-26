@@ -49,6 +49,26 @@ class _CmoFixture:
     reference_points_by_guid: dict[str, Any]
 
 
+class _FakeCmoEnumWrapper:
+    def __init__(
+        self,
+        name: str,
+        code: int | None,
+        *,
+        display: str | None = None,
+    ) -> None:
+        self._name = name
+        self.value__ = code
+        self.value = None
+        self._display = display if display is not None else f"{name}: {code}"
+
+    def ToString(self) -> str:
+        return self._name
+
+    def __str__(self) -> str:
+        return self._display
+
+
 def _lua_table(lua: LuaRuntime, value: dict[str, object]) -> Any:
     return lua.table_from(value)
 
@@ -722,6 +742,7 @@ def _run_lua(
     additional_weapon_mount_quantity: int | None = None,
     mission_create_finalize_failure: bool = False,
     mission_delete_mode: str = "normal",
+    mission_readback_overrides: dict[str, object] | None = None,
 ) -> _LuaRun:
     assert not (export_failures_before_success and zero_export_results_before_success)
     assert target_api_return_mode in {
@@ -1600,6 +1621,8 @@ def _run_lua(
         for zone_field in ("PatrolZone", "ProsecutionZone", "Zone"):
             if descriptor[zone_field] is not None:
                 details[zone_field] = zone_wrapper(descriptor[zone_field])
+        for field, value in (mission_readback_overrides or {}).items():
+            details[field] = value
         flight_field = "StrikeFlightSize" if mission_type == 1 else "FlightSize"
         group_field = "StrikeGroupSize" if mission_type == 1 else "GroupSize"
         if flight_size_readback_mode == "build_1868_core":
@@ -5505,6 +5528,177 @@ def test_lua_mission_update_maps_extended_strike_controls() -> None:
     assert result["group_size"] == 2
     assert result["strike_minimum_trigger"] == "Hostile"
     assert result["focus_on_strike"] is True
+
+
+@pytest.mark.parametrize(
+    ("argument_name", "cmo_field"),
+    [
+        ("transit_throttle_aircraft", "TransitThrottleAircraft"),
+        ("transit_throttle_ship", "TransitThrottleShip"),
+        ("transit_throttle_submarine", "TransitThrottleSubmarine"),
+        ("station_throttle_aircraft", "StationThrottleAircraft"),
+        ("station_throttle_ship", "StationThrottleShip"),
+        ("station_throttle_submarine", "StationThrottleSubmarine"),
+        ("attack_throttle_aircraft", "AttackThrottleAircraft"),
+        ("attack_throttle_ship", "AttackThrottleShip"),
+        ("attack_throttle_submarine", "AttackThrottleSubmarine"),
+    ],
+)
+def test_lua_mission_update_accepts_named_cmo_enum_wrappers_for_all_throttles(
+    argument_name: str,
+    cmo_field: str,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            argument_name: "ModeAlpha",
+        },
+        mission_readback_overrides={
+            cmo_field: _FakeCmoEnumWrapper("ModeAlpha", 73),
+        },
+    )
+
+    descriptor = cast(tuple[object, object, dict[str, object]], run.api_calls["set_mission"][0])
+    assert descriptor[2][cmo_field] == "ModeAlpha"
+
+
+def test_lua_mission_update_accepts_numeric_cmo_enum_wrapper_value() -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "attack_throttle_aircraft": 73,
+        },
+        mission_readback_overrides={
+            "AttackThrottleAircraft": _FakeCmoEnumWrapper("ModeAlpha", 73),
+        },
+    )
+
+    descriptor = cast(tuple[object, object, dict[str, object]], run.api_calls["set_mission"][0])
+    assert descriptor[2]["AttackThrottleAircraft"] == 73.0
+
+
+@pytest.mark.parametrize("requested", ["ModeAlpha", "ModeAlpha: 73", 73.0])
+def test_lua_mission_update_accepts_decorated_plain_cmo_enum_readbacks(
+    requested: str | float,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "attack_throttle_aircraft": requested,
+        },
+        mission_readback_overrides={"AttackThrottleAircraft": "ModeAlpha: 73"},
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["attack_throttle_aircraft"] == "ModeAlpha: 73"
+
+
+def test_lua_mission_update_accepts_wrapper_with_opaque_display() -> None:
+    _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "attack_throttle_aircraft": "ModeAlpha",
+        },
+        mission_readback_overrides={
+            "AttackThrottleAircraft": _FakeCmoEnumWrapper(
+                "ModeAlpha",
+                73,
+                display="Command_Core.Throttle: 123456",
+            ),
+        },
+    )
+
+
+@pytest.mark.parametrize("requested", ["ModeAlpha", 73.0])
+def test_lua_mission_update_preserves_exact_plain_throttle_readbacks(
+    requested: str | float,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "attack_throttle_aircraft": requested,
+        },
+        mission_readback_overrides={"AttackThrottleAircraft": requested},
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["attack_throttle_aircraft"] == requested
+
+
+@pytest.mark.parametrize(
+    ("requested", "observed"),
+    [
+        ("ModeAlpha", _FakeCmoEnumWrapper("ModeBeta", 73)),
+        (74.0, _FakeCmoEnumWrapper("ModeAlpha", 73)),
+        (
+            "ModeAlpha",
+            _FakeCmoEnumWrapper("ModeAlpha", 73, display="ModeAlpha: 74"),
+        ),
+        (
+            "ModeAlpha",
+            _FakeCmoEnumWrapper("ModeAlpha", 73, display="ModeBeta: 73"),
+        ),
+        (
+            "ModeAlpha",
+            _FakeCmoEnumWrapper("ModeBeta", 73, display="ModeAlpha"),
+        ),
+        (
+            "ModeAlpha",
+            _FakeCmoEnumWrapper("ModeAlpha", None, display="ModeAlpha"),
+        ),
+    ],
+)
+def test_lua_mission_update_rejects_true_cmo_enum_wrapper_mismatches(
+    requested: str | float,
+    observed: _FakeCmoEnumWrapper,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "attack_throttle_aircraft": requested,
+        },
+        mission_readback_overrides={"AttackThrottleAircraft": observed},
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "attack_throttle_aircraft" in reason
+    assert "readback" in reason
+
+
+def test_lua_mission_update_keeps_non_enum_strings_strict() -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-2",
+            "destination_guid": "UNIT-BLUE-0",
+        },
+        mission_readback_overrides={
+            "DestinationUnitID": "UNIT-BLUE-0: 73",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    reason = str(details["reason"])
+    assert "destination_guid" in reason
+    assert "readback" in reason
 
 
 def test_lua_mission_cargo_update_calls_wrapper_method_and_rereads() -> None:

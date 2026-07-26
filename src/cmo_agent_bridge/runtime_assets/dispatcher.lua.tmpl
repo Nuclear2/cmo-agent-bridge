@@ -1031,6 +1031,179 @@ local function diagnostic_value(value)
     return type(value) .. "(" .. rendered .. ")"
 end
 
+BRIDGE.cmo_enum = {}
+
+function BRIDGE.cmo_enum.trimmed_text(value)
+    if type(value) ~= "string" then
+        return nil
+    end
+    local trimmed = string.match(value, "^%s*(.-)%s*$")
+    if trimmed == nil or trimmed == "" then
+        return nil
+    end
+    return trimmed
+end
+
+function BRIDGE.cmo_enum.normalized_name(value)
+    local trimmed = BRIDGE.cmo_enum.trimmed_text(value)
+    if trimmed == nil then
+        return nil
+    end
+    return string.lower(trimmed)
+end
+
+function BRIDGE.cmo_enum.parsed_display(value)
+    local trimmed = BRIDGE.cmo_enum.trimmed_text(value)
+    if trimmed == nil then
+        return nil, nil
+    end
+    local name, code_text = string.match(
+        trimmed,
+        "^(.-)%s*:%s*([%-]?%d+)%s*$"
+    )
+    name = BRIDGE.cmo_enum.trimmed_text(name)
+    local code = tonumber(code_text)
+    if name == nil or code == nil then
+        return nil, nil
+    end
+    return name, code
+end
+
+function BRIDGE.cmo_enum.readback(value)
+    local public_value = nullable_scalar(value)
+    local evidence = {
+        observed = value ~= nil and value ~= Json.null,
+        lua_type = value == nil and "nil"
+            or (value == Json.null and "null" or type(value)),
+        display = nil,
+        name = nil,
+        code = nil,
+        consistent = true,
+        ready = false,
+    }
+    if public_value ~= Json.null then
+        evidence.display = tostring(public_value)
+    end
+    if not evidence.observed then
+        return public_value, evidence
+    end
+
+    local value_type = type(value)
+    if value_type == "number" then
+        evidence.code = nullable_number(value)
+        if evidence.code == Json.null then
+            evidence.code = nil
+        end
+        evidence.ready = evidence.code ~= nil
+        return public_value, evidence
+    end
+
+    if value_type == "string" then
+        local parsed_name, parsed_code = BRIDGE.cmo_enum.parsed_display(value)
+        evidence.name = parsed_name or BRIDGE.cmo_enum.trimmed_text(value)
+        evidence.code = parsed_code
+        evidence.ready = evidence.name ~= nil
+        return public_value, evidence
+    end
+
+    -- CMO's CLR enum wrappers expose the underlying numeric value as value__.
+    local code = nullable_number(safe_get(value, { "value__" }))
+    if code ~= Json.null then
+        evidence.code = code
+    end
+
+    local name_ok, name = pcall(function() return value:ToString() end)
+    if name_ok then
+        evidence.name = BRIDGE.cmo_enum.trimmed_text(name)
+    end
+
+    local parsed_name, parsed_code = BRIDGE.cmo_enum.parsed_display(evidence.display)
+    if parsed_name ~= nil
+        and parsed_code ~= nil
+        and evidence.name ~= nil
+        and evidence.code ~= nil
+    then
+        local display_name_matches = BRIDGE.cmo_enum.normalized_name(parsed_name)
+            == BRIDGE.cmo_enum.normalized_name(evidence.name)
+        local display_code_matches = parsed_code == evidence.code
+        if display_name_matches or display_code_matches then
+            evidence.consistent = display_name_matches and display_code_matches
+        end
+    end
+
+    evidence.ready = evidence.consistent
+        and evidence.name ~= nil
+        and evidence.code ~= nil
+    return public_value, evidence
+end
+
+function BRIDGE.cmo_enum.values_equivalent(requested, actual, evidence)
+    if evidence == nil or not evidence.observed then
+        return false
+    end
+    if evidence.lua_type == "string" or evidence.lua_type == "number" then
+        if requested == actual then
+            return true
+        end
+    end
+    if not evidence.ready then
+        return false
+    end
+
+    if type(requested) == "number" then
+        return evidence.code ~= nil and requested == evidence.code
+    end
+    if type(requested) ~= "string" then
+        return false
+    end
+
+    local requested_name = BRIDGE.cmo_enum.normalized_name(requested)
+    local observed_name = BRIDGE.cmo_enum.normalized_name(evidence.name)
+    if requested_name ~= nil
+        and observed_name ~= nil
+        and requested_name == observed_name
+    then
+        return true
+    end
+    local requested_display_name, requested_display_code =
+        BRIDGE.cmo_enum.parsed_display(requested)
+    if requested_display_name ~= nil
+        and requested_display_code ~= nil
+        and observed_name ~= nil
+        and BRIDGE.cmo_enum.normalized_name(requested_display_name) == observed_name
+        and evidence.code ~= nil
+        and requested_display_code == evidence.code
+    then
+        return true
+    end
+
+    local numeric_request = tonumber(BRIDGE.cmo_enum.trimmed_text(requested))
+    return numeric_request ~= nil
+        and evidence.code ~= nil
+        and numeric_request == evidence.code
+end
+
+function BRIDGE.cmo_enum.evidence_text(evidence)
+    if evidence == nil then
+        return "evidence=missing"
+    end
+    return "evidence={observed="
+        .. tostring(evidence.observed)
+        .. "; lua_type="
+        .. tostring(evidence.lua_type)
+        .. "; display="
+        .. diagnostic_value(evidence.display)
+        .. "; name="
+        .. diagnostic_value(evidence.name)
+        .. "; code="
+        .. diagnostic_value(evidence.code)
+        .. "; consistent="
+        .. tostring(evidence.consistent)
+        .. "; ready="
+        .. tostring(evidence.ready)
+        .. "}"
+end
+
 local function same_identifiers_in_order(left, right)
     if #left ~= #right then
         return false
@@ -4572,6 +4745,7 @@ local function mission_full_result(mission, side)
     local check_wwr = Json.null
     local group_size = Json.null
     local use_group_size = Json.null
+    local readback_evidence = {}
     local transit_throttle_aircraft = Json.null
     local transit_throttle_ship = Json.null
     local transit_throttle_submarine = Json.null
@@ -4731,69 +4905,78 @@ local function mission_full_result(mission, side)
                 { use_group_field, string.lower(use_group_field) }
             )
         )
-        transit_throttle_aircraft = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "TransitThrottleAircraft", "transitthrottleaircraft" }
+        transit_throttle_aircraft, readback_evidence.transit_throttle_aircraft =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "TransitThrottleAircraft", "transitthrottleaircraft" }
+                )
             )
-        )
-        transit_throttle_ship = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "TransitThrottleShip", "transitthrottleship" }
+        transit_throttle_ship, readback_evidence.transit_throttle_ship =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "TransitThrottleShip", "transitthrottleship" }
+                )
             )
-        )
-        transit_throttle_submarine = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "TransitThrottleSubmarine", "transitthrottlesubmarine" }
+        transit_throttle_submarine, readback_evidence.transit_throttle_submarine =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "TransitThrottleSubmarine", "transitthrottlesubmarine" }
+                )
             )
-        )
-        station_throttle_aircraft = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "StationThrottleAircraft", "stationthrottleaircraft" }
+        station_throttle_aircraft, readback_evidence.station_throttle_aircraft =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "StationThrottleAircraft", "stationthrottleaircraft" }
+                )
             )
-        )
-        station_throttle_ship = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "StationThrottleShip", "stationthrottleship" }
+        station_throttle_ship, readback_evidence.station_throttle_ship =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "StationThrottleShip", "stationthrottleship" }
+                )
             )
-        )
-        station_throttle_submarine = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "StationThrottleSubmarine", "stationthrottlesubmarine" }
+        station_throttle_submarine, readback_evidence.station_throttle_submarine =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "StationThrottleSubmarine", "stationthrottlesubmarine" }
+                )
             )
-        )
-        attack_throttle_aircraft = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "AttackThrottleAircraft", "attackthrottleaircraft" }
+        attack_throttle_aircraft, readback_evidence.attack_throttle_aircraft =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "AttackThrottleAircraft", "attackthrottleaircraft" }
+                )
             )
-        )
-        attack_throttle_ship = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "AttackThrottleShip", "attackthrottleship" }
+        attack_throttle_ship, readback_evidence.attack_throttle_ship =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "AttackThrottleShip", "attackthrottleship" }
+                )
             )
-        )
-        attack_throttle_submarine = nullable_scalar(
-            mission_option_value(
-                details,
-                option_details,
-                { "AttackThrottleSubmarine", "attackthrottlesubmarine" }
+        attack_throttle_submarine, readback_evidence.attack_throttle_submarine =
+            BRIDGE.cmo_enum.readback(
+                mission_option_value(
+                    details,
+                    option_details,
+                    { "AttackThrottleSubmarine", "attackthrottlesubmarine" }
+                )
             )
-        )
         transit_altitude_aircraft = nullable_scalar(
             mission_option_value(
                 details,
@@ -4955,7 +5138,7 @@ local function mission_full_result(mission, side)
         end
     end
 
-    return {
+    local result = {
         guid = text_or(safe_get(mission, { "guid", "Guid", "GUID" }), "unknown-mission"),
         name = text_or(safe_get(mission, { "name", "Name" }), ""),
         side_name = object_name(safe_get(mission, { "side", "Side" })),
@@ -5023,6 +5206,7 @@ local function mission_full_result(mission, side)
         assigned_cargo = assigned_cargo_results(mission),
         air_refueling = mission_air_refueling_settings(mission, details),
     }
+    return result, readback_evidence
 end
 
 local function mission_list_result(arguments)
@@ -5064,7 +5248,8 @@ local function mission_get_result(arguments)
     if mission == nil then
         error("mission was not found")
     end
-    return Json.object(mission_full_result(mission, side))
+    local result = mission_full_result(mission, side)
+    return Json.object(result)
 end
 
 local function mission_readback(side, side_selector, mission_guid)
@@ -5072,7 +5257,8 @@ local function mission_readback(side, side_selector, mission_guid)
     if not ok or mission == nil then
         error("mission could not be read back: " .. text_or(mission, "not found"))
     end
-    return mission, mission_full_result(mission, side)
+    local result = mission_full_result(mission, side)
+    return mission, result
 end
 
 local function mission_create_result(arguments)
@@ -5519,7 +5705,7 @@ local function mission_update_result(arguments)
     if not ok or updated == nil or updated == false then
         error("ScenEdit_SetMission failed: " .. text_or(updated, "no mission returned"))
     end
-    local actual = mission_full_result(updated, side)
+    local actual, readback_evidence = mission_full_result(updated, side)
     if arguments.flight_size ~= nil and arguments.flight_size ~= Json.null then
         local requested = integer_or(arguments.flight_size, 1)
         local returned_value = actual.flight_size
@@ -5564,38 +5750,56 @@ local function mission_update_result(arguments)
         {
             argument = "transit_throttle_aircraft",
             actual = actual.transit_throttle_aircraft,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.transit_throttle_aircraft,
         },
         {
             argument = "transit_throttle_ship",
             actual = actual.transit_throttle_ship,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.transit_throttle_ship,
         },
         {
             argument = "transit_throttle_submarine",
             actual = actual.transit_throttle_submarine,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.transit_throttle_submarine,
         },
         {
             argument = "station_throttle_aircraft",
             actual = actual.station_throttle_aircraft,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.station_throttle_aircraft,
         },
         {
             argument = "station_throttle_ship",
             actual = actual.station_throttle_ship,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.station_throttle_ship,
         },
         {
             argument = "station_throttle_submarine",
             actual = actual.station_throttle_submarine,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.station_throttle_submarine,
         },
         {
             argument = "attack_throttle_aircraft",
             actual = actual.attack_throttle_aircraft,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.attack_throttle_aircraft,
         },
         {
             argument = "attack_throttle_ship",
             actual = actual.attack_throttle_ship,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.attack_throttle_ship,
         },
         {
             argument = "attack_throttle_submarine",
             actual = actual.attack_throttle_submarine,
+            semantic = "cmo_enum",
+            evidence = readback_evidence.attack_throttle_submarine,
         },
         {
             argument = "transit_altitude_aircraft",
@@ -5662,11 +5866,28 @@ local function mission_update_result(arguments)
     }
     for _, check in ipairs(scalar_checks) do
         local requested = arguments[check.argument]
-        if requested ~= nil
-            and requested ~= Json.null
-            and check.actual ~= requested
-        then
-            error(check.argument .. " did not match mission readback")
+        if requested ~= nil and requested ~= Json.null then
+            local matches = check.actual == requested
+            if check.semantic == "cmo_enum" then
+                matches = BRIDGE.cmo_enum.values_equivalent(
+                    requested,
+                    check.actual,
+                    check.evidence
+                )
+            end
+            if not matches then
+                local evidence = check.semantic == "cmo_enum"
+                    and ("; " .. BRIDGE.cmo_enum.evidence_text(check.evidence))
+                    or ""
+                error(
+                    check.argument
+                        .. " did not match mission readback: requested="
+                        .. diagnostic_value(requested)
+                        .. "; observed="
+                        .. diagnostic_value(check.actual)
+                        .. evidence
+                )
+            end
         end
     end
     if arguments.reference_point_guids ~= nil

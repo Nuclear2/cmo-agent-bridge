@@ -10,7 +10,7 @@
 
 > **平台支持：仅限 Windows。**
 
-[下载 v0.6.0](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.0) ·
+[下载 v0.6.1](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1) ·
 [快速上手](docs/quickstart.md) ·
 [各框架安装](docs/frameworks/README.md) ·
 [CMO Lua API](https://commandlua.github.io/)
@@ -29,7 +29,7 @@ ROE、时间限制与胜负标准，再开始态势评估和部署；其他阵�
 单位深读战备、载荷和库存。这样既能看清数百个单位的整体编成，也不会把时间和上下文浪费在无关
 单位的完整字段上。
 
-> **当前版本是 v0.6.0 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
+> **当前版本是 v0.6.1 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
 > 想定副本。
 
 ## 你可以直接这样说
@@ -77,7 +77,7 @@ uv --version
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.0/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.1/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -129,7 +129,7 @@ OpenCode、Cursor、Qoder 和通用 MCP 客户端的配置见[各框架安装](d
 插件仍固定使用同版本 wheel：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.0/cmo_agent_bridge-0.6.0-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.1/cmo_agent_bridge-0.6.1-py3-none-any.whl"
 ```
 
 升级已有安装时，先用旧/当前版本确认 `cmo_queue_status` 中 `queued=0`、`active=0`，并让 worker
@@ -267,7 +267,7 @@ bridge 以本地 `stdio` 进程运行。Agent、Python 进程和 CMO Lua 运行�
 
 ## 项目状态
 
-- 当前版本：[`v0.6.0 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.0)
+- 当前版本：[`v0.6.1 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1)
 - 已验证环境：Windows 10/11、CMO Build 1868
 - Python：3.12，由 `uv` 隔离管理
 - 许可证：[MIT](LICENSE)

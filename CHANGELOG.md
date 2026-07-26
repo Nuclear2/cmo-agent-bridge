@@ -4,6 +4,31 @@
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-07-26 (Preview)
+
+这一版修复 CMO Build 1868 中任务油门枚举的写后回读：Lua API 返回的是 CLR `userdata`
+包装器，而不是普通字符串或数字，旧版会把已经成功应用的油门设置误判为不一致。
+
+### Fixed
+
+- `mission.update` 现在只对九个任务油门字段启用枚举语义核验。包装器名称取自
+  `ToString()`，底层数值取自 `value__`，不维护 `Cruise=2` 一类易失的硬编码映射。
+- 继续直接核验 `ScenEdit_SetMission` 返回的 Mission，不增加一次
+  `ScenEdit_GetMission`。普通字符串、数字和 `Name: code` 文本仍可兼容；包装器证据缺失或
+  相互矛盾时保持 fail-closed，并在错误中附带实际证据。
+- GUID、任务高度、距离和其他非枚举字段继续严格比较，不会因为油门兼容修复而放宽。
+
+### Testing
+
+- 在 CMO Build 1868 实机中把 `OP-J36-CAP` 的航空器转场油门从 `Cruise` 改为 `Full`，
+  `SetMission` 返回 `Full: 3`，写入与回读均成功且没有产生隔离。
+- 放宽 Windows CI 中跨 fsync、SQLite 和异步假对端的成功响应测试时限，减少与功能无关的
+  慢机时序失败。
+
+### Changed
+
+- 项目版本升级到 `0.6.1`。
+
 ## [0.6.0] - 2026-07-25 (Preview)
 
 这一版为手动武器分配加入名义射程预检和越界保护，降低轻量同步读取的主机进程探测开销，并修复
@@ -334,6 +359,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.6.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.5.0
 [0.4.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.4.0
