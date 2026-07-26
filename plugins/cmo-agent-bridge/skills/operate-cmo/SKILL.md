@@ -346,8 +346,17 @@ Intervene in scenario time only as much as the decision requires:
 
 Treat `rate_code=4` and `rate_code=5` as CMO's CPU-driven coarse one-second and five-second slice
 modes, not fixed 30x and 150x clocks. Their legacy UI labels or readbacks do not bound actual
-scenario-time advance. Use short observed intervals and scenario-time checkpoints; never convert
-a fixed wall-clock wait into assumed scenario-time advance at either coarse rate.
+scenario-time advance. Before selecting either coarse mode, define the next scenario-time or
+observable-event checkpoint before the next consequential decision horizon, plus a conservative
+wall-clock interval for rereading scenario time. Do not start an open-ended coarse run, and never
+convert a fixed wall-clock wait into assumed scenario-time advance.
+
+After any error from `cmo_time_get_state`, `cmo_time_set`, or `cmo_simulation_pulse`, do not retry
+blindly or assume either the requested state or the previously observed state. If the error
+explicitly reports `safety_pause_verified=true`, treat `paused` as verified and do not call
+`cmo_time_get_state` again. Otherwise, for a recoverable failure, make at most one follow-up
+`cmo_time_get_state` call, and only when the next decision genuinely depends on the final time
+state; if that read fails, stop and report the ambiguity.
 
 For a deliberate pause, preserve the observed run/pause state and compression, collect the fresh
 state needed for planning, then pause. Plan and enqueue independent mutations while time is stopped.
@@ -387,8 +396,9 @@ and never resubmit a durable request because a pulse or local wait timed out.
    full `cmo_unit_list` is explicitly necessary, its filtered page may be short or empty while a
    non-null cursor still means more candidates remain; only `next_cursor=null` ends that scan.
 8. Do not resubmit a mutation because `cmo_request_wait` timed out. Query the same request ID until
-   it is terminal. After a synchronous read timeout, recover polling and read again without
-   duplicating any already submitted mutation.
+   it is terminal. After a Lua-backed synchronous read timeout, recover polling before making at
+   most one decision-required reread; do not duplicate any submitted mutation. Time-control tool
+   errors follow the bounded recovery rule above instead.
 9. Preserve exact returned values and distinguish requested values from CMO readback. A mutation
    result is a bounded projection, not a complete wrapper.
 10. Stop dependent actions when the bridge binding, polling event, or loaded scenario is uncertain.

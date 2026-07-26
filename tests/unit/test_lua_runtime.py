@@ -743,6 +743,7 @@ def _run_lua(
     mission_create_finalize_failure: bool = False,
     mission_delete_mode: str = "normal",
     mission_readback_overrides: dict[str, object] | None = None,
+    special_action_execute_effect: str = "none",
 ) -> _LuaRun:
     assert not (export_failures_before_success and zero_export_results_before_success)
     assert target_api_return_mode in {
@@ -761,6 +762,7 @@ def _run_lua(
         "conflict",
     }
     assert mission_delete_mode in {"normal", "failure", "residual"}
+    assert special_action_execute_effect in {"none", "delete", "rename"}
     snapshot = create_runtime_snapshot()
     activation_id = uuid4()
     invocation = _invocation(operation, public_arguments, activation_id)
@@ -855,6 +857,10 @@ def _run_lua(
                 for target in mission["targetlist"].values()
             ]
             mission["targetlist"] = lua.table_from(targets)
+        for contact in fixture.contacts.values():
+            canonical_guid = target_guid_aliases.get(str(contact["guid"]))
+            if canonical_guid is not None:
+                contact["actualunitid"] = canonical_guid
     if large_unit_count is not None:
         _replace_with_large_unit_fixture(
             lua,
@@ -1908,10 +1914,17 @@ def _run_lua(
 
     def get_doctrine(selector: Any) -> Any | None:
         target = doctrine_target(selector)
+        side = selector["side"]
         capture_call(
             "get_doctrine",
-            {"target": target, "actual": bool(selector["actual"])},
+            {
+                "target": target,
+                "side": None if side is None else str(side),
+                "actual": bool(selector["actual"]),
+            },
         )
+        if selector["mission"] is not None and side is None:
+            raise RuntimeError("To select a mission you need to define a side.")
         return doctrine_states.get(target)
 
     def set_doctrine(selector: Any, updates: Any) -> Any | None:
@@ -2370,7 +2383,14 @@ def _run_lua(
     def execute_special_action(action_guid: object) -> str | None:
         guid = str(action_guid)
         capture_call("execute_special_action", guid)
-        return "Ok" if guid in special_actions else None
+        action = special_actions.get(guid)
+        if action is None:
+            return None
+        if special_action_execute_effect == "delete":
+            special_actions.pop(guid)
+        elif special_action_execute_effect == "rename":
+            action["name"] = "Renamed after execution"
+        return "Ok"
 
     def get_sides() -> Any:
         capture_call("get_sides", None)
@@ -3909,6 +3929,33 @@ def test_lua_call_event_component_keeps_trusted_envelope_authoritative() -> None
     )
 
 
+def test_lua_call_event_component_list_failure_is_rejected_before_mutation() -> None:
+    run = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": {
+                "mode": "list",
+                "component_id_or_name": "Missing action",
+            },
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_action"] == (
+        {
+            "mode": "list",
+            "description": "Missing action",
+        },
+    )
+
+
 @pytest.mark.parametrize(
     ("function_name", "call_name", "component_guid", "event_field"),
     [
@@ -4865,7 +4912,7 @@ def test_lua_mission_target_updates_verify_canonical_guids_returned_by_cmo(
     }
 
 
-def test_lua_mission_target_remove_rejects_a_canonical_guid_absent_before_mutation() -> None:
+def test_lua_mission_target_remove_rejects_an_unexpected_canonical_guid() -> None:
     run = _run_lua(
         "mission.target.remove",
         {
@@ -4881,9 +4928,32 @@ def test_lua_mission_target_remove_rejects_a_canonical_guid_absent_before_mutati
     assert error["code"] == "CMO_LUA_ERROR"
     details = cast(dict[str, JsonValue], error["details"])
     reason = str(details["reason"])
-    assert "mission target removal return was not present before mutation" in reason
+    assert "mission target removal returned an unexpected canonical GUID" in reason
+    assert "expected=CONTACT-BLUE-0" in reason
     assert "canonical=UNIT-RED-NOT-PRESENT" in reason
     assert run.mission_target_guids["MISSION-BLUE-0"] == ("CONTACT-BLUE-0",)
+
+
+def test_lua_mission_target_remove_rejects_an_unassigned_target_before_mutation() -> None:
+    run = _run_lua(
+        "mission.target.remove",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": "CONTACT-BLUE-1",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "mission target was not assigned before removal" in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["remove_target"] == ()
 
 
 @pytest.mark.parametrize(
@@ -4987,6 +5057,56 @@ def test_lua_doctrine_set_uses_official_keys_and_returns_actual_readback() -> No
     assert result["refuel_unrep"] == "Always_IncludingTankersRefuellingTankers"
 
 
+@pytest.mark.parametrize(
+    ("operation", "scope", "selector", "expected_target_guid"),
+    [
+        ("doctrine.get", "side", {"side_guid": "SIDE-BLUE"}, "SIDE-BLUE"),
+        (
+            "doctrine.get",
+            "unit",
+            {"side_guid": "SIDE-BLUE", "unit_guid": "UNIT-BLUE-1"},
+            "UNIT-BLUE-1",
+        ),
+        (
+            "doctrine.get",
+            "mission",
+            {"side_guid": "SIDE-BLUE", "mission_guid": "MISSION-BLUE-1"},
+            "MISSION-BLUE-1",
+        ),
+        ("doctrine.set", "side", {"side_guid": "SIDE-BLUE"}, "SIDE-BLUE"),
+        (
+            "doctrine.set",
+            "unit",
+            {"side_guid": "SIDE-BLUE", "unit_guid": "UNIT-BLUE-1"},
+            "UNIT-BLUE-1",
+        ),
+        (
+            "doctrine.set",
+            "mission",
+            {"side_guid": "SIDE-BLUE", "mission_guid": "MISSION-BLUE-1"},
+            "MISSION-BLUE-1",
+        ),
+    ],
+)
+def test_lua_doctrine_get_and_set_project_the_scope_target_guid(
+    operation: str,
+    scope: str,
+    selector: dict[str, object],
+    expected_target_guid: str,
+) -> None:
+    arguments = {"scope": scope, **selector}
+    if operation == "doctrine.get":
+        arguments["actual"] = True
+    else:
+        arguments["weapon_control_air"] = "Hold"
+
+    run = _run_lua(operation, arguments)
+    result = cast(dict[str, JsonValue], run.result)
+
+    assert result["scope"] == scope
+    assert result["target_guid"] == expected_target_guid
+
+
 def test_lua_emcon_set_reads_back_transmitters_when_inheritance_is_unobservable() -> None:
     run = _run_lua(
         "emcon.set",
@@ -5010,6 +5130,65 @@ def test_lua_emcon_set_reads_back_transmitters_when_inheritance_is_unobservable(
         "sonar": "Passive",
         "oecm": "Passive",
     }
+
+
+def test_lua_emcon_set_resolves_mission_side_before_write_and_readback() -> None:
+    run = _run_lua(
+        "emcon.set",
+        {
+            "scope": "mission",
+            "target_guid": "MISSION-BLUE-1",
+            "radar": "Active",
+            "oecm": "Active",
+        },
+    )
+
+    assert run.api_calls["set_emcon"] == (
+        ("Mission", "MISSION-BLUE-1", "Radar=Active;OECM=Active"),
+    )
+    assert run.api_calls["get_doctrine"] == (
+        {
+            "target": "MISSION-BLUE-1",
+            "side": "SIDE-BLUE",
+            "actual": False,
+        },
+        {
+            "target": "MISSION-BLUE-1",
+            "side": "SIDE-BLUE",
+            "actual": True,
+        },
+    )
+    assert run.result == {
+        "scope": "mission",
+        "target_guid": "MISSION-BLUE-1",
+        "inherit": None,
+        "radar": "Active",
+        "sonar": "Active",
+        "oecm": "Active",
+    }
+
+
+def test_lua_emcon_set_rejects_an_unknown_mission_before_mutation() -> None:
+    run = _run_lua(
+        "emcon.set",
+        {
+            "scope": "mission",
+            "target_guid": "MISSION-MISSING",
+            "radar": "Active",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["schema_version"] == 1
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "emcon.set"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_emcon"] == ()
+    assert run.api_calls["get_doctrine"] == ()
 
 
 @pytest.mark.parametrize(
@@ -5895,15 +6074,21 @@ def test_lua_special_action_list_all_sides_omits_script_text() -> None:
     }
 
 
-def test_lua_special_action_execute_verifies_side_executes_guid_and_rereads() -> None:
+@pytest.mark.parametrize(
+    "special_action_execute_effect",
+    ["none", "delete", "rename"],
+)
+def test_lua_special_action_execute_uses_preflight_snapshot_without_post_read(
+    special_action_execute_effect: str,
+) -> None:
     run = _run_lua(
         "special_action.execute",
         {"side_guid": "SIDE-BLUE", "action_guid": "ACTION-BLUE-1"},
+        special_action_execute_effect=special_action_execute_effect,
     )
 
     assert run.api_calls["execute_special_action"] == ("ACTION-BLUE-1",)
     assert run.api_calls["get_special_action"] == (
-        {"side": "SIDE-BLUE", "ActionNameOrID": "ACTION-BLUE-1"},
         {"side": "SIDE-BLUE", "ActionNameOrID": "ACTION-BLUE-1"},
     )
     assert run.result == {

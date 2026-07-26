@@ -92,8 +92,10 @@ Then choose the least intrusive procedure:
 
 Treat `rate_code=4` and `rate_code=5` as CMO's CPU-driven coarse one-second and five-second slice
 modes, not fixed 30x and 150x multipliers. Do not translate a wall-clock sleep into assumed
-scenario-time advance. Use short observed intervals, check scenario time, and reduce compression
-before a decision horizon can be crossed.
+scenario-time advance. Before entering either mode, choose the next scenario-time or
+observable-event checkpoint before the next consequential decision horizon, and set a conservative
+wall-clock interval for rereading scenario time. At that checkpoint, reassess before continuing or
+reduce compression. Never begin an open-ended coarse run.
 
 While deliberately paused, plan first and submit independent mutations in intended FIFO order. Use
 `cmo_request_list` to collect every current non-terminal `queued` or `active` UUID, then pass that
@@ -110,6 +112,19 @@ the Agent changed. If execution, binding, or final-pause verification fails, cho
 safest verified state rather than blindly resuming. A pulse advances some scenario time because the
 Regular Time trigger cannot run at absolute zero time. See [tool-catalog.md](tool-catalog.md) for the
 host UI tool contracts.
+
+For any error from `cmo_time_get_state`, `cmo_time_set`, or `cmo_simulation_pulse`:
+
+1. Stop the current time-control sequence. Do not repeat the failed call or infer success, failure,
+   the requested state, or the previous state; `action_may_have_applied=true` explicitly means the
+   outcome may be ambiguous.
+2. If the error reports `safety_pause_verified=true`, record `paused` as the verified final state
+   and do not issue an additional `cmo_time_get_state`.
+3. Otherwise, when the failure is recoverable, call `cmo_time_get_state` at most once and only if
+   the next operational decision actually requires the final UI state. If no immediate decision
+   depends on it, preserve the uncertainty and report it instead of probing reflexively.
+4. If that single recovery read also fails, stop. Do not start a retry loop or issue another time
+   mutation from an assumed state.
 
 ## Build the operating picture
 
@@ -292,9 +307,10 @@ age, uncertainty, own noise, sensor geometry, and the datum created by weapons o
 - Keep AEW and tanker tracks behind credible protection and retain a real reserve.
 - Use a separate prosecution zone only when units should investigate beyond the patrol area.
 - Parked aircraft normally keep onboard sensors off. Do not treat an inactive parked-sensor
-  readback as a reason to force it on; configure the intended mission/EMCON state and expect sensor
-  activation and meaningful readback after launch unless the scenario explicitly models a
-  different parked behavior. Verify again after the aircraft is airborne.
+  readback as a reason to force it on, and do not submit `cmo_unit_sensor_set(active=true)` merely
+  to pre-arm a parked aircraft. Configure the intended mission/EMCON state and expect sensor
+  activation and meaningful readback after launch unless the scenario explicitly models different
+  parked behavior. Verify again after the aircraft is airborne.
 
 ### Refueling
 
@@ -430,6 +446,9 @@ authority, expected gain, and a recovery path.
 
 ## Recover from errors
 
+- Any `cmo_time_get_state`, `cmo_time_set`, or `cmo_simulation_pulse` error: apply the time-control
+  recovery procedure in [Protect the decision window](#protect-the-decision-window). Never make a
+  second recovery probe, and never probe at all when `safety_pause_verified=true`.
 - MCP tools absent: enable the plugin and start a new agent task.
 - `CMO_NOT_RUNNING`: start CMO and load the intended scenario.
 - `BRIDGE_NOT_PREPARED`: use [setup.md](setup.md).
@@ -439,16 +458,18 @@ authority, expected gain, and a recovery path.
   available, then use local queue/time tools while paused or preserve the selected rate, inspect
   non-terminal durable work, open one explicit 1x read window, complete the preselected reads
   without deliberation, and restore verified pause in cleanup.
-- `BRIDGE_UNRESPONSIVE` or a status-handshake `REQUEST_TIMEOUT`: call `cmo_time_get_state`. If CMO is
-  paused, list the durable queue, include every non-terminal request UUID in
-  `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the pause. If
-  CMO is already running, do not change speed; repair the repeatable Regular Time polling event.
-  Ask the user to operate time manually only when host UI control is unavailable or cannot verify
-  state.
-- Other synchronous read `REQUEST_TIMEOUT`: do not retry first. Call `cmo_time_get_state`; treat an
-  older time observation as stale. Read the native message-log cursor when available and inspect
-  polling health. If paused, use an explicitly stale snapshot or the restrained 1x
-  release/refresh/restore flow; if time already advances, repair the polling event.
+- `BRIDGE_UNRESPONSIVE` or a non-time-control `cmo_bridge_status` handshake `REQUEST_TIMEOUT`: call
+  `cmo_time_get_state`. If CMO is paused, list the durable queue, include every non-terminal request
+  UUID in `cmo_simulation_pulse(handshake=true, request_ids=[...])`, and require it to restore the
+  pause. If CMO is already running, do not change speed; repair the repeatable Regular Time polling
+  event. Ask the user to operate time manually only when host UI control is unavailable or cannot
+  verify state.
+- Other Lua-backed synchronous read `REQUEST_TIMEOUT`: do not retry first. Call
+  `cmo_time_get_state`; treat an older time observation as stale. Read the native message-log
+  cursor when available and inspect polling health. If paused, use an explicitly stale snapshot or
+  the restrained 1x release/refresh/restore flow; if time already advances, repair the polling
+  event. Errors returned by `cmo_time_get_state`, `cmo_time_set`, or `cmo_simulation_pulse` follow
+  the bounded time-control recovery rule above instead.
 - `SCENARIO_CHANGED`: accept the observed lineage only when the user intends to operate the newly
   loaded scenario.
 - Mutation wait timeout: call `cmo_request_get` with the same request ID. Do not resubmit; the

@@ -29,6 +29,8 @@ from cmo_agent_bridge.mcp_runtime import (
 from cmo_agent_bridge.mcp_server import McpApplicationPort, create_mcp_server
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot
 from cmo_agent_bridge.state.operation_queue import OperationQueueState
+from cmo_agent_bridge.state.session_store import SessionRecord, SessionStore
+from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.paths import FileBridgePaths
 from cmo_agent_bridge.transports.file_bridge.process_guard import ProcessInfo
 from cmo_agent_bridge.ui_time import (
@@ -40,6 +42,9 @@ from cmo_agent_bridge.ui_time import (
 
 _REQUEST_A = UUID("00000000-0000-4000-8000-000000000101")
 _REQUEST_B = UUID("00000000-0000-4000-8000-000000000102")
+_BOUND_LINEAGE = UUID("33333333-3333-4333-8333-333333333333")
+_ACCEPTED_LINEAGE = UUID("11111111-1111-4111-8111-111111111111")
+_SESSION_ACTIVATION = UUID("22222222-2222-4222-8222-222222222222")
 
 
 def _ui_state(state: SimulationRunState, rate: TimeRate) -> UiTimeState:
@@ -372,6 +377,32 @@ def _manager(
         ui_time_controller=controller,
     )
     return manager, queue, bridge_application
+
+
+def _session_store(tmp_path: Path) -> SessionStore:
+    database = StateDatabase(tmp_path / "state" / "state.sqlite3")
+    database.initialize()
+    return SessionStore(database)
+
+
+def _store_session(
+    tmp_path: Path,
+    process: ProcessInfo,
+    *,
+    lineage_id: UUID = _BOUND_LINEAGE,
+) -> None:
+    _session_store(tmp_path).replace(
+        SessionRecord(
+            root_key="d" * 64,
+            scenario_lineage_id=lineage_id,
+            activation_id=_SESSION_ACTIVATION,
+            build_number=1868,
+            runtime_snapshot=create_runtime_snapshot(),
+            process_pid=process.pid,
+            process_create_time=process.create_time,
+            validated_at_ms=1,
+        )
+    )
 
 
 @pytest.mark.parametrize(
@@ -713,10 +744,11 @@ async def test_paused_handshake_runs_at_1x_then_pauses_and_restores_prior_rate(
         monkeypatch,
         controller=controller,
     )
+    _store_session(tmp_path, controller.state.process)
 
     result = await manager.simulation_pulse(
         handshake=True,
-        accept_lineage_id="11111111-1111-4111-8111-111111111111",
+        accept_lineage_id=str(_ACCEPTED_LINEAGE),
     )
 
     assert result.ok is True
@@ -731,7 +763,7 @@ async def test_paused_handshake_runs_at_1x_then_pauses_and_restores_prior_rate(
     assert application.calls == [
         (
             "bridge.status",
-            {"accept_lineage_id": "11111111-1111-4111-8111-111111111111"},
+            {"accept_lineage_id": str(_ACCEPTED_LINEAGE)},
             None,
         )
     ]
@@ -741,6 +773,118 @@ async def test_paused_handshake_runs_at_1x_then_pauses_and_restores_prior_rate(
         ("pause", None),
         ("set_rate", TimeRate.X15),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "accept_lineage_id",
+    [
+        "not-a-uuid",
+        "11111111-1111-1111-8111-111111111111",
+        "11111111-1111-4111-0111-111111111111",
+        "11111111-1111-4111-8111-11111111111A",
+        "{11111111-1111-4111-8111-111111111111}",
+    ],
+)
+async def test_invalid_lineage_acceptance_identity_fails_before_ui_read_or_release(
+    accept_lineage_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+
+    with pytest.raises(BridgeError) as caught:
+        await manager.simulation_pulse(
+            handshake=True,
+            accept_lineage_id=accept_lineage_id,
+        )
+
+    assert caught.value.code is ErrorCode.INVALID_ARGUMENT
+    assert "canonical UUIDv4" in caught.value.message
+    assert controller.calls == []
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+async def test_current_lineage_acceptance_fails_before_ui_read_or_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+    _store_session(tmp_path, controller.state.process)
+
+    with pytest.raises(BridgeError) as caught:
+        await manager.simulation_pulse(
+            handshake=True,
+            accept_lineage_id=str(_BOUND_LINEAGE),
+        )
+
+    assert caught.value.code is ErrorCode.INVALID_ARGUMENT
+    assert caught.value.message == (
+        "lineage acceptance requires an exact scenario-changed response"
+    )
+    assert controller.calls == []
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "session_case",
+    ["missing", "different_pid", "different_create_time"],
+)
+async def test_lineage_acceptance_requires_a_continuing_session_before_release(
+    session_case: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+    )
+    if session_case == "missing":
+        _session_store(tmp_path)
+    else:
+        different = ProcessInfo(
+            pid=(
+                controller.state.process.pid + 1
+                if session_case == "different_pid"
+                else controller.state.process.pid
+            ),
+            create_time=(
+                controller.state.process.create_time + 1.0
+                if session_case == "different_create_time"
+                else controller.state.process.create_time
+            ),
+            executable=controller.state.process.executable,
+        )
+        _store_session(tmp_path, different)
+
+    with pytest.raises(BridgeError) as caught:
+        await manager.simulation_pulse(
+            handshake=True,
+            accept_lineage_id=str(_ACCEPTED_LINEAGE),
+        )
+
+    assert caught.value.code is ErrorCode.INVALID_ARGUMENT
+    assert caught.value.message == (
+        "lineage acceptance requires an existing continuing session"
+    )
+    assert controller.calls == (
+        [] if session_case == "missing" else [("get_state", None)]
+    )
+    assert application.calls == []
 
 
 @pytest.mark.asyncio

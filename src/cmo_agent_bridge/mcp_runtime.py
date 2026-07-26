@@ -808,7 +808,7 @@ class McpRuntimeManager:
         timeout_seconds: float = 10.0,
     ) -> McpSimulationPulseResult:
         runtime = await self._ensure_runtime()
-        ids, timeout = self._validated_pulse_arguments(
+        ids, timeout, lineage_candidate = self._validated_pulse_arguments(
             request_ids=request_ids,
             handshake=handshake,
             accept_lineage_id=accept_lineage_id,
@@ -817,6 +817,10 @@ class McpRuntimeManager:
         started_at = time.monotonic()
         async with self._ui_gate:
             async with self._new_ui_lock(runtime):
+                expected_process = self._preflight_lineage_acceptance(
+                    runtime,
+                    lineage_candidate,
+                )
                 controller = self._require_ui_controller()
                 before_raw = await controller.get_state()
                 if before_raw.state is not SimulationRunState.PAUSED:
@@ -832,6 +836,7 @@ class McpRuntimeManager:
                         },
                     )
 
+                self._verify_lineage_acceptance_process(before_raw, expected_process)
                 initial_statuses = self._pulse_queue_preflight(runtime, ids)
                 pending = tuple(
                     sorted(
@@ -1199,7 +1204,7 @@ class McpRuntimeManager:
         handshake: bool,
         accept_lineage_id: str | None,
         timeout_seconds: float,
-    ) -> tuple[tuple[UUID, ...], float]:
+    ) -> tuple[tuple[UUID, ...], float, UUID | None]:
         if type(request_ids) is not tuple or any(type(item) is not UUID for item in request_ids):
             raise BridgeError(
                 ErrorCode.INVALID_ARGUMENT,
@@ -1231,6 +1236,20 @@ class McpRuntimeManager:
                 ErrorCode.INVALID_ARGUMENT,
                 "accept_lineage_id must be a non-empty string when provided",
             )
+        lineage_candidate: UUID | None = None
+        if accept_lineage_id is not None:
+            try:
+                lineage_candidate = UUID(accept_lineage_id)
+            except (AttributeError, ValueError) as error:
+                raise BridgeError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "accept_lineage_id must be a canonical UUIDv4 string",
+                ) from error
+            if lineage_candidate.version != 4 or str(lineage_candidate) != accept_lineage_id:
+                raise BridgeError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "accept_lineage_id must be a canonical UUIDv4 string",
+                )
         if type(timeout_seconds) not in {int, float} or isinstance(timeout_seconds, bool):
             raise BridgeError(
                 ErrorCode.INVALID_ARGUMENT,
@@ -1242,7 +1261,42 @@ class McpRuntimeManager:
                 ErrorCode.INVALID_ARGUMENT,
                 "simulation pulse timeout_seconds must be greater than zero and at most 120",
             )
-        return request_ids, timeout
+        return request_ids, timeout, lineage_candidate
+
+    @staticmethod
+    def _preflight_lineage_acceptance(
+        runtime: ApplicationRuntime,
+        candidate: UUID | None,
+    ) -> tuple[int, float] | None:
+        if candidate is None:
+            return None
+        session = SessionStore(StateDatabase(runtime.paths.sqlite_file)).load(
+            runtime.paths.root_key
+        )
+        if session is None:
+            raise BridgeError(
+                ErrorCode.INVALID_ARGUMENT,
+                "lineage acceptance requires an existing continuing session",
+            )
+        if candidate == session.scenario_lineage_id:
+            raise BridgeError(
+                ErrorCode.INVALID_ARGUMENT,
+                "lineage acceptance requires an exact scenario-changed response",
+            )
+        return session.process_pid, session.process_create_time
+
+    @staticmethod
+    def _verify_lineage_acceptance_process(
+        before: UiTimeState,
+        expected_process: tuple[int, float] | None,
+    ) -> None:
+        if expected_process is None:
+            return
+        if expected_process != (before.process.pid, before.process.create_time):
+            raise BridgeError(
+                ErrorCode.INVALID_ARGUMENT,
+                "lineage acceptance requires an existing continuing session",
+            )
 
     @staticmethod
     def _pulse_queue_preflight(

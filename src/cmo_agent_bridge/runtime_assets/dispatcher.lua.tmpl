@@ -6368,12 +6368,25 @@ local function mission_delete_result(arguments)
     })
 end
 
-local function mission_target_result(arguments, assign)
-    local side = resolve_side(arguments)
-    local side_selector = side_api_selector(arguments, side)
-    local mission_guid = tostring(arguments.mission_guid)
-    local target_guid = tostring(arguments.target_guid)
-    local _, before = mission_readback(side, side_selector, mission_guid)
+local function mission_target_result(arguments, assign, context)
+    local side
+    local side_selector
+    local mission_guid
+    local target_guid
+    local before
+    if context ~= nil then
+        side = context.side
+        side_selector = context.side_selector
+        mission_guid = context.mission_guid
+        target_guid = context.target_guid
+        before = context.before
+    else
+        side = resolve_side(arguments)
+        side_selector = side_api_selector(arguments, side)
+        mission_guid = tostring(arguments.mission_guid)
+        target_guid = tostring(arguments.target_guid)
+        _, before = mission_readback(side, side_selector, mission_guid)
+    end
     if before.mission_class ~= "strike" then
         error("mission targets can only be changed on a strike mission")
     end
@@ -6388,7 +6401,27 @@ local function mission_target_result(arguments, assign)
         assign and "ScenEdit_AssignUnitAsTarget" or "ScenEdit_RemoveUnitAsTarget"
     )
     local canonical_target_guid = canonical_targets[1]
-    if not assign and not contains_identifier(before.target_guids, canonical_target_guid) then
+    local verification_target_guid = canonical_target_guid
+    if not assign and context ~= nil and context.removal_target_guid ~= nil then
+        verification_target_guid = tostring(context.removal_target_guid)
+        if lower_text(canonical_target_guid) ~= lower_text(verification_target_guid)
+            and lower_text(canonical_target_guid) ~= lower_text(target_guid)
+        then
+            error(
+                "mission target removal returned an unexpected canonical GUID: requested="
+                    .. target_guid
+                    .. "; expected="
+                    .. verification_target_guid
+                    .. "; canonical="
+                    .. canonical_target_guid
+                    .. "; before="
+                    .. identifier_list_text(before.target_guids)
+                    .. "; path=mission.targetlist"
+            )
+        end
+    elseif not assign
+        and not contains_identifier(before.target_guids, canonical_target_guid)
+    then
         error(
             "mission target removal return was not present before mutation: requested="
                 .. target_guid
@@ -6400,7 +6433,7 @@ local function mission_target_result(arguments, assign)
         )
     end
     local _, actual = mission_readback(side, side_selector, mission_guid)
-    local observed = contains_identifier(actual.target_guids, canonical_target_guid)
+    local observed = contains_identifier(actual.target_guids, verification_target_guid)
     if observed ~= assign then
         error(
             "mission target readback mismatch: requested="
@@ -6554,13 +6587,23 @@ local function normalized_emcon(value)
 end
 
 local function doctrine_full_result(arguments, actual, doctrine)
+    local scope = tostring(arguments.scope)
+    local target_guid
+    if scope == "side" then
+        target_guid = arguments.side_guid or arguments.target_guid
+    elseif scope == "mission" then
+        target_guid = arguments.mission_guid or arguments.target_guid
+    elseif scope == "unit" or scope == "group" then
+        target_guid = arguments.unit_guid or arguments.target_guid
+    else
+        error("unsupported doctrine scope")
+    end
+    if target_guid == nil or target_guid == Json.null or tostring(target_guid) == "" then
+        error("doctrine target GUID could not be projected")
+    end
     local emcon = safe_get(doctrine, { "emcon", "EMCON", "Emcon" })
-    local target_guid = arguments.side_guid
-        or arguments.unit_guid
-        or arguments.mission_guid
-        or arguments.target_guid
     return {
-        scope = tostring(arguments.scope),
+        scope = scope,
         target_guid = tostring(target_guid),
         actual = actual == true,
         weapon_control_air = normalized_wcs(
@@ -6921,7 +6964,7 @@ local function doctrine_wra_set_result(arguments)
     return doctrine_wra_read(arguments)
 end
 
-local function emcon_set_result(arguments)
+local function emcon_set_result(arguments, context)
     local scope = tostring(arguments.scope)
     local target_guid = tostring(arguments.target_guid)
     local ok, changed = pcall(
@@ -6933,8 +6976,30 @@ local function emcon_set_result(arguments)
     if not ok or changed == false then
         error("ScenEdit_SetEMCON failed: " .. text_or(changed, "false"))
     end
-    local local_doctrine, _ = doctrine_read(arguments, false)
-    local _, actual = doctrine_read(arguments, true)
+    local doctrine_arguments = arguments
+    if context ~= nil and context.doctrine_arguments ~= nil then
+        doctrine_arguments = context.doctrine_arguments
+    end
+    local local_ok, local_doctrine = pcall(doctrine_read, doctrine_arguments, false)
+    if not local_ok then
+        error(
+            "post_write_verification_failed: local doctrine readback failed after "
+                .. "ScenEdit_SetEMCON: "
+                .. text_or(local_doctrine, "unknown error")
+        )
+    end
+    local actual_ok, actual_doctrine_or_error, actual = pcall(
+        doctrine_read,
+        doctrine_arguments,
+        true
+    )
+    if not actual_ok then
+        error(
+            "post_write_verification_failed: actual doctrine readback failed after "
+                .. "ScenEdit_SetEMCON: "
+                .. text_or(actual_doctrine_or_error, "unknown error")
+        )
+    end
     local local_emcon = safe_get(local_doctrine, { "emcon", "EMCON", "Emcon" })
     local inherit_value = safe_get(local_emcon, { "inherit", "Inherit" })
     if inherit_value == nil then
@@ -7065,11 +7130,8 @@ local function special_action_read(side_selector, action_guid, side)
     return action
 end
 
-local function special_action_execute_result(arguments)
-    local side = resolve_side(arguments)
-    local side_selector = side_api_selector(arguments, side)
+local function special_action_execute_result(arguments, context)
     local action_guid = tostring(arguments.action_guid)
-    special_action_read(side_selector, action_guid, side)
     local ok, execution = pcall(ScenEdit_ExecuteSpecialAction, action_guid)
     if not ok or execution == false then
         error(
@@ -7077,8 +7139,7 @@ local function special_action_execute_result(arguments)
                 .. text_or(execution, "false")
         )
     end
-    local action = special_action_read(side_selector, action_guid, side)
-    local item = special_action_item(action)
+    local item = context.item
     return Json.object({
         action_guid = item.guid,
         name = item.name,
@@ -8146,7 +8207,66 @@ local function dispatch()
     elseif operation == "mission.target.add" then
         handler = function() return mission_target_result(arguments, true) end
     elseif operation == "mission.target.remove" then
-        handler = function() return mission_target_result(arguments, false) end
+        preflight = function()
+            local side = resolve_side(arguments)
+            local side_selector = side_api_selector(arguments, side)
+            local mission_guid = tostring(arguments.mission_guid)
+            local target_guid = tostring(arguments.target_guid)
+            local _, before = mission_readback(side, side_selector, mission_guid)
+            if before.mission_class ~= "strike" then
+                error("mission targets can only be changed on a strike mission")
+            end
+
+            local removal_target_guid = nil
+            for _, assigned_guid in ipairs(before.target_guids) do
+                if lower_text(assigned_guid) == lower_text(target_guid) then
+                    removal_target_guid = tostring(assigned_guid)
+                    break
+                end
+            end
+            if removal_target_guid == nil then
+                local contact_ok, contact = pcall(
+                    ScenEdit_GetContact,
+                    { side = side_selector, guid = target_guid }
+                )
+                if contact_ok and contact ~= nil then
+                    local actual_unit_guid = text_or(
+                        safe_get(contact, { "actualunitid", "ActualUnitID" }),
+                        ""
+                    )
+                    if actual_unit_guid ~= "" then
+                        for _, assigned_guid in ipairs(before.target_guids) do
+                            if lower_text(assigned_guid)
+                                == lower_text(actual_unit_guid)
+                            then
+                                removal_target_guid = tostring(assigned_guid)
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if removal_target_guid == nil then
+                error(
+                    "mission target was not assigned before removal: requested="
+                        .. target_guid
+                        .. "; before="
+                        .. identifier_list_text(before.target_guids)
+                        .. "; path=mission.targetlist"
+                )
+            end
+            return {
+                side = side,
+                side_selector = side_selector,
+                mission_guid = mission_guid,
+                target_guid = target_guid,
+                before = before,
+                removal_target_guid = removal_target_guid,
+            }
+        end
+        handler = function(context)
+            return mission_target_result(arguments, false, context)
+        end
     elseif operation == "mission.cargo.update" then
         handler = function() return mission_cargo_update_result(arguments) end
     elseif operation == "mission.delete" then
@@ -8160,13 +8280,89 @@ local function dispatch()
     elseif operation == "doctrine.wra.set" then
         handler = function() return doctrine_wra_set_result(arguments) end
     elseif operation == "emcon.set" then
-        handler = function() return emcon_set_result(arguments) end
+        preflight = function()
+            if tostring(arguments.scope) ~= "mission" then
+                return nil
+            end
+            local target_guid = tostring(arguments.target_guid)
+            local sides_ok, sides = pcall(VP_GetSides)
+            if not sides_ok or sides == nil then
+                error(
+                    "mission EMCON owning-side lookup failed: "
+                        .. text_or(sides, "VP_GetSides returned no sides")
+                )
+            end
+            local lookup_failures = 0
+            for _, side in ipairs(collect_ordered(sides)) do
+                local side_selector = object_guid(side)
+                if side_selector == "" then
+                    side_selector = object_name(side)
+                end
+                if side_selector ~= "" then
+                    local missions_ok, missions = pcall(
+                        ScenEdit_GetMissions,
+                        side_selector
+                    )
+                    if missions_ok and missions ~= nil then
+                        for _, mission in ipairs(collect_ordered(missions)) do
+                            if lower_text(object_guid(mission))
+                                == lower_text(target_guid)
+                            then
+                                return {
+                                    doctrine_arguments = {
+                                        scope = "mission",
+                                        target_guid = target_guid,
+                                        side_guid = side_selector,
+                                    },
+                                }
+                            end
+                        end
+                    else
+                        lookup_failures = lookup_failures + 1
+                    end
+                end
+            end
+            if lookup_failures > 0 then
+                error(
+                    "mission EMCON owning side could not be resolved; "
+                        .. "one or more side mission lists failed"
+                )
+            end
+            error("mission EMCON target was not found on any side")
+        end
+        handler = function(context) return emcon_set_result(arguments, context) end
     elseif operation == "special_action.list" then
         handler = function() return special_action_list_result(arguments) end
     elseif operation == "special_action.execute" then
-        handler = function() return special_action_execute_result(arguments) end
+        preflight = function()
+            local side = resolve_side(arguments)
+            local side_selector = side_api_selector(arguments, side)
+            local action_guid = tostring(arguments.action_guid)
+            local action = special_action_read(side_selector, action_guid, side)
+            return {
+                item = special_action_item(action),
+            }
+        end
+        handler = function(context)
+            return special_action_execute_result(arguments, context)
+        end
     elseif operation == "lua.call" then
-        handler = function() return lua_call_result(arguments) end
+        local function_name = tostring(arguments["function"])
+        local call_arguments = arguments.arguments or {}
+        local component_list = tostring(call_arguments.mode) == "list"
+            and (
+                function_name == "ScenEdit_SetTrigger"
+                or function_name == "ScenEdit_SetCondition"
+                or function_name == "ScenEdit_SetAction"
+            )
+        if component_list then
+            preflight = function()
+                return { result = lua_call_result(arguments) }
+            end
+            handler = function(context) return context.result end
+        else
+            handler = function() return lua_call_result(arguments) end
+        end
     else
         local failure = response_error(
             "POLICY_DENIED",

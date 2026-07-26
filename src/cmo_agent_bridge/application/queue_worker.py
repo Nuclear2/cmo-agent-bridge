@@ -16,7 +16,11 @@ from cmo_agent_bridge.errors import BridgeError, ErrorCode
 from cmo_agent_bridge.operations.registry import OperationRegistry
 from cmo_agent_bridge.protocol.models import ExchangeCommand, RequestBody
 from cmo_agent_bridge.protocol.response_models import ResponseArtifact
-from cmo_agent_bridge.protocol.runtime import Sha256
+from cmo_agent_bridge.protocol.runtime import (
+    RuntimeSnapshot,
+    Sha256,
+    revalidate_runtime_snapshot,
+)
 from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.state.request_ledger import RequestLedger, RequestRecord
 from cmo_agent_bridge.transports.file_bridge.models import (
@@ -109,6 +113,7 @@ class QueueWorker:
         *,
         root_key: Sha256,
         registry: OperationRegistry,
+        runtime_snapshot: RuntimeSnapshot,
         queue_store: QueueStore,
         transport: QueueSessionTransport,
         ledger: RequestLedger,
@@ -119,6 +124,9 @@ class QueueWorker:
             raise TypeError("queue root key must be an exact string")
         if type(registry) is not OperationRegistry:
             raise TypeError("operation registry must be exact")
+        snapshot = revalidate_runtime_snapshot(runtime_snapshot)
+        if snapshot.operation_manifest_sha256 != registry.manifest_sha256:
+            raise ValueError("queue worker runtime snapshot does not match its registry")
         if type(ledger) is not RequestLedger:
             raise TypeError("queue worker ledger must be exact")
         if transport.root_key != root_key:
@@ -127,6 +135,7 @@ class QueueWorker:
             raise ValueError("queue worker idle poll must be positive")
         self._root_key = root_key
         self._registry = registry
+        self._runtime_snapshot = snapshot
         self._queue_store = queue_store
         self._transport = transport
         self._ledger = ledger
@@ -169,6 +178,13 @@ class QueueWorker:
         if not pending:
             return False
         if self._has_unresolved_quarantine_barrier():
+            return False
+        active = self._active_record()
+        head = active or self._queue_store.head(root_key=self._root_key)
+        if head is not None and head.runtime_snapshot != self._runtime_snapshot:
+            # Multiple MCP tasks can briefly keep workers from different releases
+            # alive during an upgrade. Only the worker bound to the queued runtime
+            # may claim it; a foreign worker must leave the FIFO head untouched.
             return False
         try:
             async with self._transport.worker_session(

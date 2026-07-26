@@ -382,6 +382,7 @@ def build_application_runtime(
     queue_worker = QueueWorker(
         root_key=paths.root_key,
         registry=OPERATION_REGISTRY,
+        runtime_snapshot=snapshot,
         queue_store=queue_store,
         transport=transport,
         ledger=transport.ledger,

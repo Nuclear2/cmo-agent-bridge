@@ -306,6 +306,7 @@ def _rig(
     worker = QueueWorker(
         root_key=ROOT_KEY,
         registry=OPERATION_REGISTRY,
+        runtime_snapshot=snapshot,
         queue_store=queue,
         transport=transport,
         ledger=ledger,
@@ -339,6 +340,60 @@ def _claim_next(rig: _Rig) -> QueuedOperationRecord:
     record = rig.queue.claim_next(root_key=ROOT_KEY, at_ms=rig.clock.now_ms())
     assert record is not None
     return record
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("claimed", [False, True])
+async def test_worker_leaves_a_foreign_runtime_head_untouched(
+    tmp_path: Path,
+    claimed: bool,
+) -> None:
+    rig = _rig(tmp_path)
+    foreign_snapshot = RuntimeSnapshot.create(
+        runtime_version="0.2.1",
+        runtime_asset_sha256="e" * 64,
+        operation_manifest_sha256=OPERATION_REGISTRY.manifest_sha256,
+        host_contract_sha256="f" * 64,
+        dependency_lock_sha256="1" * 64,
+    )
+    rig.sessions.replace(
+        SessionRecord(
+            root_key=ROOT_KEY,
+            scenario_lineage_id=LINEAGE_ID,
+            activation_id=ACTIVATION_ID,
+            build_number=1868,
+            runtime_snapshot=foreign_snapshot,
+            process_pid=rig.process.pid,
+            process_create_time=rig.process.create_time,
+            validated_at_ms=2,
+        )
+    )
+    foreign_service = QueueService(
+        root_key=ROOT_KEY,
+        registry=OPERATION_REGISTRY,
+        runtime_snapshot=foreign_snapshot,
+        allow_mutations=True,
+        session_store=rig.sessions,
+        queue_store=rig.queue,
+        ledger=rig.ledger,
+        clock=rig.clock,
+    )
+    receipt = foreign_service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    if claimed:
+        assert _claim_next(rig).request_id == receipt.request_id
+
+    assert await rig.worker.run_once() is False
+
+    stored = rig.queue.get(receipt.request_id)
+    assert stored is not None
+    assert stored.state is (
+        QueuedOperationState.ACTIVE if claimed else QueuedOperationState.QUEUED
+    )
+    assert rig.transport.session_count == 0
+    assert rig.channel.commands == []
 
 
 def _insert_prepared_ledger(rig: _Rig, record: QueuedOperationRecord) -> None:
@@ -480,6 +535,7 @@ async def test_recovery_owner_is_resolved_after_waiting_for_worker_session(
     worker = QueueWorker(
         root_key=ROOT_KEY,
         registry=OPERATION_REGISTRY,
+        runtime_snapshot=rig.snapshot,
         queue_store=rig.queue,
         transport=transport,
         ledger=rig.ledger,

@@ -4,6 +4,46 @@
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-07-26 (Preview)
+
+这一版修复任务级 EMCON/Doctrine 的 selector 与目标投影，收紧时间释放前的 lineage
+校验，并清理数条会把“尚未开始”或合法自变更误判为隔离的 mutation 路径。
+
+### Fixed
+
+- 任务级 `emcon.set` 在写入前解析并保留任务所属阵营，随后使用完整的
+  `side + mission` selector 读取本地与实际 Doctrine。无法定位任务时会在 mutation
+  barrier 前确定性拒绝，不再把一次尚未开始的写入变成隔离事件。
+- `doctrine.get` / `doctrine.set` 现在按作用域返回目标 GUID；任务级结果不再错误地返回
+  side GUID，单位级与阵营级结果也有对应回归覆盖。
+- `special_action.execute` 在执行前完成对象与阵营核验并保存响应快照。Special Action
+  脚本在执行中合法地重命名或删除自身时，不会再因为执行后的二次读取失败而触发隔离。
+- `mission.target.remove` 在 mutation barrier 前确认目标确实属于打击任务，并解析
+  contact GUID 与实际单位 GUID 的规范映射；未分配目标会作为“写入尚未开始”拒绝。
+- 事件组件的 `mode="list"` 虽复用 `ScenEdit_SetTrigger/Condition/Action`，实际只读；
+  其读取失败现在发生在 mutation barrier 前，不会误触发隔离。
+- 多个 MCP 任务在插件升级期间短暂并存时，旧 worker 会跳过不属于自身 runtime
+  snapshot 的队首，不再认领并拒绝新版本提交的 mutation。
+- `cmo_simulation_pulse` 会在释放仿真前校验 `accept_lineage_id` 的规范 UUIDv4 格式、
+  当前绑定与连续进程身份；传入当前 lineage 或不存在的会话时不会再先推进 1x 时间。
+
+### Testing
+
+- 在 CMO Build 1868 的 `J-36 vs F-35` 想定中，将 USAF `CAP` 任务雷达 EMCON 从
+  `Active` 临时改为 `Passive` 后恢复为 `Active`；两次 durable mutation 均完成，
+  任务 GUID 与写后 Doctrine 回读一致且没有隔离。
+- 非实机测试 2444 项、Release 测试 20 项通过；Pyright、Ruff、manifest/corpus、
+  Skill 与插件清单校验通过。
+
+### Changed
+
+- 时控失败保持可恢复但不盲目核验：不会在超时后自动追加一次昂贵的 UI 状态查询。
+  Skill 仅在下一步决策确实依赖最终时态时允许一次手动查询，并在
+  `safety_pause_verified=true` 时直接采用已验证暂停结果。
+- Skill 明确禁止仅为预先开机而对停放飞机提交 `cmo_unit_sensor_set(active=true)`；
+  应先配置任务/EMCON，并在起飞后读取实际传感器状态。
+- 项目版本升级到 `0.6.2`。
+
 ## [0.6.1] - 2026-07-26 (Preview)
 
 这一版修复 CMO Build 1868 中任务油门枚举的写后回读：Lua API 返回的是 CLR `userdata`
@@ -359,6 +399,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.6.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.0
 [0.5.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.5.0
