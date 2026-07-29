@@ -3181,11 +3181,31 @@ async def test_second_timeout_adds_no_third_delivery_idles_rejects_and_reraises(
 @pytest.mark.asyncio
 async def test_stable_protocol_error_never_retries_and_safely_rejects(
     harness: Harness,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     transport = _transport(harness)
     command = _scenario_command(harness)
     peer = _peer(harness)
     peer.enqueue(WriteMalformedComments())
+    # Keep a slow Windows runner from turning the intended protocol-error case
+    # into the separate first-half timeout/republication case.
+    response_path = harness.paths.response_path(command.request_id)
+    original_wait = transport_module.ResponseWaiter.wait
+    first_wait = True
+
+    async def wait_after_fault_injection(
+        waiter: transport_module.ResponseWaiter,
+        timeout_seconds: float,
+    ) -> ResponseArtifact:
+        nonlocal first_wait
+        if first_wait:
+            first_wait = False
+            async with asyncio.timeout(2):
+                while not response_path.exists():
+                    await asyncio.sleep(0)
+        return await original_wait(waiter, timeout_seconds)
+
+    monkeypatch.setattr(transport_module.ResponseWaiter, "wait", wait_after_fault_injection)
     caught: pytest.ExceptionInfo[BridgeError] | None = None
 
     async with peer:

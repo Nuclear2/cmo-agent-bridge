@@ -84,6 +84,10 @@ NEW_REQUEST_ID = UUID("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeea209")
 _T = TypeVar("_T")
 _TASK_CANCEL_GRACE_SECONDS = 1.0
 _CRASH_HELPER_EXIT_TIMEOUT_SECONDS = 30.0
+# Published-cancel recovery crosses fsync-backed files and FULL-synchronous
+# SQLite transactions.  Its watchdog must exceed SQLite's own five-second busy
+# budget so a loaded Windows runner can finish recovery before the test cancels it.
+_DURABLE_RECOVERY_SESSION_TIMEOUT_SECONDS = 15.0
 
 
 async def _hard_task_result(
@@ -1496,7 +1500,7 @@ async def _assert_preexisting_cancel_recovers_without_delivery_publication(
     second_session_task = asyncio.create_task(run_second_session())
     await _hard_task_result(
         second_session_task,
-        timeout_seconds=5,
+        timeout_seconds=_DURABLE_RECOVERY_SESSION_TIMEOUT_SECONDS,
         description="preexisting-cancel recovery session",
     )
 
