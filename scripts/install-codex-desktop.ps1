@@ -2,7 +2,7 @@
 param(
     [Parameter()]
     [ValidatePattern('^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$')]
-    [string]$Version = '0.6.2',
+    [string]$Version = '0.7.0',
 
     [Parameter()]
     [string]$BundlePath,

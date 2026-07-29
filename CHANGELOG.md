@@ -4,6 +4,54 @@
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-29 (Preview)
+
+这一版把公开 MCP/CLI 输入合同改为严格、可枚举的模型，并把任务、事件与时间释放路径中能够在
+写入前确定的失败统一移到 mutation barrier 之前，减少大型想定和多步骤规划中的误操作与隔离。
+
+### Fixed
+
+- MCP/CLI 输入 schema 现在对任务油门与编组、单位油门、单位创建类型、Contact/Mission
+  过滤器、Strike Stance、Doctrine 更新、WRA 四元组、时间倍率以及想定作者侧的
+  awareness/proficiency 暴露精确官方枚举。有限整数拒绝布尔值、浮点数和数字字符串；
+  未列出的别名（例如 `Military`、`Creep`）会在写入持久队列前被拒绝，不再先修改 CMO、再因
+  规范化回读不同而触发隔离。其余 MCP 标量也改为严格解析：布尔值不再接受 `0/1` 或字符串，
+  数值不再接受布尔值、数字字符串与 `NaN`/无穷值。
+- 事件编辑的 14 种 Trigger、3 种 Condition 和 6 种 Action 现在按类别限制，并为每种
+  `component_type` 暴露封闭的参数对象；拼错字段、跨类型字段、缺少新增组件的必需字段、非法嵌套
+  过滤器和有限枚举会在排队前失败。带参数的 update 必须提供类型断言；bridge 会在 mutation
+  barrier 前读取现有组件并核对实际类型，但不会把 `type` 写回 CMO。
+- `mission.create`、`mission.update`、任务加油规划、航班计划生成、目标添加、货运更新和任务删除
+  将可确定的 side、mission class、reference point、target 与字段适用性检查移到 mutation barrier
+  之前；`mission.update` 的 Flight/Group、Transit/Station/Attack、Loop、OPA/WWR 和 ActiveEMCON
+  也按官方任务类型表预检。写后失败或无法核验仍保持不确定结果，不会伪装成“尚未开始”。
+- `cmo_simulation_pulse` 遇到已有未决隔离屏障时会在释放时间前失败；运行中出现屏障时会立即返回
+  结构化错误并尝试复停、恢复原倍率，不再耗尽剩余 timeout。返回值会分别报告复停与倍率恢复是否
+  核验成功；只有全部指定请求 `completed` 才算成功。FIFO 队首进入 armed 状态后会在真正释放
+  时间前再次读取全部请求，`rejected`、`cancelled` 或已解决/未解决的 `quarantined` 均不会推进
+  想定；`handshake=true` 也不能绕过终态失败。
+- 任务删除后的回读 API 若失败会报告无法核验，并保留写后不确定语义，不再把核验故障误报为删除成功。
+- 事件组件 update/remove 会在 claim 前拒绝 bridge 托管对象；确定性拒绝保留
+  `mutation_not_started` 证据，不再先进入不确定恢复路径。
+- 货运任务更新会按 `assignedCargo` 的对象标识或挂载数量核对前后差异。wrapper 返回 `nil`、
+  truthy no-op 或不符合请求数量的回读不再被报告为成功。
+
+### Changed
+
+- WRA 的大型 `target_type` 表继续按 CMO Build/数据库动态处理；Agent 应优先使用 contact GUID，
+  或复用 `cmo_doctrine_wra_get` 返回的精确类型。任务高度/深度表达式、手动速度/高度、事件日期/
+  间隔文本以及数据库标识符等确实依赖单位、预设、本地化或运行时数据的字段保持开放，并在
+  schema/Skill 中说明原因；开放不代表可以猜别名。
+- 项目版本升级到 `0.7.0`。
+
+### Testing
+
+- 在 CMO Build 1868 的 `J-36 vs F-35` 想定中，由 0.7.0 源码 runtime 创建覆盖 USAF 机场的
+  `SMOKE-v0.7.0-CAP`，设置 `FlightSize=4`、`Cruise/Loiter/Full` 官方油门枚举并分配 4 架
+  J-36；任务与单位回读一致，最终队列为空且没有未决隔离。
+- 非实机测试 2611 项、Release 测试 20 项通过；Pyright、Ruff、manifest/corpus 和发布元数据
+  校验通过。
+
 ## [0.6.2] - 2026-07-26 (Preview)
 
 这一版修复任务级 EMCON/Doctrine 的 selector 与目标投影，收紧时间释放前的 lineage
@@ -399,6 +447,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.7.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0
 [0.6.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1
 [0.6.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.0

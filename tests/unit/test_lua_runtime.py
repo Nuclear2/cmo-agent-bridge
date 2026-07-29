@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from lupa import LuaRuntime
-from pydantic import JsonValue
+from pydantic import JsonValue, ValidationError
 
 from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY, ResolvedInvocation
 from cmo_agent_bridge.protocol.canonical import canonical_body_bytes
@@ -743,6 +743,9 @@ def _run_lua(
     mission_create_finalize_failure: bool = False,
     mission_delete_mode: str = "normal",
     mission_readback_overrides: dict[str, object] | None = None,
+    mission_cargo_update_mode: str = "normal",
+    task_pool_mission_guid: str | None = None,
+    extra_mission_class: str | None = None,
     special_action_execute_effect: str = "none",
 ) -> _LuaRun:
     assert not (export_failures_before_success and zero_export_results_before_success)
@@ -761,7 +764,8 @@ def _run_lua(
         "missing",
         "conflict",
     }
-    assert mission_delete_mode in {"normal", "failure", "residual"}
+    assert mission_delete_mode in {"normal", "failure", "residual", "verify_error"}
+    assert mission_cargo_update_mode in {"normal", "no_op_nil", "no_op_truthy"}
     assert special_action_execute_effect in {"none", "delete", "rename"}
     snapshot = create_runtime_snapshot()
     activation_id = uuid4()
@@ -849,6 +853,33 @@ def _run_lua(
         )
         strike["strikemission"]["StrikeFlightSize"] = "Command_Core.Mission+_FlightSize"
         strike["strikemission"]["StrikeGroupSize"] = "Command_Core.Mission+_GroupSize"
+    if task_pool_mission_guid is not None:
+        task_pool = fixture.missions_by_guid[task_pool_mission_guid]
+        task_pool["category"] = "TaskPool"
+        task_pool["packagelist"] = lua.table_from([])
+    if extra_mission_class is not None:
+        mission_type, type_name, details_field = {
+            "support": (3, "Support", "supportmission"),
+            "ferry": (4, "Ferry", "ferrymission"),
+            "mining": (5, "Mining", "minemission"),
+            "mine_clearing": (6, "MineClearing", "mineclearmission"),
+        }[extra_mission_class]
+        extra_mission = _lua_table(
+            lua,
+            {
+                "guid": "MISSION-EXTRA",
+                "name": f"Extra {type_name}",
+                "side": "Blue",
+                "type": mission_type,
+                "typeS": type_name,
+                "isactive": False,
+                "unitlist": lua.table_from([]),
+                "targetlist": lua.table_from([]),
+                details_field: _lua_table(lua, {}),
+            },
+        )
+        fixture.missions_by_guid["MISSION-EXTRA"] = extra_mission
+        fixture.missions_by_name[f"Extra {type_name}"] = extra_mission
     target_guid_aliases = target_guid_aliases or {}
     if target_guid_aliases:
         for mission in fixture.missions_by_guid.values():
@@ -983,6 +1014,11 @@ def _run_lua(
         if not is_blue_side(side):
             return None
         value = str(selector)
+        if (
+            mission_delete_mode == "verify_error"
+            and value not in fixture.missions_by_guid
+        ):
+            raise RuntimeError("simulated post-delete lookup failure")
         return fixture.missions_by_guid.get(value) or fixture.missions_by_name.get(value)
 
     score_state = {"Blue": 42, "SIDE-BLUE": 42}
@@ -1790,6 +1826,10 @@ def _run_lua(
         cargo_guid: object,
         *_unused: object,
     ) -> Any:
+        if mission_cargo_update_mode == "no_op_nil":
+            return None
+        if mission_cargo_update_mode == "no_op_truthy":
+            return True
         values = assigned_cargo_values(mission)
         values.append(
             _lua_table(
@@ -1811,6 +1851,10 @@ def _run_lua(
         cargo_guid: object,
         *_unused: object,
     ) -> Any:
+        if mission_cargo_update_mode == "no_op_nil":
+            return None
+        if mission_cargo_update_mode == "no_op_truthy":
+            return True
         values = [
             item
             for item in assigned_cargo_values(mission)
@@ -1828,6 +1872,10 @@ def _run_lua(
         quantity: object,
         *_unused: object,
     ) -> Any:
+        if mission_cargo_update_mode == "no_op_nil":
+            return None
+        if mission_cargo_update_mode == "no_op_truthy":
+            return True
         values = assigned_cargo_values(mission)
         values.append(
             _lua_table(
@@ -1848,6 +1896,10 @@ def _run_lua(
         quantity: object,
         *_unused: object,
     ) -> Any:
+        if mission_cargo_update_mode == "no_op_nil":
+            return None
+        if mission_cargo_update_mode == "no_op_truthy":
+            return True
         remaining = int(cast(int, quantity))
         values: list[Any] = []
         for item in assigned_cargo_values(mission):
@@ -2145,7 +2197,15 @@ def _run_lua(
                     "description": "Existing Action",
                     "type": "Message",
                 },
-            )
+            ),
+            "ACTION-COMPONENT-MANAGED": _lua_table(
+                lua,
+                {
+                    "guid": "ACTION-COMPONENT-MANAGED",
+                    "description": "CMOAgentBridge protected action",
+                    "type": "Message",
+                },
+            ),
         },
     }
     events: dict[str, Any] = {
@@ -3897,23 +3957,17 @@ def test_lua_call_event_component_normalizes_lua_script_to_crlf() -> None:
     assert component["ScriptText"] == expected_script
 
 
-def test_lua_call_event_component_keeps_trusted_envelope_authoritative() -> None:
+def test_lua_call_event_component_update_preflights_matching_type_and_omits_type() -> None:
     run = _run_lua(
         "lua.call",
         {
             "function": "ScenEdit_SetAction",
             "arguments": {
-                "mode": "add",
-                "component_id_or_name": "Safe action",
-                "component_type": "LuaScript",
+                "mode": "update",
+                "component_id_or_name": "ACTION-COMPONENT-BASE",
+                "component_type": "Message",
                 "parameters_json": json.dumps(
-                    {
-                        "mode": "remove",
-                        "description": "Bridge action",
-                        "id": "ACTION-COMPONENT-BASE",
-                        "type": "Points",
-                        "ScriptText": "return true",
-                    }
+                    {"SideID": "SIDE-BLUE", "Text": "Updated"}
                 ),
             },
         },
@@ -3921,12 +3975,185 @@ def test_lua_call_event_component_keeps_trusted_envelope_authoritative() -> None
 
     assert run.api_calls["set_action"] == (
         {
-            "mode": "add",
-            "description": "Safe action",
-            "type": "LuaScript",
-            "ScriptText": "return true",
+            "mode": "list",
+            "description": "ACTION-COMPONENT-BASE",
+        },
+        {
+            "mode": "update",
+            "description": "ACTION-COMPONENT-BASE",
+            "SideID": "SIDE-BLUE",
+            "Text": "Updated",
         },
     )
+
+
+def test_lua_call_event_component_update_wrong_type_fails_before_claim() -> None:
+    run = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": {
+                "mode": "update",
+                "component_id_or_name": "ACTION-COMPONENT-BASE",
+                "component_type": "LuaScript",
+                "parameters_json": json.dumps({"ScriptText": "return true"}),
+            },
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    assert "component type mismatch" in str(
+        cast(dict[str, JsonValue], error["details"])["reason"]
+    )
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_action"] == (
+        {
+            "mode": "list",
+            "description": "ACTION-COMPONENT-BASE",
+        },
+    )
+
+
+def test_lua_call_event_component_rename_and_remove_preflight_existence() -> None:
+    renamed = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": {
+                "mode": "update",
+                "component_id_or_name": "ACTION-COMPONENT-BASE",
+                "new_description": "Renamed action",
+                "parameters_json": "{}",
+            },
+        },
+    )
+    assert renamed.api_calls["set_action"] == (
+        {
+            "mode": "list",
+            "description": "ACTION-COMPONENT-BASE",
+        },
+        {
+            "mode": "update",
+            "description": "ACTION-COMPONENT-BASE",
+            "newname": "Renamed action",
+        },
+    )
+
+    removed = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": {
+                "mode": "remove",
+                "component_id_or_name": "ACTION-COMPONENT-BASE",
+                "parameters_json": "{}",
+            },
+        },
+    )
+    assert removed.api_calls["set_action"] == (
+        {
+            "mode": "list",
+            "description": "ACTION-COMPONENT-BASE",
+        },
+        {
+            "mode": "remove",
+            "description": "ACTION-COMPONENT-BASE",
+        },
+    )
+
+
+@pytest.mark.parametrize("mode", ["update", "remove"])
+def test_lua_call_event_component_missing_update_or_remove_fails_before_claim(
+    mode: str,
+) -> None:
+    arguments: dict[str, JsonValue] = {
+        "mode": mode,
+        "component_id_or_name": "MISSING-ACTION",
+        "parameters_json": "{}",
+    }
+    if mode == "update":
+        arguments["new_description"] = "Still missing"
+    run = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": arguments,
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_action"] == (
+        {
+            "mode": "list",
+            "description": "MISSING-ACTION",
+        },
+    )
+
+
+@pytest.mark.parametrize("mode", ["update", "remove"])
+def test_lua_call_event_component_managed_update_or_remove_fails_before_claim(
+    mode: str,
+) -> None:
+    arguments: dict[str, JsonValue] = {
+        "mode": mode,
+        "component_id_or_name": "CMOAgentBridge protected action",
+        "parameters_json": "{}",
+    }
+    if mode == "update":
+        arguments["new_description"] = "Renamed action"
+    run = _run_lua(
+        "lua.call",
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": arguments,
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    assert "bridge-managed event components cannot be modified" in str(
+        cast(dict[str, JsonValue], error["details"])["reason"]
+    )
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_action"] == ()
+
+
+def test_lua_call_event_component_rejects_untrusted_envelope_fields_before_queueing() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        _run_lua(
+            "lua.call",
+            {
+                "function": "ScenEdit_SetAction",
+                "arguments": {
+                    "mode": "add",
+                    "component_id_or_name": "Safe action",
+                    "component_type": "LuaScript",
+                    "parameters_json": json.dumps(
+                        {
+                            "mode": "remove",
+                            "description": "Bridge action",
+                            "id": "ACTION-COMPONENT-BASE",
+                            "type": "Points",
+                            "ScriptText": "return true",
+                        }
+                    ),
+                },
+            },
+        )
 
 
 def test_lua_call_event_component_list_failure_is_rejected_before_mutation() -> None:
@@ -4468,6 +4695,132 @@ def test_lua_mission_create_allows_an_inactive_strike_without_initial_targets() 
 
 
 @pytest.mark.parametrize(
+    ("public_arguments", "wire_overrides", "expected_reason"),
+    [
+        (
+            {
+                "side_guid": "SIDE-MISSING",
+                "name": "Missing Side",
+                "details": {"mission_class": "strike", "strike_type": "land"},
+            },
+            None,
+            "side was not found",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Bad Category",
+                "details": {"mission_class": "strike", "strike_type": "land"},
+            },
+            {"category": "unknown"},
+            "unsupported mission category",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Missing Zone Point",
+                "details": {
+                    "mission_class": "patrol",
+                    "patrol_type": "aaw",
+                    "reference_point_guids": ["RP-1", "RP-2", "RP-MISSING"],
+                },
+            },
+            None,
+            "details.reference_point_guids reference point was not found",
+        ),
+    ],
+)
+def test_lua_mission_create_rejects_deterministic_errors_before_mutation(
+    public_arguments: dict[str, object],
+    wire_overrides: dict[str, object] | None,
+    expected_reason: str,
+) -> None:
+    run = _run_lua(
+        "mission.create",
+        public_arguments,
+        wire_argument_overrides=wire_overrides,
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert expected_reason in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.create"
+    assert run.api_calls["add_mission"] == ()
+
+
+@pytest.mark.parametrize(
+    ("public_arguments", "expected_reason"),
+    [
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Missing Ferry Destination",
+                "details": {
+                    "mission_class": "ferry",
+                    "destination_guid": "UNIT-MISSING",
+                },
+            },
+            "details.destination_guid actual unit was not found",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Missing Cargo Destination",
+                "details": {
+                    "mission_class": "cargo",
+                    "cargo_subtype": "transfer",
+                    "destination_guid": "UNIT-MISSING",
+                },
+            },
+            "details.destination_guid actual unit was not found",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Missing Parent Pool",
+                "category": "package",
+                "parent_task_pool_guid": "MISSION-MISSING",
+                "details": {
+                    "mission_class": "strike",
+                    "strike_type": "land",
+                },
+            },
+            "parent_task_pool_guid mission was not found on the selected side",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "name": "Non-Pool Parent",
+                "category": "package",
+                "parent_task_pool_guid": "MISSION-BLUE-1",
+                "details": {
+                    "mission_class": "strike",
+                    "strike_type": "land",
+                },
+            },
+            "parent_task_pool_guid does not identify a task-pool mission",
+        ),
+    ],
+)
+def test_lua_mission_create_rejects_invalid_references_before_mutation(
+    public_arguments: dict[str, object],
+    expected_reason: str,
+) -> None:
+    run = _run_lua("mission.create", public_arguments, expect_ok=False)
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert expected_reason in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.create"
+    assert run.api_calls["add_mission"] == ()
+
+
+@pytest.mark.parametrize(
     ("delete_mode", "delete_diagnostic"),
     [("failure", "boolean(false)"), ("residual", "boolean(true)")],
 )
@@ -4529,8 +4882,12 @@ def test_lua_mission_create_verifies_canonical_target_guids_returned_by_cmo() ->
         ("task_pool", None, {"category": "taskpool", "type": "land"}),
         (
             "package",
-            "POOL-1",
-            {"category": "package", "pool": "POOL-1", "type": "land"},
+            "MISSION-BLUE-0",
+            {
+                "category": "package",
+                "pool": "MISSION-BLUE-0",
+                "type": "land",
+            },
         ),
     ],
 )
@@ -4551,7 +4908,11 @@ def test_lua_mission_create_maps_task_pool_and_package_categories(
     }
     if parent_guid is not None:
         arguments["parent_task_pool_guid"] = parent_guid
-    run = _run_lua("mission.create", arguments)
+    run = _run_lua(
+        "mission.create",
+        arguments,
+        task_pool_mission_guid=parent_guid,
+    )
     result = cast(dict[str, JsonValue], run.result)
 
     assert run.api_calls["add_mission"] == (
@@ -4598,6 +4959,45 @@ def test_lua_mission_air_refueling_update_maps_and_reads_back_settings() -> None
     assert result["tanker_max_distance_nm"] == 250.0
 
 
+def test_lua_mission_air_refueling_rejects_support_only_fields_before_mutation() -> None:
+    run = _run_lua(
+        "mission.air_refueling.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "tanker_one_time": True,
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.air_refueling.update"
+    assert run.api_calls["set_mission"] == ()
+
+
+def test_lua_mission_air_refueling_rejects_missing_tanker_mission_before_mutation() -> None:
+    run = _run_lua(
+        "mission.air_refueling.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "tanker_usage": "mission",
+            "tanker_mission_guids": ["MISSION-MISSING"],
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "tanker_mission_guids[1] mission was not found" in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.air_refueling.update"
+    assert run.api_calls["set_mission"] == ()
+
+
 def test_lua_mission_flight_plan_create_uses_tot_and_returns_generated_course() -> None:
     run = _run_lua(
         "mission.flight_plan.create",
@@ -4626,6 +5026,25 @@ def test_lua_mission_flight_plan_create_uses_tot_and_returns_generated_course() 
     assert waypoints[0]["desired_altitude_m"] == 9000.0
 
 
+def test_lua_mission_flight_plan_create_rejects_missing_mission_before_mutation() -> None:
+    run = _run_lua(
+        "mission.flight_plan.create",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-MISSING",
+            "date_on_target": "2026/07/16",
+            "time_on_target": "12:30:00",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.flight_plan.create"
+    assert run.api_calls["create_mission_flight_plan"] == ()
+
+
 def test_lua_mission_delete_removes_exact_guid_and_returns_deleted_identity() -> None:
     run = _run_lua(
         "mission.delete",
@@ -4638,6 +5057,38 @@ def test_lua_mission_delete_removes_exact_guid_and_returns_deleted_identity() ->
         "deleted_name": "Blue Strike",
         "object_kind": "mission",
     }
+
+
+def test_lua_mission_delete_rejects_missing_mission_before_mutation() -> None:
+    run = _run_lua(
+        "mission.delete",
+        {"side_guid": "SIDE-BLUE", "mission_guid": "MISSION-MISSING"},
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.delete"
+    assert run.api_calls["delete_mission"] == ()
+
+
+def test_lua_mission_delete_lookup_failure_after_delete_is_unverifiable() -> None:
+    run = _run_lua(
+        "mission.delete",
+        {"side_guid": "SIDE-BLUE", "mission_guid": "MISSION-BLUE-0"},
+        mission_delete_mode="verify_error",
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "mission deletion could not be verified" in str(details["reason"])
+    assert "simulated post-delete lookup failure" in str(details["reason"])
+    assert error["mutation_not_started"] is None
+    assert run.api_calls["delete_mission"] == (
+        ("SIDE-BLUE", "MISSION-BLUE-0"),
+    )
 
 
 def test_lua_mission_update_preserves_zone_order_and_returns_actual_wrapper() -> None:
@@ -4685,6 +5136,313 @@ def test_lua_mission_update_preserves_zone_order_and_returns_actual_wrapper() ->
     assert result["on_station"] == 1
     assert result["reference_point_guids"] == ["RP-3", "RP-1", "RP-2"]
     assert result["prosecution_zone_reference_point_guids"] == ["RP-4", "RP-2"]
+
+
+@pytest.mark.parametrize(
+    ("arguments", "expected_reason"),
+    [
+        (
+            {
+                "side_guid": "SIDE-MISSING",
+                "mission_guid": "MISSION-BLUE-1",
+                "active": False,
+            },
+            "side was not found",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "mission_guid": "MISSION-MISSING",
+                "active": False,
+            },
+            "mission could not be read back",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "mission_guid": "MISSION-BLUE-0",
+                "on_station": 1,
+            },
+            "only patrol and support missions support on-station requirements",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "mission_guid": "MISSION-BLUE-1",
+                "reference_point_guids": ["RP-1", "RP-MISSING"],
+            },
+            "reference_point_guids reference point was not found: RP-MISSING",
+        ),
+        (
+            {
+                "side_guid": "SIDE-BLUE",
+                "mission_guid": "MISSION-BLUE-2",
+                "destination_guid": "UNIT-MISSING",
+            },
+            "destination_guid actual unit was not found: UNIT-MISSING",
+        ),
+    ],
+)
+def test_lua_mission_update_rejects_deterministic_errors_before_mutation(
+    arguments: dict[str, object],
+    expected_reason: str,
+) -> None:
+    run = _run_lua("mission.update", arguments, expect_ok=False)
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert expected_reason in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.update"
+    assert evidence["mutation_barrier_written"] is False
+    assert evidence["execute_started"] is False
+    assert run.api_calls["set_mission"] == ()
+
+
+@pytest.mark.parametrize(
+    ("mission_guid", "extra_mission_class", "updates", "expected_descriptor"),
+    [
+        (
+            "MISSION-BLUE-1",
+            None,
+            {
+                "loop_type": 2,
+                "check_opa": True,
+                "check_wwr": False,
+                "active_emcon": True,
+                "attack_throttle_aircraft": "Full",
+                "attack_altitude_aircraft": 1_000,
+                "attack_depth_submarine": -50,
+            },
+            {
+                "LoopType": 2,
+                "CheckOPA": True,
+                "CheckWWR": False,
+                "ActiveEMCON": True,
+                "AttackThrottleAircraft": "Full",
+                "AttackAltitudeAircraft": 1_000,
+                "AttackDepthSubmarine": -50,
+            },
+        ),
+        (
+            "MISSION-EXTRA",
+            "support",
+            {
+                "loop_type": 1,
+                "active_emcon": True,
+                "transit_throttle_aircraft": "Cruise",
+            },
+            {
+                "LoopType": 1,
+                "ActiveEMCON": True,
+                "TransitThrottleAircraft": "Cruise",
+            },
+        ),
+        (
+            "MISSION-EXTRA",
+            "mine_clearing",
+            {"loop_type": 1},
+            {"LoopType": 1},
+        ),
+        (
+            "MISSION-EXTRA",
+            "ferry",
+            {
+                "flight_size": 2,
+                "use_flight_size": True,
+                "minimum_aircraft_required": 1,
+            },
+            {
+                "FlightSize": 2,
+                "UseFlightSize": True,
+                "MinAircraftReq": 1,
+            },
+        ),
+        (
+            "MISSION-EXTRA",
+            "mining",
+            {
+                "flight_size": 2,
+                "use_flight_size": True,
+                "minimum_aircraft_required": 1,
+                "group_size": 2,
+                "use_group_size": True,
+                "station_altitude_aircraft": 1_500,
+            },
+            {
+                "FlightSize": 2,
+                "UseFlightSize": True,
+                "MinAircraftReq": 1,
+                "GroupSize": 2,
+                "UseGroupSize": True,
+                "StationAltitudeAircraft": 1_500,
+            },
+        ),
+        (
+            "MISSION-BLUE-2",
+            None,
+            {
+                "use_flight_size": True,
+                "use_group_size": True,
+                "transit_throttle_ship": "Cruise",
+                "station_depth_submarine": -50,
+            },
+            {
+                "UseFlightSize": True,
+                "UseGroupSize": True,
+                "TransitThrottleShip": "Cruise",
+                "StationDepthSubmarine": -50,
+            },
+        ),
+    ],
+)
+def test_lua_mission_update_applies_class_specific_loop_and_emcon_fields(
+    mission_guid: str,
+    extra_mission_class: str | None,
+    updates: dict[str, object],
+    expected_descriptor: dict[str, object],
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": mission_guid,
+            **updates,
+        },
+        extra_mission_class=extra_mission_class,
+    )
+
+    assert run.api_calls["set_mission"] == (
+        ("SIDE-BLUE", mission_guid, expected_descriptor),
+    )
+
+
+@pytest.mark.parametrize(
+    ("mission_guid", "extra_mission_class", "updates", "expected_reason"),
+    [
+        (
+            "MISSION-EXTRA",
+            "support",
+            {"loop_type": 2},
+            "support loop_type must be 0 or 1",
+        ),
+        (
+            "MISSION-BLUE-0",
+            None,
+            {"loop_type": 0},
+            "loop_type is not supported by strike missions",
+        ),
+        (
+            "MISSION-EXTRA",
+            "support",
+            {"check_opa": True},
+            "check_opa requires a patrol mission",
+        ),
+        (
+            "MISSION-BLUE-0",
+            None,
+            {"check_wwr": True},
+            "check_wwr requires a patrol mission",
+        ),
+        (
+            "MISSION-BLUE-0",
+            None,
+            {"active_emcon": True},
+            "active_emcon requires a patrol or support mission",
+        ),
+        (
+            "MISSION-EXTRA",
+            "mine_clearing",
+            {"active_emcon": True},
+            "active_emcon requires a patrol or support mission",
+        ),
+        (
+            "MISSION-BLUE-2",
+            None,
+            {"flight_size": 2},
+            "flight_size is not supported by cargo missions",
+        ),
+        (
+            "MISSION-BLUE-2",
+            None,
+            {"minimum_aircraft_required": 1},
+            "minimum_aircraft_required is not supported by cargo missions",
+        ),
+        (
+            "MISSION-EXTRA",
+            "ferry",
+            {"group_size": 2},
+            "group_size is not supported by ferry missions",
+        ),
+        (
+            "MISSION-EXTRA",
+            "ferry",
+            {"use_group_size": True},
+            "use_group_size is not supported by ferry missions",
+        ),
+        (
+            "MISSION-BLUE-2",
+            None,
+            {"group_size": 2},
+            "group_size is not supported by cargo missions",
+        ),
+        (
+            "MISSION-BLUE-0",
+            None,
+            {"transit_throttle_aircraft": "Cruise"},
+            "transit_throttle_aircraft is not supported by strike missions",
+        ),
+        (
+            "MISSION-EXTRA",
+            "ferry",
+            {"station_altitude_aircraft": 1_500},
+            "station_altitude_aircraft is not supported by ferry missions",
+        ),
+        (
+            "MISSION-BLUE-2",
+            None,
+            {"attack_throttle_aircraft": "Full"},
+            "attack_throttle_aircraft requires a patrol mission",
+        ),
+        (
+            "MISSION-EXTRA",
+            "support",
+            {"attack_altitude_aircraft": 1_000},
+            "attack_altitude_aircraft requires a patrol mission",
+        ),
+        (
+            "MISSION-EXTRA",
+            "mining",
+            {"attack_depth_submarine": -50},
+            "attack_depth_submarine requires a patrol mission",
+        ),
+    ],
+)
+def test_lua_mission_update_rejects_class_inapplicable_fields_before_mutation(
+    mission_guid: str,
+    extra_mission_class: str | None,
+    updates: dict[str, object],
+    expected_reason: str,
+) -> None:
+    run = _run_lua(
+        "mission.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": mission_guid,
+            **updates,
+        },
+        extra_mission_class=extra_mission_class,
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert expected_reason in str(details["reason"])
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.update"
+    assert run.api_calls["set_mission"] == ()
 
 
 def test_lua_mission_update_maps_strike_execution_controls_and_verifies_them() -> None:
@@ -4836,6 +5594,8 @@ def test_lua_mission_update_rejects_conflicting_flight_size_readbacks() -> None:
     assert "flight_size readback mismatch" in reason
     assert "observed=number(4)" in reason
     assert "path=ScenEdit_SetMission.return.__mission.FlightSize.value" in reason
+    assert error["mutation_not_started"] is None
+    assert len(run.api_calls["set_mission"]) == 1
 
 
 @pytest.mark.parametrize(
@@ -4871,6 +5631,58 @@ def test_lua_mission_target_updates_are_verified_on_strike_wrapper(
         "assigned": assigned,
         "target_guids": expected_targets,
     }
+
+
+def test_lua_mission_target_add_rejects_non_strike_mission_before_mutation() -> None:
+    run = _run_lua(
+        "mission.target.add",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "target_guid": "CONTACT-BLUE-1",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.target.add"
+    assert run.api_calls["assign_target"] == ()
+
+
+def test_lua_mission_target_add_accepts_actual_unit_guid() -> None:
+    run = _run_lua(
+        "mission.target.add",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": "UNIT-BLUE-0",
+        },
+    )
+
+    assert cast(dict[str, JsonValue], run.result)["assigned"] is True
+    assert run.api_calls["assign_target"] == (
+        (("UNIT-BLUE-0",), "MISSION-BLUE-0"),
+    )
+
+
+def test_lua_mission_target_add_rejects_unknown_target_before_mutation() -> None:
+    run = _run_lua(
+        "mission.target.add",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-0",
+            "target_guid": "TARGET-MISSING",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.target.add"
+    assert run.api_calls["assign_target"] == ()
 
 
 @pytest.mark.parametrize(
@@ -5563,7 +6375,7 @@ def test_lua_unit_set_maps_submarine_navigation_and_manual_controls() -> None:
             "force_speed": True,
             "desired_heading": 225,
             "move_to": True,
-            "manual_throttle": "Flank",
+            "manual_throttle": 4,
             "manual_speed": 18,
             "manual_altitude": -120,
             "hold_position": True,
@@ -5582,7 +6394,7 @@ def test_lua_unit_set_maps_submarine_navigation_and_manual_controls() -> None:
             "forceSpeed": True,
             "desiredHeading": 225,
             "moveto": True,
-            "manualthrottle": "Flank",
+            "manualthrottle": 4,
             "manualspeed": 18,
             "manualaltitude": -120,
             "holdPosition": True,
@@ -5675,8 +6487,6 @@ def test_lua_mission_update_maps_extended_strike_controls() -> None:
             "mission_guid": "MISSION-BLUE-0",
             "group_size": 2,
             "use_group_size": True,
-            "attack_throttle_aircraft": "Full",
-            "attack_altitude_aircraft": 150,
             "strike_minimum_trigger": "Hostile",
             "strike_max_flights": 3,
             "strike_auto_planner": True,
@@ -5692,8 +6502,6 @@ def test_lua_mission_update_maps_extended_strike_controls() -> None:
     assert descriptor[2] == {
         "StrikeGroupSize": 2,
         "StrikeUseGroupSize": True,
-        "AttackThrottleAircraft": "Full",
-        "AttackAltitudeAircraft": 150,
         "StrikeMinimumTrigger": "Hostile",
         "StrikeMax": 3,
         "StrikeAutoPlanner": True,
@@ -5731,9 +6539,10 @@ def test_lua_mission_update_accepts_named_cmo_enum_wrappers_for_all_throttles(
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            argument_name: "ModeAlpha",
+            "mission_guid": "MISSION-BLUE-1",
+            argument_name: "Full",
         },
+        wire_argument_overrides={argument_name: "ModeAlpha"},
         mission_readback_overrides={
             cmo_field: _FakeCmoEnumWrapper("ModeAlpha", 73),
         },
@@ -5748,9 +6557,10 @@ def test_lua_mission_update_accepts_numeric_cmo_enum_wrapper_value() -> None:
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            "attack_throttle_aircraft": 73,
+            "mission_guid": "MISSION-BLUE-1",
+            "attack_throttle_aircraft": "Full",
         },
+        wire_argument_overrides={"attack_throttle_aircraft": 73},
         mission_readback_overrides={
             "AttackThrottleAircraft": _FakeCmoEnumWrapper("ModeAlpha", 73),
         },
@@ -5768,9 +6578,10 @@ def test_lua_mission_update_accepts_decorated_plain_cmo_enum_readbacks(
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            "attack_throttle_aircraft": requested,
+            "mission_guid": "MISSION-BLUE-1",
+            "attack_throttle_aircraft": "Full",
         },
+        wire_argument_overrides={"attack_throttle_aircraft": requested},
         mission_readback_overrides={"AttackThrottleAircraft": "ModeAlpha: 73"},
     )
 
@@ -5782,9 +6593,10 @@ def test_lua_mission_update_accepts_wrapper_with_opaque_display() -> None:
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            "attack_throttle_aircraft": "ModeAlpha",
+            "mission_guid": "MISSION-BLUE-1",
+            "attack_throttle_aircraft": "Full",
         },
+        wire_argument_overrides={"attack_throttle_aircraft": "ModeAlpha"},
         mission_readback_overrides={
             "AttackThrottleAircraft": _FakeCmoEnumWrapper(
                 "ModeAlpha",
@@ -5803,9 +6615,10 @@ def test_lua_mission_update_preserves_exact_plain_throttle_readbacks(
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            "attack_throttle_aircraft": requested,
+            "mission_guid": "MISSION-BLUE-1",
+            "attack_throttle_aircraft": "Full",
         },
+        wire_argument_overrides={"attack_throttle_aircraft": requested},
         mission_readback_overrides={"AttackThrottleAircraft": requested},
     )
 
@@ -5843,9 +6656,10 @@ def test_lua_mission_update_rejects_true_cmo_enum_wrapper_mismatches(
         "mission.update",
         {
             "side_guid": "SIDE-BLUE",
-            "mission_guid": "MISSION-BLUE-0",
-            "attack_throttle_aircraft": requested,
+            "mission_guid": "MISSION-BLUE-1",
+            "attack_throttle_aircraft": "Full",
         },
+        wire_argument_overrides={"attack_throttle_aircraft": requested},
         mission_readback_overrides={"AttackThrottleAircraft": observed},
         expect_ok=False,
     )
@@ -5903,6 +6717,99 @@ def test_lua_mission_cargo_update_calls_wrapper_method_and_rereads() -> None:
         "guid": "CARGO-BLUE-2",
         "quantity": 1,
     }
+
+
+@pytest.mark.parametrize("mode", ["no_op_nil", "no_op_truthy"])
+def test_lua_mission_cargo_update_rejects_wrapper_noop_after_readback(
+    mode: str,
+) -> None:
+    run = _run_lua(
+        "mission.cargo.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-2",
+            "action": "assign",
+            "cargo_kind": "object",
+            "object_type": 2,
+            "dbid": 802,
+            "cargo_guid": "CARGO-BLUE-2",
+        },
+        mission_cargo_update_mode=mode,
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    details = cast(dict[str, JsonValue], error["details"])
+    assert "addAssignedCargo readback mismatch" in str(details["reason"])
+    assert error["mutation_not_started"] is None
+
+
+def test_lua_mission_cargo_update_rejects_absent_object_before_mutation() -> None:
+    run = _run_lua(
+        "mission.cargo.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-2",
+            "action": "unassign",
+            "cargo_kind": "object",
+            "object_type": 2,
+            "dbid": 802,
+            "cargo_guid": "CARGO-BLUE-2",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert "does not contain the requested object" in str(
+        cast(dict[str, JsonValue], error["details"])["reason"]
+    )
+
+
+def test_lua_mission_cargo_update_verifies_mount_quantity_delta() -> None:
+    run = _run_lua(
+        "mission.cargo.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-2",
+            "action": "assign",
+            "cargo_kind": "mount",
+            "dbid": 901,
+            "quantity": 3,
+        },
+    )
+
+    result = cast(dict[str, JsonValue], run.result)
+    matching = [
+        item
+        for item in cast(list[dict[str, JsonValue]], result["assigned_cargo"])
+        if item["dbid"] == 901
+    ]
+    assert matching == [
+        {"object_type": 1, "dbid": 901, "guid": None, "quantity": 3}
+    ]
+
+
+def test_lua_mission_cargo_update_rejects_non_cargo_mission_before_mutation() -> None:
+    run = _run_lua(
+        "mission.cargo.update",
+        {
+            "side_guid": "SIDE-BLUE",
+            "mission_guid": "MISSION-BLUE-1",
+            "action": "assign",
+            "cargo_kind": "object",
+            "object_type": 2,
+            "dbid": 802,
+            "cargo_guid": "CARGO-BLUE-2",
+        },
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    evidence = cast(dict[str, JsonValue], error["mutation_not_started"])
+    assert evidence["stage"] == "handler_preflight"
+    assert evidence["operation"] == "mission.cargo.update"
 
 
 def test_lua_doctrine_set_maps_extended_fields_and_returns_readback() -> None:
@@ -6031,7 +6938,7 @@ def test_lua_doctrine_wra_set_uses_ordered_four_element_array_and_rereads() -> N
             "mission_guid": "MISSION-BLUE-1",
             "contact_guid": "CONTACT-BLUE-1",
             "weapon_dbid": 301,
-            "weapons_per_salvo": "Max",
+            "weapons_per_salvo": "max",
             "shooters_per_salvo": 2,
             "firing_range": 90,
             "self_defence_range": "inherit",
@@ -6046,12 +6953,12 @@ def test_lua_doctrine_wra_set_uses_ordered_four_element_array_and_rereads() -> N
                 "contact_id": "CONTACT-BLUE-1",
                 "weapon_dbid": 301,
             },
-            ("Max", 2, 90, "inherit"),
+            ("max", 2, 90, "inherit"),
         ),
     )
     result = cast(dict[str, JsonValue], run.result)
     entry = cast(list[dict[str, JsonValue]], result["entries"])[0]
-    assert entry["weapons_per_salvo"] == "Max"
+    assert entry["weapons_per_salvo"] == "max"
     assert entry["shooters_per_salvo"] == 2
     assert entry["firing_range"] == 90
     assert entry["self_defence_range"] == "inherit"

@@ -118,7 +118,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage; success establishes the session binding required for queued mutations |
 | `cmo_time_get_state` | none | Host-only read of the uniquely matched CMO window's paused/running state and selected compression; does not require Lua polling or an established session binding |
 | `cmo_time_set` | `state=paused|running`; optional `rate_code=0..5` | Idempotently set UI run state and optionally compression, then verify readback; use only the configured unique CMO process and fail closed on ambiguous or unverifiable UI state |
-| `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require every current non-terminal durable request UUID, force 1x, wait for that complete set and/or the bridge handshake, then attempt to re-pause and restore prior compression with explicit verification |
+| `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require no current quarantine barrier and every current non-terminal durable request UUID; force 1x, stop early if a barrier appears, then attempt to re-pause and restore prior compression while reporting both verification results |
 | `cmo_message_log_status` | none | Host-only inspection of native message logging, the timestamp file bound to the exact `Command.exe` process, and the persisted scenario session; does not contact Lua or change CMO configuration |
 | `cmo_message_log_read` | exact side name; optional cursor; `start=now|recent`; page size; optional unscoped/raw flags | Read side-prefixed native messages while running or paused; establish a forward cursor with `start=now` and use `has_more` for forward paging; `recent` returns one latest-N recovery tail |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, CMO's reported compression value, and projected score state; coarse values are labels, not guaranteed effective multipliers |
@@ -205,9 +205,47 @@ verification plus final pause/rate-restoration cleanup can extend total tool dur
 guarantees an exact amount of simulated time. The UI action itself is host-side, but handshake and
 queue completion still require the mounted Regular Time polling event. On timeout or work failure,
 the tool attempts to pause and restore the prior rate, reports whether both were verified, and never
-cancels or resubmits a durable request. Treat inability to verify the final pause as a high-severity
-condition requiring immediate user attention. The registered schema and returned state model remain
-authoritative.
+cancels or resubmits a durable request. A current unresolved quarantine barrier is rejected before
+release; one that appears during the pulse ends the work wait immediately with `timed_out=false`
+and a structured barrier error. Only `completed` tracked requests count as success. `rejected`,
+`cancelled`, and resolved or unresolved `quarantined` rows are explicit failures, not successful
+terminal states. Treat inability to verify the final pause as a high-severity condition requiring
+immediate user attention. The registered schema and returned state model remain authoritative.
+
+### Finite-value input contracts
+
+The MCP schema is authoritative for exact spelling, case, and numeric codes. Never guess a UI label
+or retry an unlisted synonym such as `Military` or `Creep`. MCP scalar validation is strict:
+booleans accept only JSON `true`/`false`; numeric fields reject booleans, numeric strings,
+`NaN`, and infinities.
+
+| Input | Exact public values |
+|---|---|
+| Mission transit/station/attack throttle | `FullStop`, `Loiter`, `Cruise`, `Full`, `Flank`, `None`, or codes `0..5` in that order |
+| `cmo_unit_set.throttle` | `FullStop`, `Loiter`, `Cruise`, `Full`, or `Flank`; numeric codes are not accepted by this field |
+| `cmo_unit_set.manual_throttle` | `OFF`, the five unit-throttle names, or codes `0..4` |
+| `cmo_unit_add.unit_type` | `Aircraft`, `Ship`, `Sub`, `Facility`, `Satellite`, or `Weapon` |
+| Time-compression code | Strict integers `0..5`; booleans, floats, and numeric strings are rejected |
+| Mission `flight_size` / `group_size` | Strict integers `1`, `2`, `3`, `4`, or `6` |
+| Mission `minimum_aircraft_required` | Strict integers `0`, `1`, `2`, `3`, `4`, `6`, `8`, or `12` |
+| Strike `strike_minimum_trigger` | `Neutral/0`, `Friendly/1`, `Unfriendly/2`, `Hostile/3`, or `Unknown/4` |
+| Mission `loop_type` | Patrol: strict `0/1/2`; Support and MineClear: strict `0/1`; unsupported on other classes |
+| Mining `laying_method` | Strict `0` or `1` |
+| Mission cargo `object_type` | Strict `2`, `3`, `4`, or `5` |
+| Doctrine update fields | The field-specific names/codes shown in `cmo_doctrine_set`, plus `inherit` where exposed; values are not interchangeable between fields |
+| WRA weapons/shooters per salvo | A non-negative number or `inherit`, `system`, `max`, `none` |
+| WRA firing range | A non-negative number or `inherit`, `max`, `none`, `25ofmax`, `50ofmax`, `75ofmax`; `system` is invalid here |
+| WRA self-defence range | A non-negative number or `inherit`, `system`, `max`, `none` |
+| Side awareness | `Blind/-1`, `Normal/0`, `AutoSideID/1`, `AutoSideAndUnitID/2`, `Omniscient/3` |
+| Side proficiency | `Novice/0`, `Cadet/1`, `Regular/2`, `Veteran/3`, `Ace/4` |
+
+WRA `target_type` remains data-driven because the table evolves with CMO builds and databases.
+Prefer `contact_guid`; when a type-wide rule is required, reuse an exact target type returned by
+`cmo_doctrine_wra_get` rather than composing one. Mission altitude/depth expressions,
+`cmo_unit_set` manual speed/altitude, event date/interval text, database identifiers, and a small
+number of Build-sensitive read filters remain open only where CMO accepts presets, localized or
+unit-bearing text, or a runtime-dependent value. Openness is not permission to invent an alias:
+reuse a current readback value or an explicit user value.
 
 ## Current mutation tools
 
@@ -225,7 +263,7 @@ Every tool in this subsection is a durable queued mutation and returns `QueuedOp
 |---|---|---|
 | `cmo_reference_point_add` | side GUID, name, either coordinates or complete relative-anchor fields | Create a fixed point or a fixed/rotating point relative to a unit, contact, or RP; non-idempotent |
 | `cmo_reference_point_update` | side GUID, RP GUID, changed absolute or relative fields | Move, re-anchor, adjust, or clear a relative point; use anchored point sets for moving mission areas |
-| `cmo_unit_set` | unit GUID plus changed movement or identity fields | Set name, speed or throttle, altitude or depth, heading, hold, cavitation, sprint-and-drift, or ordered course |
+| `cmo_unit_set` | unit GUID plus changed movement or identity fields | Set name, speed or the exact unit/manual-throttle enums above, altitude or depth, heading, hold, cavitation, sprint-and-drift, or ordered course |
 | `cmo_unit_assign_mission` | unit GUID, mission GUID, escort flag | Assign one unit; use escort only when meaningful |
 | `cmo_unit_unassign_mission` | unit GUID | Remove the current ordinary mission assignment |
 | `cmo_unit_loadout_set` | unit GUID, loadout DBID; optional readying controls | Select an aircraft loadout; parameter-level author restrictions apply below |
@@ -237,17 +275,41 @@ Every tool in this subsection is a durable queued mutation and returns `QueuedOp
 | `cmo_unit_cargo_transfer` | source, destination, cargo selector and quantity | Move modeled cargo between eligible units; non-idempotent |
 | `cmo_unit_cargo_unload` | carrier and cargo selector | Unload modeled cargo at the current location; non-idempotent |
 | `cmo_mission_create` | side GUID, unique name, category, discriminated mission details; parent pool for package | Create an inactive ordinary mission, task pool, or package for patrol, support, strike, ferry, mining, mine-clearing, or cargo work |
-| `cmo_mission_update` | side GUID, mission GUID, changed supported fields | Update activation, schedule, grouping, profiles, zones, patrol, strike, mining, or cargo options |
+| `cmo_mission_update` | side GUID, mission GUID, changed supported fields | Update activation, schedule, grouping, profiles, zones, patrol, strike, mining, or cargo options; throttle fields use only the mission-throttle enum above |
 | `cmo_mission_air_refueling_update` | side GUID, mission GUID, changed AAR fields | Configure receiver policy, permitted tanker missions, launch/follow/continue behavior, tanker minimums, receiver queue, fuel threshold, range, and support-tanker limits |
 | `cmo_mission_flight_plan_create` | side GUID, mission GUID, exactly one complete target-time or takeoff-time schedule | Generate mission flights for `YYYY/MM/DD` plus `HH:MM:SS`, then return all flights visible through mission readback |
 | `cmo_mission_target_add` | side GUID, mission GUID, target GUID | Add a strike target; check current targets first |
 | `cmo_mission_target_remove` | side GUID, mission GUID, target GUID | Remove a strike target |
 | `cmo_mission_cargo_update` | side GUID, mission GUID, add/remove, cargo identity and quantity | Maintain cargo assigned to a cargo mission |
-| `cmo_doctrine_set` | scope selector and projected doctrine fields | Change side, mission, or unit doctrine |
+| `cmo_doctrine_set` | scope selector and projected doctrine fields | Change side, mission, or unit doctrine using each field's own schema enum; do not transfer a value from a different doctrine field |
 | `cmo_emcon_set` | scope selector and radar/sonar/OECM fields | Change EMCON; returned inheritance may be unavailable on some builds |
-| `cmo_doctrine_wra_set` | scope, weapon, target type, changed WRA fields | Change deliberate weapon/target release rules |
+| `cmo_doctrine_wra_set` | scope, weapon, contact or exact target type, four WRA settings | Change deliberate weapon/target release rules using the per-position WRA contracts above |
 | `cmo_contact_posture_set` | observer side, contact GUID, posture | Change how the observing side classifies a contact |
 | `cmo_special_action_execute` | side GUID, action GUID | Execute one existing active special action; a normal player may use a pre-authored visible control, while executing newly authored or changed Lua is an author/umpire code-execution test |
+
+### Mission-update applicability
+
+`cmo_mission_update` is intentionally one partial-update tool, so its JSON Schema can express each
+field's type but cannot know the class behind `mission_guid`. The runtime reads the current mission
+and applies this official class matrix before its mutation barrier. An invalid combination returns
+`mutation_not_started`; do not retry the same field on another class.
+
+| Field family | Supported mission classes |
+|---|---|
+| `flight_size`, `minimum_aircraft_required` | Strike, Patrol, Support, Ferry, Mining, MineClear |
+| `use_flight_size` | The classes above, plus Cargo |
+| `group_size` | Strike, Patrol, Support, Mining, MineClear |
+| `use_group_size` | The classes above, plus Cargo |
+| Transit/station throttle, aircraft altitude, submarine depth | Patrol, Support, Mining, MineClear, Cargo |
+| Attack throttle, aircraft altitude, submarine depth | Patrol only |
+| `active_emcon` | Patrol, Support |
+| `check_opa`, `check_wwr` | Patrol only |
+| `on_station` | Patrol, Support |
+| `one_time_only` | Support, Strike |
+| `preplanned_only` | Strike only |
+| `one_third_rule` | Patrol, Support, Mining, MineClear, Cargo |
+| Ordinary zone / prosecution zone | Patrol, Support, Mining, MineClear, Cargo / Patrol only |
+| Strike, mining, or cargo option families | Their matching class only |
 
 ### Existing author or umpire controls
 
@@ -282,7 +344,7 @@ short-lived confirmation-token workflow.
 | `cmo_event_list` | detail level `0..4` | List events or their trigger, condition, action, or property projection |
 | `cmo_event_get` | event GUID/exact description, detail level | Read one event and its selected projection |
 | `cmo_event_set` | add/update/remove, event selector, changed properties | Create inactive by default, update, rename, activate, or remove an event |
-| `cmo_event_component_set` | kind, list/add/update/remove, selector, subtype, parameters | Manage trigger, condition, or action definitions through an allowlisted envelope; `LuaScript` action and Lua-condition parameters can contain executable source and are trusted-author code execution |
+| `cmo_event_component_set` | kind, list/add/update/remove, selector, component type, typed parameters | Manage trigger, condition, or action definitions through an allowlisted envelope; `LuaScript` action and Lua-condition parameters can contain executable source and are trusted-author code execution |
 | `cmo_event_component_link` | kind, add/remove/replace, event and component selectors | Assemble or revise an event's trigger, condition, and action links |
 | `cmo_special_action_create` | side GUID, name, Lua text, visible properties | Create a side-owned special action inactive by default; its source can execute with CMO scenario-Lua authority |
 | `cmo_special_action_update` | side GUID, action selector, update/remove, changed properties | Rename, edit, enable, disable, change repeatability/script, or remove a special action; changing source is trusted-author code authoring |
@@ -291,13 +353,66 @@ short-lived confirmation-token workflow.
 | `cmo_mission_delete_preview` | side GUID, mission GUID | Resolve the exact deletion and issue a short-lived confirmation token |
 | `cmo_mission_delete_confirm` | same side/mission GUIDs and token | Permanently delete only the mission bound to the preview token |
 
-The event-component tools intentionally expose official subtype parameters without pretending that
-every possible CMO subtype has a separate MCP tool. The subtype envelope is allowlisted, but a Lua
-source field is not a safe typed substitute for the code it contains. A Lua-bearing event or
-special action, combined with activation or execution, is equivalent to local code execution in
-the CMO process. Use it only in `SCENARIO_AUTHOR` or `UMPIRE`: save a scenario copy, review every
-source line, create inactive and non-repeatable by default, read back exact source and links, and
-execute only after the trusted author scope approves it.
+### Event-component parameter contract
+
+`cmo_event_component_set` keeps one stable call shape while exposing 23 closed parameter models.
+Use the parameter branch named for `component_type`; unknown keys, missing add-time minimum fields,
+and non-canonical finite values fail before queueing. `add` requires `component_type`. An `update`
+with non-empty `parameters` also requires `component_type` as an assertion. Before writing the
+mutation barrier, the bridge lists the existing component and requires its actual type to match;
+it does not send `type` to CMO during update because the official API accepts it only for add.
+`list` and `remove` forbid both type and parameters.
+
+| Kind | Component type | Canonical parameter keys |
+|---|---|---|
+| Trigger | `Points` | `SideID`, `PointValue`, `ReachDirection` (`0/1/2`) |
+| Trigger | `RandomTime` | `EarliestTime`, `LatestTime` |
+| Trigger | `RegularTime` | `Interval` |
+| Trigger | `ScenEnded`, `ScenLoaded` | none |
+| Trigger | `Time` | `Time` |
+| Trigger | `UnitDamaged` | `DamagePercent`, `TargetFilter` |
+| Trigger | `UnitDestroyed` | `TargetFilter` |
+| Trigger | `UnitDetected`, `UnitEmissions` | `TargetFilter`, `DetectorSideID`, `MCL`, optional `Area` |
+| Trigger | `UnitEntersArea` | `TargetFilter`, `Area`, optional `ETOA`, `LTOA`, `NOT`, `ExitArea` |
+| Trigger | `UnitRemainsInArea` | `TargetFilter`, `Area`, `TD` |
+| Trigger | `UnitBaseStatus` | `TargetFilter`, optional `TargetBase`, `TargetCondition` |
+| Trigger | `UnitCargoMoved` | `CargoFilter`, plus at least one of `TargetLimitReceived` / `TargetLimitSent` |
+| Condition | `LuaScript` | `ScriptText` |
+| Condition | `ScenHasStarted` | optional `NOT` |
+| Condition | `SidePosture` | `ObserverSideID`, `TargetSideID`, `TargetPosture`, optional `NOT` |
+| Action | `ChangeMissionStatus` | `MissionID`, `NewStatus` (`0` active, `1` inactive) |
+| Action | `EndScenario` | none |
+| Action | `LuaScript` | `ScriptText` |
+| Action | `Message` | `SideID`, `Text` |
+| Action | `Points` | `PointChange`, `SideID` |
+| Action | `TeleportInArea` | `UnitIDs`, `Area` |
+
+`MCL` accepts `Unknown/KnownDomain/KnownType/KnownClass/PreciseID` or strict codes `0..4`.
+`TargetPosture` accepts `Neutral/Friendly/Unfriendly/Hostile` or strict codes `0..3`.
+Unit `TargetType` accepts `Aircraft/Ship/Submarine/Facility/Aimpoint/Weapon/Satellite` or strict
+codes `1..7`. Cargo `TargetType` accepts
+`NoCargo/Personnel/SmallCargo/MediumCargo/LargeCargo/VLargeCargo` or strict codes
+`0/1000/2000/3000/4000/5000`. Boolean fields accept JSON booleans only.
+
+`TargetFilter` is a closed nested object. Select one `SpecificUnitID` (the input compatibility
+alias `SpecificUnit` is normalized to this key), or supply `TargetSide` plus `TargetType` and
+optional numeric `TargetSubType`/`SpecificUnitClass`. Do not combine the specific-unit path with
+type/class fields. `CargoFilter` similarly selects one `SpecificUnitID`, or uses its cargo type or
+numeric class. Numeric identifiers accept a non-negative integer or decimal-digit string only.
+
+Keep the following values open because the official API does not publish a complete static
+enumeration: date/time text (`EarliestTime`, `LatestTime`, `Time`, `ETOA`, `LTOA`), the string
+form of `RegularTime.Interval`, database subtype/class identifiers, `TargetCondition`, object
+selectors, script/message text, and reference-point identifiers. A numeric interval must be at
+least one second. `TD` is either non-negative seconds or `days:hours:minutes:seconds`. Openness is
+not permission to guess: copy selectors and dynamic values from current scenario reads or the
+user's authoring specification.
+
+The typed envelope does not make Lua source safe. A Lua-bearing event or special action, combined
+with activation or execution, is equivalent to local code execution in the CMO process. Use it
+only in `SCENARIO_AUTHOR` or `UMPIRE`: save a scenario copy, review every source line, create
+inactive and non-repeatable by default, read back exact source and links, and execute only after
+the trusted author scope approves it.
 
 ## Mode-restricted parameters
 

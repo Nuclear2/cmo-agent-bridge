@@ -16,6 +16,7 @@ from cmo_agent_bridge.application.host_quarantine import (
 )
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
+    ActiveQueueQuarantineBarrier,
     CancelQueuedOperationResult,
     QueueSummary,
     QueueWaitResult,
@@ -81,6 +82,65 @@ _TERMINAL_QUEUE_STATES = frozenset(
         OperationQueueState.CANCELLED,
     }
 )
+_SUCCESSFUL_QUEUE_STATES = frozenset({OperationQueueState.COMPLETED})
+
+
+def _active_quarantine_barrier_error(
+    barriers: tuple[ActiveQueueQuarantineBarrier, ...],
+    requests: tuple[QueuedOperationStatus, ...],
+) -> BridgeError | None:
+    if not barriers:
+        return None
+    return BridgeError(
+        ErrorCode.STATE_CONFLICT,
+        "simulation pulse stopped at an unresolved quarantine barrier",
+        {
+            "barriers": [
+                {
+                    "request_id": str(item.request_id),
+                    "operation": item.operation,
+                    "sequence": item.sequence,
+                }
+                for item in barriers
+            ],
+            "barrier_request_ids": [str(item.request_id) for item in barriers],
+            "barrier_sequences": [item.sequence for item in barriers],
+            "request_states": {str(item.request_id): item.state.value for item in requests},
+            "next_step": (
+                "Inspect the quarantined request, determine whether its mutation was applied, "
+                "then resolve the quarantine before advancing queued work."
+            ),
+        },
+    )
+
+
+def _terminal_request_failure_error(
+    requests: tuple[QueuedOperationStatus, ...],
+) -> BridgeError | None:
+    failed = tuple(
+        item
+        for item in requests
+        if item.state in _TERMINAL_QUEUE_STATES
+        and item.state not in _SUCCESSFUL_QUEUE_STATES
+    )
+    if not failed:
+        return None
+    ordered = tuple(sorted(failed, key=lambda item: item.sequence))
+    return BridgeError(
+        ErrorCode.STATE_CONFLICT,
+        "simulation pulse durable work did not complete successfully",
+        {
+            "failed_requests": [
+                {
+                    "request_id": str(item.request_id),
+                    "operation": item.operation,
+                    "sequence": item.sequence,
+                    "state": item.state.value,
+                }
+                for item in ordered
+            ],
+        },
+    )
 
 
 class McpBridgeDiagnostic(BaseModel):
@@ -837,7 +897,22 @@ class McpRuntimeManager:
                     )
 
                 self._verify_lineage_acceptance_process(before_raw, expected_process)
-                initial_statuses = self._pulse_queue_preflight(runtime, ids)
+                initial_statuses, initial_barriers = self._pulse_queue_preflight(runtime, ids)
+                if initial_barriers:
+                    return self._unreleased_pulse_barrier_result(
+                        before=before_raw,
+                        requests=initial_statuses,
+                        barriers=initial_barriers,
+                        started_at=started_at,
+                    )
+                initial_request_error = _terminal_request_failure_error(initial_statuses)
+                if initial_request_error is not None:
+                    return self._unreleased_pulse_request_failure_result(
+                        before=before_raw,
+                        requests=initial_statuses,
+                        error=initial_request_error,
+                        started_at=started_at,
+                    )
                 pending = tuple(
                     sorted(
                         (
@@ -872,6 +947,25 @@ class McpRuntimeManager:
                         runtime,
                         pending[0].request_id,
                         timeout_seconds=min(timeout, 1.0),
+                    )
+                release_statuses = tuple(
+                    runtime.queue_service.get(request_id=item) for item in ids
+                )
+                release_barriers = runtime.queue_service.active_quarantine_barriers()
+                if release_barriers:
+                    return self._unreleased_pulse_barrier_result(
+                        before=before_raw,
+                        requests=release_statuses,
+                        barriers=release_barriers,
+                        started_at=started_at,
+                    )
+                release_request_error = _terminal_request_failure_error(release_statuses)
+                if release_request_error is not None:
+                    return self._unreleased_pulse_request_failure_result(
+                        before=before_raw,
+                        requests=release_statuses,
+                        error=release_request_error,
+                        started_at=started_at,
                     )
 
                 released = False
@@ -980,7 +1074,7 @@ class McpRuntimeManager:
                     and pause_error is None
                     and restore_error is None
                     and final_pause_verified
-                    and all(item.state in _TERMINAL_QUEUE_STATES for item in requests)
+                    and all(item.state in _SUCCESSFUL_QUEUE_STATES for item in requests)
                     and (not handshake or bridge_status is not None)
                 )
                 return McpSimulationPulseResult(
@@ -1302,8 +1396,14 @@ class McpRuntimeManager:
     def _pulse_queue_preflight(
         runtime: ApplicationRuntime,
         request_ids: tuple[UUID, ...],
-    ) -> tuple[QueuedOperationStatus, ...]:
+    ) -> tuple[
+        tuple[QueuedOperationStatus, ...],
+        tuple[ActiveQueueQuarantineBarrier, ...],
+    ]:
         selected = tuple(runtime.queue_service.get(request_id=item) for item in request_ids)
+        barriers = runtime.queue_service.active_quarantine_barriers()
+        if barriers:
+            return selected, barriers
         selected_ids = frozenset(request_ids)
         unselected = tuple(
             item
@@ -1322,7 +1422,60 @@ class McpRuntimeManager:
                     ),
                 },
             )
-        return selected
+        return selected, ()
+
+    @staticmethod
+    def _unreleased_pulse_barrier_result(
+        *,
+        before: UiTimeState,
+        requests: tuple[QueuedOperationStatus, ...],
+        barriers: tuple[ActiveQueueQuarantineBarrier, ...],
+        started_at: float,
+    ) -> McpSimulationPulseResult:
+        barrier_error = _active_quarantine_barrier_error(barriers, requests)
+        if barrier_error is None:
+            raise RuntimeError("active queue barriers unexpectedly produced no error")
+        projected = _time_state(before)
+        return McpSimulationPulseResult(
+            ok=False,
+            released=False,
+            before=projected,
+            after=projected,
+            requests=requests,
+            handshake=None,
+            timed_out=False,
+            final_pause_verified=True,
+            prior_rate_restored=True,
+            work_error=_time_control_error(barrier_error),
+            pause_error=None,
+            rate_restore_error=None,
+            elapsed_seconds=time.monotonic() - started_at,
+        )
+
+    @staticmethod
+    def _unreleased_pulse_request_failure_result(
+        *,
+        before: UiTimeState,
+        requests: tuple[QueuedOperationStatus, ...],
+        error: BridgeError,
+        started_at: float,
+    ) -> McpSimulationPulseResult:
+        projected = _time_state(before)
+        return McpSimulationPulseResult(
+            ok=False,
+            released=False,
+            before=projected,
+            after=projected,
+            requests=requests,
+            handshake=None,
+            timed_out=False,
+            final_pause_verified=True,
+            prior_rate_restored=True,
+            work_error=_time_control_error(error),
+            pause_error=None,
+            rate_restore_error=None,
+            elapsed_seconds=time.monotonic() - started_at,
+        )
 
     @staticmethod
     async def _wait_until_first_request_armed(
@@ -1355,7 +1508,16 @@ class McpRuntimeManager:
     ) -> tuple[tuple[QueuedOperationStatus, ...], BridgeStatusResult | None]:
         while True:
             requests = tuple(runtime.queue_service.get(request_id=item) for item in request_ids)
+            barrier_error = _active_quarantine_barrier_error(
+                runtime.queue_service.active_quarantine_barriers(),
+                requests,
+            )
+            if barrier_error is not None:
+                raise barrier_error
             if all(item.state in _TERMINAL_QUEUE_STATES for item in requests):
+                terminal_error = _terminal_request_failure_error(requests)
+                if terminal_error is not None:
+                    raise terminal_error
                 break
             await asyncio.sleep(0.05)
         if not handshake:

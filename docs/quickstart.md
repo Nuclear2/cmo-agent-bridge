@@ -3,12 +3,12 @@
 本页用于把已经安装好的 bridge 跑通。完整安装和跨框架配置见
 [installation.md](installation.md)。
 
-`v0.6.2` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
+`v0.7.0` 是 Preview / GitHub Pre-release。请在想定副本上完成首次验证。
 
 ## 1. 安装固定版本
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.2/cmo_agent_bridge-0.6.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.0/cmo_agent_bridge-0.7.0-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -110,8 +110,12 @@ CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*
 同步 CMO 调用；handshake pulse 只负责连接状态检查。暂停期间若还要刷新其他态势，先用
 `cmo_time_set(state="running", rate_code=0)` 以 1x 运行，完成读取后再暂停。需要让已排队操作在暂停
 规划窗口内生效时，先用 `cmo_request_list` 列出队列，再把所有 `queued`/`active` 的 `request_id`
-传给 `cmo_simulation_pulse`。它会以 1x 放行，等待这些请求进入终态，然后重新暂停并恢复原倍率；
-遗漏任何非终态请求时，pulse 会在释放时间前拒绝执行。MCP 客户端退出不会取消 `active` 请求，
+传给 `cmo_simulation_pulse`。它会以 1x 放行，等待这些请求进入终态，然后尝试重新暂停并恢复原倍率；
+遗漏任何非终态请求时，pulse 会在释放时间前拒绝执行。调用前还要确认
+`cmo_queue_status.barrier_active=false`。已有未决隔离时 pulse 不释放时间；运行中出现未决隔离时
+它会提前返回并尝试复停、恢复原倍率，不会一直等到 timeout。每次都要检查
+`final_pause_verified` 和 `prior_rate_restored`；核验失败时由玩家确认 UI 状态。只有所有指定请求均为
+`completed` 且所需握手成功时才算成功。MCP 客户端退出不会取消 `active` 请求，
 重启后会继续恢复；如果
 进程或想定 binding 已变化，旧请求会被拒绝或隔离，而不会跨想定执行。
 
@@ -124,7 +128,8 @@ CLI 只用于安装、诊断和人工测试；Agent 正常工作应调用 `cmo_*
 正常推演保持当前倍率，普通命令不需要暂停；如果 Agent 判断当前时间颗粒度足够，连 1x 都不必降。
 有一定时效风险但无需重新规划全局时，可以临时降到 1x，完成后恢复原倍率。只有想定开局制定全局
 计划、阶段转换、复杂协同部署或其他需要较长推理且态势可能失效的场景，才应先用
-`cmo_time_set(state="paused")` 暂停，排入修改，再用 `cmo_simulation_pulse` 让全部非终态队列请求生效并复停。
+`cmo_time_set(state="paused")` 暂停，排入修改，再用 `cmo_simulation_pulse` 让全部非终态队列请求
+生效并尝试复停；必须以返回的复停核验字段判断最终 UI 状态。
 该 pulse 会短暂推进想定，不是零时间单步。不要因为 MCP 技术上可以读取全知信息，就把敌方真实
 单位状态用于 `LIVE_PLAYER` 决策。
 

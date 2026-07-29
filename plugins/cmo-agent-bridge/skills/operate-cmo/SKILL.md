@@ -20,7 +20,8 @@ in the registered tool set.
   intended installation, otherwise pass a user-confirmed root. The same MCP session becomes ready
   without a client restart. Then inspect host UI time state. If CMO is running, call
   `cmo_bridge_status` without changing speed. If CMO is paused, use one controlled 1x handshake
-  pulse that restores the pause. A successful status call or handshake pulse establishes the
+  pulse and require `final_pause_verified=true` before treating pause as restored. A successful
+  status call or handshake pulse establishes the
   process/runtime/scenario binding required before the first queued mutation.
 - Before any upgrade or prepare over an existing installation, read the idle-bridge gate in
   [references/setup.md](references/setup.md): require `queued=0`, `active=0`, and no pending journal.
@@ -43,7 +44,8 @@ Do not mistake these layers: absent tools mean the MCP server did not initialize
 `not_prepared` result is repaired in-session; status timeouts usually mean the CMO-side polling
 event is not servicing requests.
 
-A handshake pulse intentionally returns an initially paused scenario to pause. Before the first
+A handshake pulse attempts to return an initially paused scenario to pause and reports whether
+that cleanup was verified. Before the first
 CMO-backed context and battlespace reads, open a controlled 1x acquisition window, perform the
 needed reads without extended deliberation between them, and pause again before building a complex
 opening plan. At scenario start this small time advance is normally preferable to asking the user
@@ -231,6 +233,16 @@ Require `SCENARIO_AUTHOR` or `UMPIRE` for:
   as part of an authoring or umpire test;
 - deleting a unit or mission through the preview-and-confirm authoring tools.
 
+For `cmo_event_component_set`, always use the exact `component_type` and the matching typed
+`parameters` branch exposed by the tool schema. `add` requires the type and that component's
+documented minimum fields. An `update` that changes parameters also requires the type as an
+assertion; before the mutation barrier the bridge reads the existing component and rejects a type
+mismatch. Omit the type only for a rename-only update. Omit unchanged fields instead of sending
+`null`, and never guess field names or enum values. Read the existing component before an update
+and consult the
+[event-component parameter contract](references/tool-catalog.md#event-component-parameter-contract)
+for nested filters and intentionally open fields.
+
 Treat the following as unavailable until the tool catalog marks them `CURRENT`:
 
 - a single-call general-purpose `lua.eval`/`lua.call` tool, and deletion of sides or reference
@@ -280,6 +292,18 @@ its `request_id` and use:
 - `cmo_request_cancel` only while a request remains `queued`. Never claim that an `active` request
   was aborted.
 
+Treat each registered MCP input schema as an executable contract. For a field with an enum, use
+only an exact value or numeric code exposed by that schema; never invent a UI label, guess a
+synonym, change case, or retry alternate strings after validation fails. In particular, mission
+throttles use `FullStop/0`, `Loiter/1`, `Cruise/2`, `Full/3`, `Flank/4`, or `None/5`; unit and
+manual-throttle contracts are narrower. Doctrine and WRA fields expose their own field-specific
+sets. Strike minimum trigger uses the Stance enum, not an arbitrary contact label. Before
+`cmo_mission_update`, read the mission class and apply the
+[mission-update applicability matrix](references/tool-catalog.md#mission-update-applicability);
+the flat tool schema cannot infer a class from a GUID. Consult
+[references/tool-catalog.md](references/tool-catalog.md) and the live tool schema instead of
+transferring a value between different CMO APIs.
+
 Fail closed on every tool result and receipt:
 
 1. Treat a mutation as submitted only when the MCP call itself succeeded (`isError` is not true)
@@ -289,7 +313,8 @@ Fail closed on every tool result and receipt:
    a pulse.
 2. Before a pulse, require a successful, well-formed `cmo_request_list`. Build `request_ids` only
    from non-null UUIDs and prove that the set exactly covers every current `queued` or `active`
-   request. If listing or completeness cannot be proved, do not pulse.
+   request. Also require `cmo_queue_status.barrier_active=false`. If listing, completeness, or the
+   absence of a current barrier cannot be proved, do not pulse.
 3. If a request tracked in the current batch becomes `rejected`, or a quarantine reports
    `quarantine_resolution.state="unresolved"` or `barrier_active=true`, stop new mutation submission
    and fan-out. Also stop on a failed queue/list call or a queue summary with a current barrier.
@@ -362,8 +387,13 @@ For a deliberate pause, preserve the observed run/pause state and compression, c
 state needed for planning, then pause. Plan and enqueue independent mutations while time is stopped.
 Before a controlled 1x pulse, list the durable queue and include every current non-terminal
 `queued` or `active` request UUID; the pulse rejects an incomplete set before releasing time. Use
-the pulse to service that bounded FIFO set and restore the pause, then inspect terminal results and
-perform any required readback before submitting dependent work. When the decision gate is
+the pulse to service that bounded FIFO set and attempt to restore the pause. Require
+`final_pause_verified=true`, inspect `prior_rate_restored`, then inspect terminal results and
+perform any required readback before submitting dependent work. If an unresolved quarantine
+barrier already exists, the pulse fails before release. If one appears during the pulse, it returns
+early with `timed_out=false`, attempts to restore the prior pause/rate, and leaves later FIFO work
+queued. A pulse is successful only when every tracked request is `completed` and any requested
+handshake succeeds. When the decision gate is
 satisfied, explicitly restore the state and compression that the Agent changed. Never leave CMO
 paused merely because an Agent workflow ended or failed.
 

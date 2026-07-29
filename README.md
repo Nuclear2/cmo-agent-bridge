@@ -10,7 +10,7 @@
 
 > **平台支持：仅限 Windows。**
 
-[下载 v0.6.2](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2) ·
+[下载 v0.7.0](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0) ·
 [快速上手](docs/quickstart.md) ·
 [各框架安装](docs/frameworks/README.md) ·
 [CMO Lua API](https://commandlua.github.io/)
@@ -29,7 +29,7 @@ ROE、时间限制与胜负标准，再开始态势评估和部署；其他阵�
 单位深读战备、载荷和库存。这样既能看清数百个单位的整体编成，也不会把时间和上下文浪费在无关
 单位的完整字段上。
 
-> **当前版本是 v0.6.2 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
+> **当前版本是 v0.7.0 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
 > 想定副本。
 
 ## 你可以直接这样说
@@ -77,7 +77,7 @@ uv --version
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.2/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.0/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -129,7 +129,7 @@ OpenCode、Cursor、Qoder 和通用 MCP 客户端的配置见[各框架安装](d
 插件仍固定使用同版本 wheel：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.6.2/cmo_agent_bridge-0.6.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.0/cmo_agent_bridge-0.7.0-py3-none-any.whl"
 ```
 
 升级已有安装时，先用旧/当前版本确认 `cmo_queue_status` 中 `queued=0`、`active=0`，并让 worker
@@ -152,7 +152,8 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 
 事件随想定保存后，普通推演模式也可以直接使用 bridge。Regular Time 会在想定时间流动时处理请求。
 如果想定已经暂停，Agent 可以用 `cmo_simulation_pulse(handshake=true)` 以 1x 短暂释放时间，完成
-首次握手后自动重新暂停并恢复原倍率，不需要玩家手动配合。已建立 session binding 后，也可以在
+首次握手后尝试重新暂停并恢复原倍率，不需要玩家手动配合。调用方必须检查返回的
+`final_pause_verified` 和 `prior_rate_restored`，不能把恢复动作当作无条件保证。已建立 session binding 后，也可以在
 暂停期间先排入普通写操作，再用同一工具等待队列中的未完成请求生效。
 
 ### 5. 确认连接
@@ -162,7 +163,8 @@ return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')
 > 先调用 `cmo_time_get_state`。如果想定正在运行，直接调用 `cmo_bridge_status`；如果已经暂停，调用
 > `cmo_simulation_pulse` 并设置 `handshake=true`。告诉我当前 CMO build、runtime tag 和想定 lineage。
 
-返回成功结果，说明 CMO 侧已经接通。暂停时的 handshake pulse 会短暂推进想定并自动复停；如果
+返回成功结果，说明 CMO 侧已经接通。暂停时的 handshake pulse 会短暂推进想定并尝试复停；只有
+`final_pause_verified=true` 才能确认最后确实恢复了暂停。如果
 仍然超时，检查轮询 event 是否启用且允许重复。如果 Agent 中没有出现 `cmo_*` 工具，检查插件与
 `uvx` 后重启 Agent 并新建任务。
 
@@ -195,7 +197,11 @@ CMO 暂停时，已经提交的写操作会一直保留，恢复时间流动后�
 `cmo_time_set` 以 1x 运行，完成读取后再暂停。需要让已排队请求立即生效时，先用
 `cmo_request_list` 确认队列，再把当前所有 `queued` 或 `active` 请求的 `request_id` 一并交给
 `cmo_simulation_pulse`。如果遗漏任何非终态请求，pulse 会在释放时间前拒绝执行，避免意外推进
-未选中的 FIFO 工作。
+未选中的 FIFO 工作。调用前还要确认 `cmo_queue_status.barrier_active=false`；已有未决隔离时不会
+释放时间，运行中出现未决隔离时会立即结束等待并尝试恢复暂停和原倍率，而不是耗尽 timeout。
+恢复结果由 `final_pause_verified` 与 `prior_rate_restored` 明确报告；任一核验失败都必须作为需要
+人工确认 UI 状态的可恢复故障处理。只有全部指定请求都进入 `completed` 且握手成功（如有）时，
+pulse 才会返回成功。
 
 原生消息日志是另一条完全只读的主机侧路径。建立想定 session 和玩家阵营后，Agent 会先调用
 `cmo_message_log_status`，再用
@@ -210,7 +216,9 @@ CMO 暂停时，已经提交的写操作会一直保留，恢复时间流动后�
 - `cmo_time_set` 幂等地暂停、恢复或选择倍率；`rate_code` 从 `0` 到 `5` 分别表示 1x、2x、5x、
   15x，以及两档粗粒度火焰模式。最高档按五秒粗粒度推进，实际速度取决于机器性能，不是固定倍率；
 - `cmo_simulation_pulse` 只用于已经暂停的想定。它以 1x 短暂放行，等待已列出的全部非终态
-  durable request 和/或握手完成，然后重新暂停并恢复原倍率；超时不会取消或重复提交请求。
+  durable request 和/或握手完成，然后尝试重新暂停并恢复原倍率；调用方必须核对
+  `final_pause_verified` 与 `prior_rate_restored`。未决隔离会提前终止等待，`rejected`、
+  `cancelled` 或 `quarantined` 不算成功；超时不会取消或重复提交请求。
 
 `cmo_time_get_state` 和 `cmo_time_set` 的 UI 状态读取/操作不依赖 Lua 轮询；pulse 的暂停与释放动作
 也在主机侧完成，但要让握手或队列请求进入终态，想定中的 Regular Time 轮询事件仍必须
@@ -267,7 +275,7 @@ bridge 以本地 `stdio` 进程运行。Agent、Python 进程和 CMO Lua 运行�
 
 ## 项目状态
 
-- 当前版本：[`v0.6.2 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2)
+- 当前版本：[`v0.7.0 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0)
 - 已验证环境：Windows 10/11、CMO Build 1868
 - Python：3.12，由 `uv` 隔离管理
 - 许可证：[MIT](LICENSE)

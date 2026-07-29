@@ -476,7 +476,7 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
         {
             "side_guid": "SIDE-1",
             "mission_guid": "MISSION-1",
-            "strike_minimum_trigger": "hostile",
+            "strike_minimum_trigger": "Hostile",
         },
     ],
     "reference_point.add": [
@@ -771,6 +771,15 @@ ADDITIONAL_VALID_ARGUMENTS: dict[str, list[dict[str, object]]] = {
                 "action_id_or_name": "ACTION-1",
                 "mode": "update",
                 "active": True,
+            },
+        },
+        {
+            "function": "ScenEdit_SetAction",
+            "arguments": {
+                "mode": "update",
+                "component_id_or_name": "ACTION-1",
+                "component_type": "Message",
+                "parameters_json": '{"SideID":"SIDE-1","Text":"Updated"}',
             },
         },
     ],
@@ -1089,6 +1098,29 @@ INVALID_INVOCATIONS: dict[str, list[tuple[str | None, dict[str, object]]]] = {
     "lua.call": [
         ("lua_function_arguments", {"function": "ScenEdit_DeleteUnit", "arguments": {}}),
         ("lua_function_arguments", {"function": "ScenEdit_GetScore", "arguments": {}}),
+        (
+            "lua_function_arguments",
+            {
+                "function": "ScenEdit_SetAction",
+                "arguments": {
+                    "mode": "update",
+                    "component_id_or_name": "ACTION-1",
+                    "parameters_json": '{"Text":"Missing type hint"}',
+                },
+            },
+        ),
+        (
+            "lua_function_arguments",
+            {
+                "function": "ScenEdit_SetTrigger",
+                "arguments": {
+                    "mode": "add",
+                    "component_id_or_name": "Invalid cargo type",
+                    "component_type": "UnitCargoMoved",
+                    "parameters_json": '{"CargoFilter":{"TargetType":123}}',
+                },
+            },
+        ),
     ],
     "bridge.uninstall": [
         ("uninstall_phase_marker", {"phase": "command", "uninstall_marker": "marker"})

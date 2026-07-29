@@ -1,13 +1,19 @@
 from datetime import datetime, timedelta
+from collections.abc import Callable
 from typing import Annotated, Generic, Literal, TypeAlias, TypeVar
 from uuid import UUID
 
 from pydantic import (
+    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
     StrictBool,
+    StrictFloat,
+    StrictInt,
+    StrictStr,
     StringConstraints,
+    WithJsonSchema,
     field_validator,
     model_validator,
 )
@@ -15,11 +21,14 @@ from typing_extensions import Self
 
 from cmo_agent_bridge.operations.scenario_authoring import (
     AuthoringDataResult,
+    EventActionSetArgs,
+    EventConditionSetArgs,
     EventComponentLinkArgs,
     EventComponentSetArgs,
     EventGetArgs,
     EventListArgs,
     EventSetArgs,
+    EventTriggerSetArgs,
     ScenarioTimelineSetArgs,
     ScenarioTitleSetArgs,
     ScenarioWeatherGetArgs,
@@ -37,11 +46,14 @@ from cmo_agent_bridge.protocol.runtime import RuntimeVersion, derive_runtime_tag
 
 _AUTHORING_MODEL_EXPORTS = (
     AuthoringDataResult,
+    EventActionSetArgs,
+    EventConditionSetArgs,
     EventComponentLinkArgs,
     EventComponentSetArgs,
     EventGetArgs,
     EventListArgs,
     EventSetArgs,
+    EventTriggerSetArgs,
     ScenarioTimelineSetArgs,
     ScenarioTitleSetArgs,
     ScenarioWeatherGetArgs,
@@ -60,6 +72,147 @@ NonEmptyStr = Annotated[str, StringConstraints(min_length=1)]
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 GuidList = Annotated[list[NonEmptyStr], Field(min_length=1)]
 OrderedReferencePointGuidList = Annotated[list[NonEmptyStr], Field(max_length=64)]
+UuidValue: TypeAlias = Annotated[UUID, Field(strict=False)]
+DatetimeValue: TypeAlias = Annotated[datetime, Field(strict=False)]
+
+
+def _allowed_int_validator(
+    *,
+    label: str,
+    allowed: frozenset[int],
+) -> Callable[[int], int]:
+    def validate(value: int) -> int:
+        if value not in allowed:
+            allowed_text = ", ".join(str(item) for item in sorted(allowed))
+            raise ValueError(f"{label} must be one of: {allowed_text}")
+        return value
+
+    return validate
+
+
+_validate_group_size_code = _allowed_int_validator(
+    label="group size",
+    allowed=frozenset({1, 2, 3, 4, 6}),
+)
+_validate_minimum_aircraft_code = _allowed_int_validator(
+    label="minimum aircraft required",
+    allowed=frozenset({0, 1, 2, 3, 4, 6, 8, 12}),
+)
+_validate_weapon_state_planned_code = _allowed_int_validator(
+    label="planned weapon state",
+    allowed=frozenset(
+        {
+            0,
+            2001,
+            2002,
+            3001,
+            3002,
+            3003,
+            4001,
+            4002,
+            4011,
+            4012,
+            4021,
+            4022,
+            5001,
+            5002,
+            5003,
+            5005,
+            5006,
+            5011,
+            5012,
+            5021,
+        }
+    ),
+)
+_validate_battery_recharge_code = _allowed_int_validator(
+    label="battery recharge threshold",
+    allowed=frozenset({0, 10, 20, 30, 40, 50, 60, 70, 80, 90}),
+)
+
+StrictCodeMinus1To3: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=-1, le=3),
+    WithJsonSchema({"type": "integer", "enum": [-1, 0, 1, 2, 3]}),
+]
+StrictCode0To1: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=1),
+    WithJsonSchema({"type": "integer", "enum": [0, 1]}),
+]
+StrictCode0To2: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=2),
+    WithJsonSchema({"type": "integer", "enum": [0, 1, 2]}),
+]
+StrictCode0To3: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=3),
+    WithJsonSchema({"type": "integer", "enum": [0, 1, 2, 3]}),
+]
+StrictCode0To4: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=4),
+    WithJsonSchema({"type": "integer", "enum": [0, 1, 2, 3, 4]}),
+]
+StrictCode0To5: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=5),
+    WithJsonSchema({"type": "integer", "enum": [0, 1, 2, 3, 4, 5]}),
+]
+StrictCode0To11: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=0, le=11),
+    WithJsonSchema({"type": "integer", "enum": list(range(12))}),
+]
+StrictGroupSizeCode: TypeAlias = Annotated[
+    StrictInt,
+    AfterValidator(_validate_group_size_code),
+    WithJsonSchema({"type": "integer", "enum": [1, 2, 3, 4, 6]}),
+]
+StrictMinimumAircraftCode: TypeAlias = Annotated[
+    StrictInt,
+    AfterValidator(_validate_minimum_aircraft_code),
+    WithJsonSchema({"type": "integer", "enum": [0, 1, 2, 3, 4, 6, 8, 12]}),
+]
+StrictWeaponStatePlannedCode: TypeAlias = Annotated[
+    StrictInt,
+    AfterValidator(_validate_weapon_state_planned_code),
+    WithJsonSchema(
+        {
+            "type": "integer",
+            "enum": [
+                0,
+                2001,
+                2002,
+                3001,
+                3002,
+                3003,
+                4001,
+                4002,
+                4011,
+                4012,
+                4021,
+                4022,
+                5001,
+                5002,
+                5003,
+                5005,
+                5006,
+                5011,
+                5012,
+                5021,
+            ],
+        }
+    ),
+]
+StrictBatteryRechargeCode: TypeAlias = Annotated[
+    StrictInt,
+    AfterValidator(_validate_battery_recharge_code),
+    WithJsonSchema({"type": "integer", "enum": [0, 10, 20, 30, 40, 50, 60, 70, 80, 90]}),
+]
+
+
 Disposition = Literal["applied", "not_applied"]
 MissionResultClass = Literal[
     "none",
@@ -74,12 +227,31 @@ MissionResultClass = Literal[
 ]
 EmconValue = Literal["Active", "Passive"]
 WeaponControlValue = Literal["Free", "Tight", "Hold"]
-WeaponControlUpdateValue = Literal["Free", "Tight", "Hold", "inherit"]
+WeaponControlUpdateValue = Annotated[
+    Literal["Free", "Tight", "Hold", "inherit"] | StrictCode0To2,
+    Field(description="Doctrine WCS: Free/0, Tight/1, Hold/2, or inherit."),
+]
 NuclearUseValue: TypeAlias = bool
+NuclearUseUpdateValue: TypeAlias = StrictBool | Literal["inherit"]
 RefuelUnrepValue = Literal[
     "Always_ExceptTankersRefuellingTankers",
     "Never",
     "Always_IncludingTankersRefuellingTankers",
+]
+DoctrineRefuelUnrepUpdateValue = Annotated[
+    Literal[
+        "Always_ExceptTankersRefuellingTankers",
+        "Never",
+        "Always_IncludingTankersRefuellingTankers",
+        "inherit",
+    ]
+    | StrictCode0To2,
+    Field(
+        description=(
+            "Doctrine refuel/UNREP: Always_ExceptTankersRefuellingTankers/0, Never/1, "
+            "Always_IncludingTankersRefuellingTankers/2, or inherit."
+        )
+    ),
 ]
 MissionStageValue: TypeAlias = str | float
 MissionLoopTypeResult: TypeAlias = str | int
@@ -90,10 +262,361 @@ ReferencePointAnchorType = Literal["unit", "contact", "reference_point"]
 ReferencePointBearingType = Literal["fixed", "rotating"]
 MissionCategory = Literal["mission", "package", "task_pool"]
 TankerUsage = Literal["automatic", "mission"]
+GroupSize: TypeAlias = StrictGroupSizeCode
+MissionCargoObjectType: TypeAlias = Annotated[
+    StrictInt,
+    Field(ge=2, le=5),
+    WithJsonSchema({"type": "integer", "enum": [2, 3, 4, 5]}),
+]
+MissionLoopTypeUpdateValue: TypeAlias = StrictCode0To2
+MissionLayingMethodUpdateValue: TypeAlias = StrictCode0To1
+ScenarioTimeCompressionCode: TypeAlias = StrictCode0To5
+
+
+def _validate_arming_delay(value: str) -> str:
+    _days, hours, minutes, seconds = (int(part) for part in value.split(":"))
+    if hours > 23 or minutes > 59 or seconds > 59:
+        raise ValueError("arming_delay must use days:hours:minutes:seconds")
+    return value
+
+
+ArmingDelayValue: TypeAlias = Annotated[
+    StrictStr,
+    StringConstraints(pattern=r"^\d+:\d{1,2}:\d{1,2}:\d{1,2}$"),
+    AfterValidator(_validate_arming_delay),
+    Field(
+        description=(
+            "Arming delay as days:hours:minutes:seconds; hours must be 0-23 and "
+            "minutes/seconds 0-59."
+        )
+    ),
+]
+NonNegativeMissionDistanceValue: TypeAlias = (
+    Annotated[StrictInt, Field(ge=0)] | Annotated[StrictFloat, Field(ge=0)]
+)
+StrikeMinimumTriggerValue: TypeAlias = Annotated[
+    Literal["Neutral", "Friendly", "Unfriendly", "Hostile", "Unknown"] | StrictCode0To4,
+    Field(
+        description=(
+            "Canonical CMO contact stance for a strike minimum trigger: "
+            "Neutral, Friendly, Unfriendly, Hostile, Unknown, or code 0-4."
+        )
+    ),
+]
+WraTargetTypeValue: TypeAlias = Annotated[
+    NonEmptyStr | StrictInt,
+    Field(
+        description=(
+            "Exact runtime/readback WRA target-type name or integer code from the current CMO "
+            "Build; do not invent aliases."
+        )
+    ),
+]
+
+
+def _validate_wra_token(
+    value: str | int | float,
+    *,
+    allowed: frozenset[str],
+) -> str | int | float:
+    if isinstance(value, str) and value not in allowed:
+        raise ValueError(f"unsupported WRA setting token: {value}")
+    return value
+
+
+def _validate_wra_salvo_setting(value: str | int | float) -> str | int | float:
+    return _validate_wra_token(value, allowed=frozenset({"inherit", "system", "max", "none"}))
+
+
+def _validate_wra_firing_range_setting(value: str | int | float) -> str | int | float:
+    return _validate_wra_token(
+        value,
+        allowed=frozenset({"inherit", "max", "none", "25ofmax", "50ofmax", "75ofmax"}),
+    )
+
+
+def _validate_wra_self_defence_setting(value: str | int | float) -> str | int | float:
+    return _validate_wra_token(value, allowed=frozenset({"inherit", "system", "max", "none"}))
+
+
+NonNegativeWraNumber: TypeAlias = (
+    Annotated[StrictInt, Field(ge=0)] | Annotated[StrictFloat, Field(ge=0)]
+)
+WraSalvoSettingValue: TypeAlias = Annotated[
+    StrictStr | NonNegativeWraNumber,
+    AfterValidator(_validate_wra_salvo_setting),
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "string", "enum": ["inherit", "system", "max", "none"]},
+                {"type": "integer", "minimum": 0},
+                {"type": "number", "minimum": 0},
+            ]
+        }
+    ),
+    Field(
+        description=(
+            "CMO WRA salvo/shooter setting: a non-negative number or inherit, system, max, or none."
+        )
+    ),
+]
+WraFiringRangeSettingValue: TypeAlias = Annotated[
+    StrictStr | NonNegativeWraNumber,
+    AfterValidator(_validate_wra_firing_range_setting),
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {
+                    "type": "string",
+                    "enum": ["inherit", "max", "none", "25ofmax", "50ofmax", "75ofmax"],
+                },
+                {"type": "integer", "minimum": 0},
+                {"type": "number", "minimum": 0},
+            ]
+        }
+    ),
+    Field(
+        description=(
+            "CMO WRA firing-range setting: a non-negative number or inherit, max, none, "
+            "25ofmax, 50ofmax, or 75ofmax. system is not valid for firing range."
+        )
+    ),
+]
+WraSelfDefenceRangeSettingValue: TypeAlias = Annotated[
+    StrictStr | NonNegativeWraNumber,
+    AfterValidator(_validate_wra_self_defence_setting),
+    WithJsonSchema(
+        {
+            "anyOf": [
+                {"type": "string", "enum": ["inherit", "system", "max", "none"]},
+                {"type": "integer", "minimum": 0},
+                {"type": "number", "minimum": 0},
+            ]
+        }
+    ),
+    Field(
+        description=(
+            "CMO WRA self-defence-range setting: a non-negative number or "
+            "inherit, system, max, or none."
+        )
+    ),
+]
+MissionThrottleValue: TypeAlias = Annotated[
+    Literal["FullStop", "Loiter", "Cruise", "Full", "Flank", "None"] | StrictCode0To5,
+    Field(
+        description=(
+            "Canonical CMO mission throttle: FullStop/0, Loiter/1, Cruise/2, "
+            "Full/3, Flank/4, or None/5. Other names and codes are rejected."
+        )
+    ),
+]
+UnitThrottleValue: TypeAlias = Annotated[
+    Literal["FullStop", "Loiter", "Cruise", "Full", "Flank"],
+    Field(
+        description=(
+            "Canonical ScenEdit_SetUnit throttle name: FullStop, Loiter, Cruise, Full, or Flank."
+        )
+    ),
+]
+ManualThrottleValue: TypeAlias = Annotated[
+    Literal["OFF", "FullStop", "Loiter", "Cruise", "Full", "Flank"] | StrictCode0To4,
+    Field(
+        description=(
+            "CMO manual-throttle setting: FullStop/0, Loiter/1, Cruise/2, "
+            "Full/3, Flank/4, or OFF to disable manual throttle."
+        )
+    ),
+]
+UnitAddType: TypeAlias = Annotated[
+    Literal["Aircraft", "Ship", "Sub", "Facility", "Satellite", "Weapon"],
+    Field(description="Canonical CMO NewUnit type accepted by ScenEdit_AddUnit."),
+]
+UnitTypeFilter: TypeAlias = Annotated[
+    NonEmptyStr,
+    Field(
+        description=(
+            "Exact CMO unit-wrapper type, compared case-insensitively. This remains an open "
+            "non-empty string because wrapper types are Build-sensitive and filtering is read-only."
+        )
+    ),
+]
+ContactType: TypeAlias = Annotated[
+    Literal[
+        "Air",
+        "Missile",
+        "Surface",
+        "Submarine",
+        "Aimpoint",
+        "Orbital",
+        "Facility_Fixed",
+        "Facility_Mobile",
+        "Torpedo",
+        "Mine",
+        "Explosion",
+        "Decoy_Air",
+        "Decoy_Surface",
+        "Decoy_Land",
+        "Decoy_Sub",
+        "Sonobuoy",
+        "Installation",
+        "AirBase",
+        "NavalBase",
+        "MobileGroup",
+        "ActivationPoint",
+    ],
+    Field(description="Canonical CMO ContactType name."),
+]
+EngagingAmbiguousTargetsUpdateValue: TypeAlias = Annotated[
+    Literal["inherit", "Ignore", "Optimistic", "Pessimistic"] | StrictCode0To2,
+    Field(description="Doctrine value: 0=Ignore, 1=Optimistic, 2=Pessimistic, or inherit."),
+]
+FuelStatePlannedUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Bingo",
+        "Joker10Percent",
+        "Joker20Percent",
+        "Joker25Percent",
+        "Joker30Percent",
+        "Joker40Percent",
+        "Joker50Percent",
+        "Joker60Percent",
+        "Joker70Percent",
+        "Joker75Percent",
+        "Joker80Percent",
+        "Joker90Percent",
+    ]
+    | StrictCode0To11,
+    Field(description="Doctrine planned-fuel state, using an official name/code or inherit."),
+]
+RtbBehaviorUpdateValue: TypeAlias = Annotated[
+    Literal["inherit", "No", "YesLastUnit", "YesFirstUnit", "YesLeaveGroup"] | StrictCode0To3,
+    Field(
+        description=(
+            "Doctrine RTB behavior: 0=No, 1=YesLastUnit, 2=YesFirstUnit, "
+            "3=YesLeaveGroup, or inherit."
+        )
+    ),
+]
+WeaponStatePlannedUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "LoadoutSetting",
+        "Winchester",
+        "Winchester_ToO",
+        "ShotgunBVR",
+        "ShotgunBVR_WVR",
+        "ShotgunBVR_WVR_Guns",
+        "Shotgun25",
+        "Shotgun25_ToO",
+        "Shotgun50",
+        "Shotgun50_ToO",
+        "Shotgun75",
+        "Shotgun75_ToO",
+        "ShotgunOneEngagementBVR",
+        "ShotgunOneEngagementBVR_Opportunity_WVR",
+        "ShotgunOneEngagementBVR_Opportunity_WVR_Guns",
+        "ShotgunOneEngagementBVR_And_WVR",
+        "ShotgunOneEngagementBVR_And_WVR_Opportunity_Guns",
+        "ShotgunOneEngagementWVR",
+        "ShotgunOneEngagementWVR_Guns",
+        "ShotgunOneEngagementGun",
+    ]
+    | StrictWeaponStatePlannedCode,
+    Field(description="Doctrine planned-weapon state, using an official name/code or inherit."),
+]
+WithdrawOnAttackUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Ignore",
+        "Exhausted",
+        "Percent25",
+        "Percent50",
+        "Percent75",
+        "Percent100",
+    ]
+    | StrictCode0To5,
+    Field(description="Withdrawal threshold for attacking weapons, or inherit."),
+]
+WithdrawOnDamageUpdateValue: TypeAlias = Annotated[
+    Literal["inherit", "Ignore", "Percent5", "Percent25", "Percent50", "Percent75"]
+    | StrictCode0To4,
+    Field(description="Withdrawal threshold for damage, or inherit."),
+]
+WithdrawOnDefenceUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Ignore",
+        "Exhausted",
+        "Percent25",
+        "Percent50",
+        "Percent75",
+        "Percent100",
+    ]
+    | StrictCode0To5,
+    Field(description="Withdrawal threshold for defensive weapons, or inherit."),
+]
+WithdrawOnFuelUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Ignore",
+        "Bingo",
+        "Percent25",
+        "Percent50",
+        "Percent75",
+        "Percent100",
+    ]
+    | StrictCode0To5,
+    Field(description="Withdrawal threshold for fuel, or inherit."),
+]
+BvrLogicUpdateValue: TypeAlias = Annotated[
+    Literal["inherit", "StraightIn", "Crank", "Drag"] | StrictCode0To2,
+    Field(description="BVR doctrine: 0=StraightIn, 1=Crank, 2=Drag, or inherit."),
+]
+DippingSonarUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Automatically_HoverAnd150ft",
+        "ManualAndMissionOnly",
+    ]
+    | StrictCode0To1,
+    Field(
+        description=(
+            "Dipping-sonar doctrine: 0=Automatically_HoverAnd150ft, "
+            "1=ManualAndMissionOnly, or inherit."
+        )
+    ),
+]
+UseAipUpdateValue: TypeAlias = Annotated[
+    Literal["inherit", "No", "Yes_AttackOnly", "Yes_Always"] | StrictCode0To2,
+    Field(description="AIP doctrine: 0=No, 1=Yes_AttackOnly, 2=Yes_Always, or inherit."),
+]
+BatteryRechargeUpdateValue: TypeAlias = Annotated[
+    Literal[
+        "inherit",
+        "Recharge_Empty",
+        "Recharge_10_Percent",
+        "Recharge_20_Percent",
+        "Recharge_30_Percent",
+        "Recharge_40_Percent",
+        "Recharge_50_Percent",
+        "Recharge_60_Percent",
+        "Recharge_70_Percent",
+        "Recharge_80_Percent",
+        "Recharge_90_Percent",
+    ]
+    | StrictBatteryRechargeCode,
+    Field(description="Battery recharge threshold, using an official name/code or inherit."),
+]
 
 
 class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        frozen=True,
+        strict=True,
+        allow_inf_nan=False,
+    )
 
 
 def _require_unique(values: list[str], field_name: str) -> list[str]:
@@ -163,11 +686,11 @@ class EmptyArgs(StrictModel):
 
 
 class BridgeStatusArgs(StrictModel):
-    accept_lineage_id: UUID | None = None
+    accept_lineage_id: UuidValue | None = None
 
 
 class BridgeStatusWireArgs(BridgeStatusArgs):
-    activation_candidate: UUID
+    activation_candidate: UuidValue
 
 
 class ObservationalProbeStepArgs(StrictModel):
@@ -252,14 +775,14 @@ class SideSelector(StrictModel):
 
 
 class UnitListArgs(SideSelector, PageArgs):
-    unit_type: str | None = None
+    unit_type: UnitTypeFilter | None = None
     name_contains: str | None = None
 
 
 class UnitCatalogArgs(SideSelector):
     page_size: int = Field(default=500, ge=1, le=500)
     cursor: str | None = None
-    unit_type: str | None = None
+    unit_type: UnitTypeFilter | None = None
     name_contains: str | None = None
 
 
@@ -267,7 +790,7 @@ class UnitOverviewArgs(SideSelector):
     page_size: int = Field(default=40, ge=1, le=50)
     cursor: str | None = None
     unit_guids: list[NonEmptyStr] | None = Field(default=None, min_length=1, max_length=500)
-    unit_type: str | None = None
+    unit_type: UnitTypeFilter | None = None
     name_contains: str | None = None
 
     @field_validator("unit_guids")
@@ -328,7 +851,7 @@ class UnitEngagementOptionsGetArgs(StrictModel):
 
 
 class ContactListArgs(SideSelector, PageArgs):
-    contact_type: str | None = None
+    contact_type: ContactType | None = None
 
 
 class ReferencePointListArgs(SideSelector, PageArgs):
@@ -336,7 +859,7 @@ class ReferencePointListArgs(SideSelector, PageArgs):
 
 
 class MissionListArgs(SideSelector, PageArgs):
-    mission_class: str | None = None
+    mission_class: MissionResultClass | None = None
     category: MissionCategory | None = None
 
 
@@ -353,9 +876,9 @@ class MissionGetArgs(SideSelector):
 
 class DoctrineSelector(StrictModel):
     scope: Literal["side", "unit", "mission"]
-    side_guid: str | None = None
-    unit_guid: str | None = None
-    mission_guid: str | None = None
+    side_guid: NonEmptyStr | None = None
+    unit_guid: NonEmptyStr | None = None
+    mission_guid: NonEmptyStr | None = None
 
     @model_validator(mode="after")
     def validate_scope_fields(self) -> Self:
@@ -395,13 +918,13 @@ class UnitSetArgs(StrictModel):
     speed: float | None = Field(default=None, ge=0)
     altitude: float | None = None
     depth: float | None = None
-    throttle: str | None = None
+    throttle: UnitThrottleValue | None = None
     force_speed: bool | None = None
     heading: float | None = Field(default=None, ge=0, le=360)
     desired_heading: float | None = Field(default=None, ge=0, le=360)
     course: list[CourseWaypoint] | None = None
     move_to: bool | None = None
-    manual_throttle: str | float | None = None
+    manual_throttle: ManualThrottleValue | None = None
     manual_speed: str | float | None = None
     manual_altitude: str | float | None = None
     hold_position: bool | None = None
@@ -441,7 +964,7 @@ class UnitSetArgs(StrictModel):
 
 class UnitAddArgs(StrictModel):
     side_guid: NonEmptyStr
-    unit_type: NonEmptyStr
+    unit_type: UnitAddType
     dbid: int = Field(ge=1)
     name: NonEmptyStr
     base_guid: NonEmptyStr | None = None
@@ -653,16 +1176,14 @@ class UnitAttackContactArgs(StrictModel):
         elif any(value is not None for value in weapon_fields):
             raise ValueError("weapon allocation fields require manual_weapon mode")
         if self.allow_out_of_nominal_range and self.mode != "manual_weapon":
-            raise ValueError(
-                "allow_out_of_nominal_range requires manual_weapon mode"
-            )
+            raise ValueError("allow_out_of_nominal_range requires manual_weapon mode")
         return self
 
 
 PatrolType = Literal["asw", "naval", "aaw", "land", "mixed", "sead", "sea"]
 StrikeType = Literal["air", "land", "sea", "sub"]
-FlightSize = Literal[1, 2, 3, 4, 6]
-MinimumAircraftRequired = Literal[0, 1, 2, 3, 4, 6, 8, 12]
+FlightSize: TypeAlias = StrictGroupSizeCode
+MinimumAircraftRequired: TypeAlias = StrictMinimumAircraftCode
 
 
 class PatrolMissionDetails(StrictModel):
@@ -765,40 +1286,40 @@ class MissionUpdateArgs(StrictModel):
     reference_point_guids: OrderedReferencePointGuidList | None = None
     prosecution_zone_reference_point_guids: OrderedReferencePointGuidList | None = None
     destination_guid: NonEmptyStr | None = None
-    loop_type: int | None = Field(default=None, ge=0, le=2)
+    loop_type: MissionLoopTypeUpdateValue | None = None
     active_emcon: bool | None = None
     check_opa: bool | None = None
     check_wwr: bool | None = None
-    group_size: int | None = Field(default=None, ge=1)
+    group_size: GroupSize | None = None
     use_group_size: bool | None = None
-    transit_throttle_aircraft: MissionStageValue | None = None
-    transit_throttle_ship: MissionStageValue | None = None
-    transit_throttle_submarine: MissionStageValue | None = None
-    station_throttle_aircraft: MissionStageValue | None = None
-    station_throttle_ship: MissionStageValue | None = None
-    station_throttle_submarine: MissionStageValue | None = None
-    attack_throttle_aircraft: MissionStageValue | None = None
-    attack_throttle_ship: MissionStageValue | None = None
-    attack_throttle_submarine: MissionStageValue | None = None
+    transit_throttle_aircraft: MissionThrottleValue | None = None
+    transit_throttle_ship: MissionThrottleValue | None = None
+    transit_throttle_submarine: MissionThrottleValue | None = None
+    station_throttle_aircraft: MissionThrottleValue | None = None
+    station_throttle_ship: MissionThrottleValue | None = None
+    station_throttle_submarine: MissionThrottleValue | None = None
+    attack_throttle_aircraft: MissionThrottleValue | None = None
+    attack_throttle_ship: MissionThrottleValue | None = None
+    attack_throttle_submarine: MissionThrottleValue | None = None
     transit_altitude_aircraft: MissionStageValue | None = None
     station_altitude_aircraft: MissionStageValue | None = None
     attack_altitude_aircraft: MissionStageValue | None = None
     transit_depth_submarine: MissionStageValue | None = None
     station_depth_submarine: MissionStageValue | None = None
     attack_depth_submarine: MissionStageValue | None = None
-    strike_minimum_trigger: str | None = None
+    strike_minimum_trigger: StrikeMinimumTriggerValue | None = None
     strike_max_flights: int | None = Field(default=None, ge=0)
     strike_auto_planner: bool | None = None
-    strike_min_distance_aircraft: MissionStageValue | None = None
-    strike_max_distance_aircraft: MissionStageValue | None = None
-    strike_min_distance_ship: MissionStageValue | None = None
-    strike_max_distance_ship: MissionStageValue | None = None
+    strike_min_distance_aircraft: NonNegativeMissionDistanceValue | None = None
+    strike_max_distance_aircraft: NonNegativeMissionDistanceValue | None = None
+    strike_min_distance_ship: NonNegativeMissionDistanceValue | None = None
+    strike_max_distance_ship: NonNegativeMissionDistanceValue | None = None
     focus_on_strike: bool | None = None
-    arming_delay: str | None = None
+    arming_delay: ArmingDelayValue | None = None
     mines_per_set: int | None = Field(default=None, ge=1)
     mine_spacing_m: float | None = Field(default=None, ge=0)
     set_spacing_m: float | None = Field(default=None, ge=0)
-    laying_method: Literal[0, 1] | None = None
+    laying_method: MissionLayingMethodUpdateValue | None = None
     cargo_subtype: Literal["transfer", "delivery"] | None = None
     move_all_cargo: bool | None = None
     allow_ground_self_delivery: bool | None = None
@@ -964,28 +1485,28 @@ class DoctrineSetArgs(DoctrineSelector):
     weapon_control_surface: WeaponControlUpdateValue | None = None
     weapon_control_subsurface: WeaponControlUpdateValue | None = None
     weapon_control_land: WeaponControlUpdateValue | None = None
-    nuclear_use: NuclearUseValue | None = None
-    refuel_unrep: RefuelUnrepValue | None = None
+    nuclear_use: NuclearUseUpdateValue | None = None
+    refuel_unrep: DoctrineRefuelUnrepUpdateValue | None = None
     engage_opportunity_targets: DoctrineBooleanUpdateValue | None = None
     automatic_evasion: DoctrineBooleanUpdateValue | None = None
     ignore_plotted_course: DoctrineBooleanUpdateValue | None = None
     ignore_emcon_while_under_attack: DoctrineBooleanUpdateValue | None = None
     maintain_standoff: DoctrineBooleanUpdateValue | None = None
     use_sams_in_anti_surface_mode: DoctrineBooleanUpdateValue | None = None
-    engaging_ambiguous_targets: DoctrineSettingValue | None = None
-    fuel_state_planned: DoctrineSettingValue | None = None
-    fuel_state_rtb: DoctrineSettingValue | None = None
-    weapon_state_planned: DoctrineSettingValue | None = None
-    weapon_state_rtb: DoctrineSettingValue | None = None
-    withdraw_on_attack: DoctrineSettingValue | None = None
-    withdraw_on_damage: DoctrineSettingValue | None = None
-    withdraw_on_defence: DoctrineSettingValue | None = None
-    withdraw_on_fuel: DoctrineSettingValue | None = None
-    bvr_logic: DoctrineSettingValue | None = None
-    dipping_sonar: DoctrineSettingValue | None = None
-    use_aip: DoctrineSettingValue | None = None
-    recharge_on_attack: DoctrineSettingValue | None = None
-    recharge_on_patrol: DoctrineSettingValue | None = None
+    engaging_ambiguous_targets: EngagingAmbiguousTargetsUpdateValue | None = None
+    fuel_state_planned: FuelStatePlannedUpdateValue | None = None
+    fuel_state_rtb: RtbBehaviorUpdateValue | None = None
+    weapon_state_planned: WeaponStatePlannedUpdateValue | None = None
+    weapon_state_rtb: RtbBehaviorUpdateValue | None = None
+    withdraw_on_attack: WithdrawOnAttackUpdateValue | None = None
+    withdraw_on_damage: WithdrawOnDamageUpdateValue | None = None
+    withdraw_on_defence: WithdrawOnDefenceUpdateValue | None = None
+    withdraw_on_fuel: WithdrawOnFuelUpdateValue | None = None
+    bvr_logic: BvrLogicUpdateValue | None = None
+    dipping_sonar: DippingSonarUpdateValue | None = None
+    use_aip: UseAipUpdateValue | None = None
+    recharge_on_attack: BatteryRechargeUpdateValue | None = None
+    recharge_on_patrol: BatteryRechargeUpdateValue | None = None
 
     @model_validator(mode="after")
     def validate_update(self) -> Self:
@@ -1076,7 +1597,7 @@ class EmconSetWireArgs(StrictModel):
 
 
 class ScenarioTimeCompressionSetArgs(StrictModel):
-    code: Literal[0, 1, 2, 3, 4, 5]
+    code: ScenarioTimeCompressionCode
 
 
 class SidePostureGetArgs(StrictModel):
@@ -1170,7 +1691,7 @@ class MissionCargoUpdateArgs(StrictModel):
     cargo_kind: Literal["mount", "object"]
     dbid: int = Field(ge=1)
     quantity: int | None = Field(default=None, ge=1)
-    object_type: int | None = Field(default=None, ge=1, le=5)
+    object_type: MissionCargoObjectType | None = None
     cargo_guid: NonEmptyStr | None = None
 
     @model_validator(mode="after")
@@ -1190,7 +1711,7 @@ class MissionCargoUpdateArgs(StrictModel):
 
 class DoctrineWraSelector(DoctrineSelector):
     contact_guid: NonEmptyStr | None = None
-    target_type: NonEmptyStr | int | None = None
+    target_type: WraTargetTypeValue | None = None
 
     @model_validator(mode="after")
     def validate_target_selector(self) -> Self:
@@ -1206,10 +1727,10 @@ class DoctrineWraGetArgs(DoctrineWraSelector):
 
 class DoctrineWraSetArgs(DoctrineWraSelector):
     weapon_dbid: int = Field(ge=1)
-    weapons_per_salvo: WraSettingValue
-    shooters_per_salvo: WraSettingValue
-    firing_range: WraSettingValue
-    self_defence_range: WraSettingValue
+    weapons_per_salvo: WraSalvoSettingValue
+    shooters_per_salvo: WraSalvoSettingValue
+    firing_range: WraFiringRangeSettingValue
+    self_defence_range: WraSelfDefenceRangeSettingValue
 
 
 class SpecialActionListArgs(StrictModel):
@@ -1255,7 +1776,7 @@ class GetScoreArgs(StrictModel):
 
 
 class ReconcileArgs(StrictModel):
-    request_id: UUID | None = None
+    request_id: UuidValue | None = None
     disposition: Disposition | None = None
 
     @model_validator(mode="after")
@@ -1270,7 +1791,7 @@ class ReconcileProbeWireArgs(StrictModel):
 
 
 class ReconcileCommitWireArgs(StrictModel):
-    request_id: UUID
+    request_id: UuidValue
     disposition: Disposition
     confirmation_proof: Sha256
 
@@ -1286,12 +1807,12 @@ class BridgeStatusResult(StrictModel):
     release_id: Sha256
     build: int = Field(ge=1)
     manifest_sha256: Sha256
-    lineage_id: UUID
-    activation_id: UUID
+    lineage_id: UuidValue
+    activation_id: UuidValue
     installed_event_names: list[NonEmptyStr]
     installed_action_names: list[NonEmptyStr]
     installed_trigger_names: list[NonEmptyStr]
-    pending_request_id: UUID | None
+    pending_request_id: UuidValue | None
     quarantined: bool
     paused_capability: bool | None
     poll_interval_seconds: int = Field(ge=1)
@@ -1766,7 +2287,9 @@ class MissionResult(StrictModel):
     mines_per_set: int | None = Field(default=None, exclude_if=_exclude_none)
     mine_spacing_m: float | None = Field(default=None, exclude_if=_exclude_none)
     set_spacing_m: float | None = Field(default=None, exclude_if=_exclude_none)
-    laying_method: Literal[0, 1] | None = Field(default=None, exclude_if=_exclude_none)
+    laying_method: MissionLayingMethodUpdateValue | None = Field(
+        default=None, exclude_if=_exclude_none
+    )
     cargo_subtype: Literal["transfer", "delivery"] | None = Field(
         default=None, exclude_if=_exclude_none
     )
@@ -2028,7 +2551,9 @@ class MissionUpdateResult(StrictModel):
     mines_per_set: int | None = Field(default=None, exclude_if=_exclude_none)
     mine_spacing_m: float | None = Field(default=None, exclude_if=_exclude_none)
     set_spacing_m: float | None = Field(default=None, exclude_if=_exclude_none)
-    laying_method: Literal[0, 1] | None = Field(default=None, exclude_if=_exclude_none)
+    laying_method: MissionLayingMethodUpdateValue | None = Field(
+        default=None, exclude_if=_exclude_none
+    )
     cargo_subtype: Literal["transfer", "delivery"] | None = Field(
         default=None, exclude_if=_exclude_none
     )
@@ -2089,7 +2614,7 @@ class DoctrineSetResult(StrictModel):
 
 
 class ScenarioTimeCompressionSetResult(StrictModel):
-    code: Literal[0, 1, 2, 3, 4, 5]
+    code: ScenarioTimeCompressionCode
     observed_time_compression: float | None
     accepted: Literal[True]
 
@@ -2273,9 +2798,9 @@ class DestructivePreviewResult(StrictModel):
     target_name: str
     target_type: str
     impact: str
-    reserved_activation_candidate: UUID
+    reserved_activation_candidate: UuidValue
     confirmation_token: NonEmptyStr
-    expires_at_utc: datetime
+    expires_at_utc: DatetimeValue
 
     @field_validator("expires_at_utc")
     @classmethod
@@ -2427,7 +2952,7 @@ class LineageProbeStepResult(StrictModel):
     step: Literal["lineage"]
     nonce: NonEmptyStr
     poll_source: PollSource
-    lineage_id: UUID
+    lineage_id: UuidValue
 
 
 class KeyValueProbeStepResult(StrictModel):
@@ -2485,8 +3010,8 @@ CompatProbeStepResult: TypeAlias = Annotated[
 class UninstallCommandResult(StrictModel):
     phase: Literal["command"]
     command: NonEmptyStr
-    expected_lineage_id: UUID
-    expected_activation_id: UUID
+    expected_lineage_id: UuidValue
+    expected_activation_id: UuidValue
 
 
 class UninstallFilesResult(StrictModel):
@@ -2510,7 +3035,7 @@ UninstallResult: TypeAlias = Annotated[
 
 class ReconciliationEvidence(StrictModel):
     present: bool
-    request_id: UUID | None
+    request_id: UuidValue | None
     state: NonEmptyStr | None
     request_hash: Sha256 | None
 
@@ -2572,14 +3097,14 @@ class ReconcileProbeResult(StrictModel):
 
 
 class ReconcileCommitResult(StrictModel):
-    request_id: UUID
+    request_id: UuidValue
     request_hash: Sha256
     disposition: Disposition
     resolved: Literal[True]
 
 
 class ReconciliationResult(StrictModel):
-    request_id: UUID | None
+    request_id: UuidValue | None
     journal_evidence: ReconciliationEvidence
     barrier_evidence: ReconciliationEvidence
     ledger_evidence: ReconciliationEvidence
@@ -2587,8 +3112,8 @@ class ReconciliationResult(StrictModel):
     applied_disposition: Disposition | None
     quarantined: bool
     confirmation_token: str | None
-    confirmation_expires_at_utc: datetime | None
-    reserved_activation_candidate: UUID | None
+    confirmation_expires_at_utc: DatetimeValue | None
+    reserved_activation_candidate: UuidValue | None
 
     @field_validator("confirmation_expires_at_utc")
     @classmethod

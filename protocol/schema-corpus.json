@@ -2661,7 +2661,7 @@
       "caller_arguments": {
         "mission_guid": "MISSION-1",
         "side_guid": "SIDE-1",
-        "strike_minimum_trigger": "hostile"
+        "strike_minimum_trigger": "Hostile"
       },
       "id": "mission.update:valid-3",
       "invariant_id": null,
@@ -2714,7 +2714,7 @@
         "strike_max_flights": null,
         "strike_min_distance_aircraft": null,
         "strike_min_distance_ship": null,
-        "strike_minimum_trigger": "hostile",
+        "strike_minimum_trigger": "Hostile",
         "transit_altitude_aircraft": null,
         "transit_depth_submarine": null,
         "transit_throttle_aircraft": null,
@@ -5055,6 +5055,33 @@
     },
     {
       "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "component_type": "Message",
+          "mode": "update",
+          "parameters_json": "{\"SideID\":\"SIDE-1\",\"Text\":\"Updated\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      },
+      "id": "lua.call:valid-21",
+      "invariant_id": null,
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "component_type": "Message",
+          "mode": "update",
+          "new_description": null,
+          "parameters_json": "{\"SideID\":\"SIDE-1\",\"Text\":\"Updated\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      }
+    },
+    {
+      "caller_arguments": {
         "__unexpected__": true,
         "arguments": {
           "side": "Blue"
@@ -5105,6 +5132,56 @@
       "wire_arguments": {
         "arguments": {},
         "function": "ScenEdit_GetScore"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "mode": "update",
+          "parameters_json": "{\"Text\":\"Missing type hint\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      },
+      "id": "lua.call:invalid-invariant-3",
+      "invariant_id": "lua_function_arguments",
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "ACTION-1",
+          "mode": "update",
+          "parameters_json": "{\"Text\":\"Missing type hint\"}"
+        },
+        "function": "ScenEdit_SetAction"
+      }
+    },
+    {
+      "caller_arguments": {
+        "arguments": {
+          "component_id_or_name": "Invalid cargo type",
+          "component_type": "UnitCargoMoved",
+          "mode": "add",
+          "parameters_json": "{\"CargoFilter\":{\"TargetType\":123}}"
+        },
+        "function": "ScenEdit_SetTrigger"
+      },
+      "id": "lua.call:invalid-invariant-4",
+      "invariant_id": "lua_function_arguments",
+      "operation": "lua.call",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "arguments": {
+          "component_id_or_name": "Invalid cargo type",
+          "component_type": "UnitCargoMoved",
+          "mode": "add",
+          "parameters_json": "{\"CargoFilter\":{\"TargetType\":123}}"
+        },
+        "function": "ScenEdit_SetTrigger"
       }
     },
     {
@@ -5476,5 +5553,5 @@
       }
     }
   ],
-  "manifest_sha256": "81019505d2d4a7de530e0c651c4cdd97deab071d02406ddb3600319aa7c7e9b6"
+  "manifest_sha256": "a187d1e065f0f3a7b2bbdf16bbde93dd37ec5d153e603838939b1e6f1cd67043"
 }

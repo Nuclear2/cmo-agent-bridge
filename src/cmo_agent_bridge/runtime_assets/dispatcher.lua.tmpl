@@ -944,6 +944,98 @@ local function ordered_strings(value)
     return result
 end
 
+BRIDGE.require_reference_point_guids = function(side_selector, value, field_name)
+    local requested = ordered_strings(value)
+    local ok, reference_points = pcall(
+        ScenEdit_GetReferencePoints,
+        { side = side_selector, area = requested }
+    )
+    if not ok or reference_points == nil then
+        error(
+            field_name
+                .. " reference-point lookup failed: "
+                .. text_or(reference_points, "no reference points returned")
+        )
+    end
+
+    local observed = {}
+    for _, reference_point in ipairs(collect_ordered(reference_points)) do
+        local guid = object_guid(reference_point)
+        if guid ~= "" then
+            observed[lower_text(guid)] = true
+        end
+    end
+    for _, guid in ipairs(requested) do
+        if guid == "" or not observed[lower_text(guid)] then
+            error(field_name .. " reference point was not found: " .. guid)
+        end
+    end
+    return requested
+end
+
+BRIDGE.require_mission_target_guid = function(side_selector, value)
+    local target_guid = tostring(value)
+    local contact_ok, contact = pcall(
+        ScenEdit_GetContact,
+        { side = side_selector, guid = target_guid }
+    )
+    local unit_ok, unit = pcall(
+        ScenEdit_GetUnit,
+        { guid = target_guid }
+    )
+    if (not contact_ok or contact == nil)
+        and (not unit_ok or unit == nil)
+    then
+        local lookup_errors = ""
+        if not contact_ok then
+            lookup_errors = "; contact_lookup=" .. text_or(contact, "failed")
+        end
+        if not unit_ok then
+            lookup_errors = lookup_errors
+                .. "; unit_lookup="
+                .. text_or(unit, "failed")
+        end
+        error(
+            "mission target was not found as a side contact or actual unit: "
+                .. target_guid
+                .. lookup_errors
+        )
+    end
+    return target_guid
+end
+
+BRIDGE.require_actual_unit_guid = function(value, field_name)
+    local unit_guid = tostring(value)
+    local ok, unit = pcall(
+        ScenEdit_GetUnit,
+        { guid = unit_guid }
+    )
+    if not ok or unit == nil then
+        local lookup_error = not ok
+            and ("; unit_lookup=" .. text_or(unit, "failed"))
+            or ""
+        error(
+            field_name
+                .. " actual unit was not found: "
+                .. unit_guid
+                .. lookup_error
+        )
+    end
+    local observed_guid = object_guid(unit)
+    if observed_guid == ""
+        or lower_text(observed_guid) ~= lower_text(unit_guid)
+    then
+        error(
+            field_name
+                .. " did not resolve the exact actual-unit GUID: requested="
+                .. unit_guid
+                .. "; observed="
+                .. text_or(observed_guid, "")
+        )
+    end
+    return unit_guid
+end
+
 local function contains_identifier(values, wanted)
     local normalized = string.lower(tostring(wanted))
     for _, value in ipairs(values) do
@@ -4379,6 +4471,43 @@ local function assigned_cargo_results(mission)
     return results
 end
 
+BRIDGE.assigned_cargo_match_quantity = function(
+    assigned_cargo,
+    cargo_kind,
+    dbid,
+    object_type,
+    cargo_guid
+)
+    local total = 0
+    for _, item in ipairs(collect_ordered(assigned_cargo)) do
+        local item_dbid = integer_or(safe_get(item, { "dbid", "DBID" }), 0)
+        if item_dbid == dbid then
+            if cargo_kind == "mount" then
+                total = total
+                    + math.max(
+                        integer_or(safe_get(item, { "quantity", "Quantity" }), 0),
+                        0
+                    )
+            else
+                local item_type = nullable_enum_integer(
+                    safe_get(item, { "object_type", "type", "Type" })
+                )
+                local item_guid = text_or(
+                    safe_get(item, { "guid", "GUID", "Guid" }),
+                    ""
+                )
+                if item_type ~= Json.null
+                    and item_type == object_type
+                    and lower_text(item_guid) == lower_text(cargo_guid)
+                then
+                    total = total + 1
+                end
+            end
+        end
+    end
+    return total
+end
+
 local function mission_category_values(mission)
     local package_list = safe_get(
         mission,
@@ -5261,7 +5390,40 @@ local function mission_readback(side, side_selector, mission_guid)
     return mission, result
 end
 
-local function mission_create_result(arguments)
+BRIDGE.require_side_mission_guid = function(side_selector, value, field_name)
+    local mission_guid = tostring(value)
+    local ok, mission = pcall(
+        ScenEdit_GetMission,
+        side_selector,
+        mission_guid
+    )
+    if not ok or mission == nil then
+        local lookup_error = not ok
+            and ("; mission_lookup=" .. text_or(mission, "failed"))
+            or ""
+        error(
+            field_name
+                .. " mission was not found on the selected side: "
+                .. mission_guid
+                .. lookup_error
+        )
+    end
+    local observed_guid = object_guid(mission)
+    if observed_guid == ""
+        or lower_text(observed_guid) ~= lower_text(mission_guid)
+    then
+        error(
+            field_name
+                .. " did not resolve the exact mission GUID: requested="
+                .. mission_guid
+                .. "; observed="
+                .. text_or(observed_guid, "")
+        )
+    end
+    return mission
+end
+
+BRIDGE.mission_create_preflight = function(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local details = arguments.details
@@ -5279,35 +5441,68 @@ local function mission_create_result(arguments)
     elseif category == "package" then
         options.category = "package"
         expected_parent_task_pool_guid = tostring(arguments.parent_task_pool_guid)
+        local parent_task_pool = BRIDGE.require_side_mission_guid(
+            side_selector,
+            expected_parent_task_pool_guid,
+            "parent_task_pool_guid"
+        )
+        local parent_category = mission_category_values(parent_task_pool)
+        if parent_category ~= "task_pool" then
+            error(
+                "parent_task_pool_guid does not identify a task-pool mission: "
+                    .. expected_parent_task_pool_guid
+            )
+        end
         options.pool = expected_parent_task_pool_guid
     elseif category ~= "mission" then
         error("unsupported mission category")
     end
     local expected_zone = nil
     local expected_targets = nil
-    local canonical_targets = nil
     local expected_destination = nil
     local expected_cargo_subtype = nil
     local post_create_options = { isactive = false }
 
     if mission_class == "patrol" then
         options.type = tostring(details.patrol_type)
-        expected_zone = ordered_strings(details.reference_point_guids)
+        expected_zone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            details.reference_point_guids,
+            "details.reference_point_guids"
+        )
         options.zone = expected_zone
     elseif mission_class == "support" then
-        expected_zone = ordered_strings(details.reference_point_guids)
+        expected_zone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            details.reference_point_guids,
+            "details.reference_point_guids"
+        )
         options.zone = expected_zone
     elseif mission_class == "strike" then
         options.type = tostring(details.strike_type)
         expected_targets = ordered_strings(details.target_guids)
+        for _, target_guid in ipairs(expected_targets) do
+            BRIDGE.require_mission_target_guid(side_selector, target_guid)
+        end
     elseif mission_class == "ferry" then
-        expected_destination = tostring(details.destination_guid)
+        expected_destination = BRIDGE.require_actual_unit_guid(
+            details.destination_guid,
+            "details.destination_guid"
+        )
         options.destination = expected_destination
     elseif mission_class == "mining" then
-        expected_zone = ordered_strings(details.reference_point_guids)
+        expected_zone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            details.reference_point_guids,
+            "details.reference_point_guids"
+        )
         options.zone = expected_zone
     elseif mission_class == "mine_clearing" then
-        expected_zone = ordered_strings(details.reference_point_guids)
+        expected_zone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            details.reference_point_guids,
+            "details.reference_point_guids"
+        )
         post_create_options.Zone = expected_zone
     elseif mission_class == "cargo" then
         expected_cargo_subtype = tostring(details.cargo_subtype)
@@ -5315,13 +5510,20 @@ local function mission_create_result(arguments)
         if details.reference_point_guids ~= nil
             and details.reference_point_guids ~= Json.null
         then
-            expected_zone = ordered_strings(details.reference_point_guids)
+            expected_zone = BRIDGE.require_reference_point_guids(
+                side_selector,
+                details.reference_point_guids,
+                "details.reference_point_guids"
+            )
             options.zone = expected_zone
         end
         if details.destination_guid ~= nil
             and details.destination_guid ~= Json.null
         then
-            expected_destination = tostring(details.destination_guid)
+            expected_destination = BRIDGE.require_actual_unit_guid(
+                details.destination_guid,
+                "details.destination_guid"
+            )
             post_create_options.DestinationUnitID = expected_destination
         end
     else
@@ -5338,6 +5540,36 @@ local function mission_create_result(arguments)
         cargo = "Cargo",
     }
     local class_name = class_names[mission_class]
+    return {
+        side = side,
+        side_selector = side_selector,
+        mission_class = mission_class,
+        options = options,
+        category = category,
+        expected_parent_task_pool_guid = expected_parent_task_pool_guid,
+        expected_zone = expected_zone,
+        expected_targets = expected_targets,
+        expected_destination = expected_destination,
+        expected_cargo_subtype = expected_cargo_subtype,
+        post_create_options = post_create_options,
+        class_name = class_name,
+    }
+end
+
+local function mission_create_result(arguments, context)
+    local side = context.side
+    local side_selector = context.side_selector
+    local mission_class = context.mission_class
+    local options = context.options
+    local category = context.category
+    local expected_parent_task_pool_guid = context.expected_parent_task_pool_guid
+    local expected_zone = context.expected_zone
+    local expected_targets = context.expected_targets
+    local expected_destination = context.expected_destination
+    local expected_cargo_subtype = context.expected_cargo_subtype
+    local post_create_options = context.post_create_options
+    local class_name = context.class_name
+    local canonical_targets = nil
     local ok, added = pcall(
         ScenEdit_AddMission,
         side_selector,
@@ -5489,13 +5721,33 @@ local function mission_create_result(arguments)
     return finalized
 end
 
-local function mission_update_result(arguments)
+BRIDGE.mission_update_preflight = function(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local mission_guid = tostring(arguments.mission_guid)
     local current, _ = mission_readback(side, side_selector, mission_guid)
     local mission_class = mission_class_values(current)
     local descriptor = {}
+    local supports_flight_size_value = mission_class == "strike"
+        or mission_class == "patrol"
+        or mission_class == "support"
+        or mission_class == "ferry"
+        or mission_class == "mining"
+        or mission_class == "mine_clearing"
+    local supports_flight_size_flag = supports_flight_size_value
+        or mission_class == "cargo"
+    local supports_group_size_value = mission_class == "strike"
+        or mission_class == "patrol"
+        or mission_class == "support"
+        or mission_class == "mining"
+        or mission_class == "mine_clearing"
+    local supports_group_size_flag = supports_group_size_value
+        or mission_class == "cargo"
+    local supports_transit_station = mission_class == "patrol"
+        or mission_class == "support"
+        or mission_class == "mining"
+        or mission_class == "mine_clearing"
+        or mission_class == "cargo"
 
     if arguments.active ~= nil and arguments.active ~= Json.null then
         descriptor.isactive = arguments.active == true
@@ -5507,6 +5759,9 @@ local function mission_update_result(arguments)
         descriptor.endtime = tostring(arguments.end_time)
     end
     if arguments.flight_size ~= nil and arguments.flight_size ~= Json.null then
+        if not supports_flight_size_value then
+            error("flight_size is not supported by " .. mission_class .. " missions")
+        end
         if mission_class == "strike" then
             descriptor.StrikeFlightSize = integer_or(arguments.flight_size, 1)
         else
@@ -5514,6 +5769,9 @@ local function mission_update_result(arguments)
         end
     end
     if arguments.use_flight_size ~= nil and arguments.use_flight_size ~= Json.null then
+        if not supports_flight_size_flag then
+            error("use_flight_size is not supported by " .. mission_class .. " missions")
+        end
         if mission_class == "strike" then
             descriptor.StrikeUseFlightSize = arguments.use_flight_size == true
         else
@@ -5523,6 +5781,13 @@ local function mission_update_result(arguments)
     if arguments.minimum_aircraft_required ~= nil
         and arguments.minimum_aircraft_required ~= Json.null
     then
+        if not supports_flight_size_value then
+            error(
+                "minimum_aircraft_required is not supported by "
+                    .. mission_class
+                    .. " missions"
+            )
+        end
         if mission_class == "strike" then
             descriptor.StrikeMinAircraftReq = integer_or(
                 arguments.minimum_aircraft_required,
@@ -5570,7 +5835,11 @@ local function mission_update_result(arguments)
     if arguments.reference_point_guids ~= nil
         and arguments.reference_point_guids ~= Json.null
     then
-        local zone = ordered_strings(arguments.reference_point_guids)
+        local zone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            arguments.reference_point_guids,
+            "reference_point_guids"
+        )
         if mission_class == "patrol" then
             descriptor.PatrolZone = zone
         elseif mission_class == "support"
@@ -5589,47 +5858,97 @@ local function mission_update_result(arguments)
         if mission_class ~= "patrol" then
             error("only patrol missions support a prosecution zone")
         end
-        descriptor.ProsecutionZone = ordered_strings(
-            arguments.prosecution_zone_reference_point_guids
+        descriptor.ProsecutionZone = BRIDGE.require_reference_point_guids(
+            side_selector,
+            arguments.prosecution_zone_reference_point_guids,
+            "prosecution_zone_reference_point_guids"
         )
     end
 
-    local direct_mapping = {
-        loop_type = "LoopType",
+    local transit_station_mapping = {
         transit_throttle_aircraft = "TransitThrottleAircraft",
         transit_throttle_ship = "TransitThrottleShip",
         transit_throttle_submarine = "TransitThrottleSubmarine",
         station_throttle_aircraft = "StationThrottleAircraft",
         station_throttle_ship = "StationThrottleShip",
         station_throttle_submarine = "StationThrottleSubmarine",
-        attack_throttle_aircraft = "AttackThrottleAircraft",
-        attack_throttle_ship = "AttackThrottleShip",
-        attack_throttle_submarine = "AttackThrottleSubmarine",
         transit_altitude_aircraft = "TransitAltitudeAircraft",
         station_altitude_aircraft = "StationAltitudeAircraft",
-        attack_altitude_aircraft = "AttackAltitudeAircraft",
         transit_depth_submarine = "TransitDepthSubmarine",
         station_depth_submarine = "StationDepthSubmarine",
-        attack_depth_submarine = "AttackDepthSubmarine",
     }
-    for public_name, cmo_name in pairs(direct_mapping) do
+    for public_name, cmo_name in pairs(transit_station_mapping) do
         local value = arguments[public_name]
         if value ~= nil and value ~= Json.null then
+            if not supports_transit_station then
+                error(
+                    public_name
+                        .. " is not supported by "
+                        .. mission_class
+                        .. " missions"
+                )
+            end
             descriptor[cmo_name] = value
         end
     end
-    local boolean_mapping = {
-        active_emcon = "ActiveEMCON",
-        check_opa = "CheckOPA",
-        check_wwr = "CheckWWR",
+    local attack_mapping = {
+        attack_throttle_aircraft = "AttackThrottleAircraft",
+        attack_throttle_ship = "AttackThrottleShip",
+        attack_throttle_submarine = "AttackThrottleSubmarine",
+        attack_altitude_aircraft = "AttackAltitudeAircraft",
+        attack_depth_submarine = "AttackDepthSubmarine",
     }
-    for public_name, cmo_name in pairs(boolean_mapping) do
+    for public_name, cmo_name in pairs(attack_mapping) do
         local value = arguments[public_name]
         if value ~= nil and value ~= Json.null then
-            descriptor[cmo_name] = value == true
+            if mission_class ~= "patrol" then
+                error(public_name .. " requires a patrol mission")
+            end
+            descriptor[cmo_name] = value
         end
     end
+
+    if arguments.loop_type ~= nil and arguments.loop_type ~= Json.null then
+        local loop_type = integer_or(arguments.loop_type, -1)
+        if mission_class == "patrol" then
+            if loop_type < 0 or loop_type > 2 then
+                error("patrol loop_type must be 0, 1, or 2")
+            end
+        elseif mission_class == "support" or mission_class == "mine_clearing" then
+            if loop_type < 0 or loop_type > 1 then
+                error(
+                    mission_class
+                        .. " loop_type must be 0 or 1"
+                )
+            end
+        else
+            error("loop_type is not supported by " .. mission_class .. " missions")
+        end
+        descriptor.LoopType = loop_type
+    end
+
+    if arguments.check_opa ~= nil and arguments.check_opa ~= Json.null then
+        if mission_class ~= "patrol" then
+            error("check_opa requires a patrol mission")
+        end
+        descriptor.CheckOPA = arguments.check_opa == true
+    end
+    if arguments.check_wwr ~= nil and arguments.check_wwr ~= Json.null then
+        if mission_class ~= "patrol" then
+            error("check_wwr requires a patrol mission")
+        end
+        descriptor.CheckWWR = arguments.check_wwr == true
+    end
+    if arguments.active_emcon ~= nil and arguments.active_emcon ~= Json.null then
+        if mission_class ~= "patrol" and mission_class ~= "support" then
+            error("active_emcon requires a patrol or support mission")
+        end
+        descriptor.ActiveEMCON = arguments.active_emcon == true
+    end
     if arguments.group_size ~= nil and arguments.group_size ~= Json.null then
+        if not supports_group_size_value then
+            error("group_size is not supported by " .. mission_class .. " missions")
+        end
         if mission_class == "strike" then
             descriptor.StrikeGroupSize = integer_or(arguments.group_size, 1)
         else
@@ -5639,6 +5958,9 @@ local function mission_update_result(arguments)
     if arguments.use_group_size ~= nil
         and arguments.use_group_size ~= Json.null
     then
+        if not supports_group_size_flag then
+            error("use_group_size is not supported by " .. mission_class .. " missions")
+        end
         if mission_class == "strike" then
             descriptor.StrikeUseGroupSize = arguments.use_group_size == true
         else
@@ -5692,10 +6014,29 @@ local function mission_update_result(arguments)
             if mission_class ~= "cargo" then
                 error(public_name .. " requires a cargo mission")
             end
+            if public_name == "destination_guid" then
+                value = BRIDGE.require_actual_unit_guid(
+                    value,
+                    "destination_guid"
+                )
+            end
             descriptor[cmo_name] = value
         end
     end
 
+    return {
+        side = side,
+        side_selector = side_selector,
+        mission_guid = mission_guid,
+        descriptor = descriptor,
+    }
+end
+
+local function mission_update_result(arguments, context)
+    local side = context.side
+    local side_selector = context.side_selector
+    local mission_guid = context.mission_guid
+    local descriptor = context.descriptor
     local ok, updated = pcall(
         ScenEdit_SetMission,
         side_selector,
@@ -5973,7 +6314,7 @@ local function mission_update_result(arguments)
     })
 end
 
-local function mission_air_refueling_update_result(arguments)
+BRIDGE.mission_air_refueling_update_preflight = function(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local mission_guid = tostring(arguments.mission_guid)
@@ -6012,9 +6353,17 @@ local function mission_air_refueling_update_result(arguments)
     if arguments.tanker_mission_guids ~= nil
         and arguments.tanker_mission_guids ~= Json.null
     then
-        descriptor.tankerMissionList = ordered_strings(
+        local tanker_mission_guids = ordered_strings(
             arguments.tanker_mission_guids
         )
+        for index, tanker_mission_guid in ipairs(tanker_mission_guids) do
+            BRIDGE.require_side_mission_guid(
+                side_selector,
+                tanker_mission_guid,
+                "tanker_mission_guids[" .. tostring(index) .. "]"
+            )
+        end
+        descriptor.tankerMissionList = tanker_mission_guids
     end
     if arguments.tanker_one_time ~= nil and arguments.tanker_one_time ~= Json.null then
         if mission_class ~= "support" then
@@ -6031,6 +6380,19 @@ local function mission_air_refueling_update_result(arguments)
         descriptor.TankerMaxReceivers = arguments.tanker_max_receivers
     end
 
+    return {
+        side = side,
+        side_selector = side_selector,
+        mission_guid = mission_guid,
+        descriptor = descriptor,
+    }
+end
+
+local function mission_air_refueling_update_result(arguments, context)
+    local side = context.side
+    local side_selector = context.side_selector
+    local mission_guid = context.mission_guid
+    local descriptor = context.descriptor
     local ok, updated = pcall(
         ScenEdit_SetMission,
         side_selector,
@@ -6280,7 +6642,7 @@ local function mission_flight_plan_list_result(arguments)
     return Json.object(mission_flight_plan_snapshot(mission))
 end
 
-local function mission_flight_plan_create_result(arguments)
+BRIDGE.mission_flight_plan_create_preflight = function(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local mission_guid = tostring(arguments.mission_guid)
@@ -6299,6 +6661,21 @@ local function mission_flight_plan_create_result(arguments)
         options.TAKEOFFDATE = tostring(arguments.takeoff_date)
         options.TAKEOFFTIME = tostring(arguments.takeoff_time)
     end
+    return {
+        side = side,
+        side_selector = side_selector,
+        mission_guid = mission_guid,
+        before_guids = before_guids,
+        options = options,
+    }
+end
+
+local function mission_flight_plan_create_result(context)
+    local side = context.side
+    local side_selector = context.side_selector
+    local mission_guid = context.mission_guid
+    local before_guids = context.before_guids
+    local options = context.options
     local ok, created = pcall(
         ScenEdit_CreateMissionFlightPlan,
         side_selector,
@@ -6333,7 +6710,7 @@ local function mission_flight_plan_create_result(arguments)
     })
 end
 
-local function mission_delete_result(arguments)
+BRIDGE.mission_delete_preflight = function(arguments)
     require_confirmation_proof(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
@@ -6343,7 +6720,17 @@ local function mission_delete_result(arguments)
         error("mission to delete was not found")
     end
     local deleted_name = object_name(mission)
+    return {
+        side_selector = side_selector,
+        mission_guid = mission_guid,
+        deleted_name = deleted_name,
+    }
+end
 
+local function mission_delete_result(context)
+    local side_selector = context.side_selector
+    local mission_guid = context.mission_guid
+    local deleted_name = context.deleted_name
     local delete_ok, deleted = pcall(
         ScenEdit_DeleteMission,
         side_selector,
@@ -6358,7 +6745,13 @@ local function mission_delete_result(arguments)
         side_selector,
         mission_guid
     )
-    if verify_ok and remaining ~= nil then
+    if not verify_ok then
+        error(
+            "mission deletion could not be verified: "
+                .. text_or(remaining, "ScenEdit_GetMission failed")
+        )
+    end
+    if remaining ~= nil then
         error("mission remained present after deletion")
     end
     return Json.object({
@@ -6455,7 +6848,7 @@ local function mission_target_result(arguments, assign, context)
     })
 end
 
-local function mission_cargo_update_result(arguments)
+BRIDGE.mission_cargo_update_preflight = function(arguments)
     local side = resolve_side(arguments)
     local side_selector = side_api_selector(arguments, side)
     local mission_guid = tostring(arguments.mission_guid)
@@ -6466,6 +6859,40 @@ local function mission_cargo_update_result(arguments)
 
     local action = tostring(arguments.action)
     local cargo_kind = tostring(arguments.cargo_kind)
+    local dbid = integer_or(arguments.dbid, 0)
+    local quantity = integer_or(arguments.quantity, 0)
+    local object_type = integer_or(arguments.object_type, 0)
+    local cargo_guid = text_or(arguments.cargo_guid, "")
+    local before_quantity = BRIDGE.assigned_cargo_match_quantity(
+        before.assigned_cargo,
+        cargo_kind,
+        dbid,
+        object_type,
+        cargo_guid
+    )
+    if action == "unassign" then
+        if cargo_kind == "mount" and before_quantity < quantity then
+            error(
+                "cargo mission does not contain the requested mount quantity: "
+                    .. "dbid="
+                    .. tostring(dbid)
+                    .. "; requested="
+                    .. tostring(quantity)
+                    .. "; assigned="
+                    .. tostring(before_quantity)
+            )
+        elseif cargo_kind == "object" and before_quantity == 0 then
+            error(
+                "cargo mission does not contain the requested object: "
+                    .. "object_type="
+                    .. tostring(object_type)
+                    .. "; dbid="
+                    .. tostring(dbid)
+                    .. "; cargo_guid="
+                    .. cargo_guid
+            )
+        end
+    end
     local method_name
     local call_arguments
     if cargo_kind == "mount" then
@@ -6490,6 +6917,39 @@ local function mission_cargo_update_result(arguments)
     if method == nil then
         error("cargo mission wrapper does not expose " .. method_name)
     end
+    return {
+        side = side,
+        side_selector = side_selector,
+        mission_guid = mission_guid,
+        mission = mission,
+        action = action,
+        cargo_kind = cargo_kind,
+        dbid = dbid,
+        quantity = quantity,
+        object_type = object_type,
+        cargo_guid = cargo_guid,
+        before_quantity = before_quantity,
+        method_name = method_name,
+        method = method,
+        call_arguments = call_arguments,
+    }
+end
+
+local function mission_cargo_update_result(context)
+    local side = context.side
+    local side_selector = context.side_selector
+    local mission_guid = context.mission_guid
+    local mission = context.mission
+    local action = context.action
+    local cargo_kind = context.cargo_kind
+    local dbid = context.dbid
+    local quantity = context.quantity
+    local object_type = context.object_type
+    local cargo_guid = context.cargo_guid
+    local before_quantity = context.before_quantity
+    local method_name = context.method_name
+    local method = context.method
+    local call_arguments = context.call_arguments
     local ok, changed = pcall(
         method,
         mission,
@@ -6501,6 +6961,39 @@ local function mission_cargo_update_result(arguments)
         error(method_name .. " failed: " .. text_or(changed, "false"))
     end
     local _, actual = mission_readback(side, side_selector, mission_guid)
+    local actual_quantity = BRIDGE.assigned_cargo_match_quantity(
+        actual.assigned_cargo,
+        cargo_kind,
+        dbid,
+        object_type,
+        cargo_guid
+    )
+    local expected_quantity
+    if cargo_kind == "mount" then
+        expected_quantity = action == "assign"
+            and before_quantity + quantity
+            or before_quantity - quantity
+    else
+        expected_quantity = action == "assign" and before_quantity + 1 or 0
+    end
+    if actual_quantity ~= expected_quantity then
+        error(
+            method_name
+                .. " readback mismatch: cargo_kind="
+                .. cargo_kind
+                .. "; dbid="
+                .. tostring(dbid)
+                .. "; action="
+                .. action
+                .. "; before="
+                .. tostring(before_quantity)
+                .. "; expected="
+                .. tostring(expected_quantity)
+                .. "; observed="
+                .. tostring(actual_quantity)
+                .. "; path=mission.assignedCargo"
+        )
+    end
     return Json.object({
         mission_guid = actual.guid,
         action = action,
@@ -7683,7 +8176,8 @@ local function lua_call_result(arguments)
         end
         descriptor.mode = mode
         descriptor.description = selector
-        if call_arguments.component_type ~= nil
+        if mode == "add"
+            and call_arguments.component_type ~= nil
             and call_arguments.component_type ~= Json.null
         then
             descriptor.type = tostring(call_arguments.component_type)
@@ -8195,17 +8689,49 @@ local function dispatch()
     elseif operation == "mission.get" then
         handler = function() return mission_get_result(arguments) end
     elseif operation == "mission.create" then
-        handler = function() return mission_create_result(arguments) end
+        preflight = function() return BRIDGE.mission_create_preflight(arguments) end
+        handler = function(context) return mission_create_result(arguments, context) end
     elseif operation == "mission.update" then
-        handler = function() return mission_update_result(arguments) end
+        preflight = function() return BRIDGE.mission_update_preflight(arguments) end
+        handler = function(context) return mission_update_result(arguments, context) end
     elseif operation == "mission.air_refueling.update" then
-        handler = function() return mission_air_refueling_update_result(arguments) end
+        preflight = function()
+            return BRIDGE.mission_air_refueling_update_preflight(arguments)
+        end
+        handler = function(context)
+            return mission_air_refueling_update_result(arguments, context)
+        end
     elseif operation == "mission.flight_plan.list" then
         handler = function() return mission_flight_plan_list_result(arguments) end
     elseif operation == "mission.flight_plan.create" then
-        handler = function() return mission_flight_plan_create_result(arguments) end
+        preflight = function()
+            return BRIDGE.mission_flight_plan_create_preflight(arguments)
+        end
+        handler = function(context)
+            return mission_flight_plan_create_result(context)
+        end
     elseif operation == "mission.target.add" then
-        handler = function() return mission_target_result(arguments, true) end
+        preflight = function()
+            local side = resolve_side(arguments)
+            local side_selector = side_api_selector(arguments, side)
+            local mission_guid = tostring(arguments.mission_guid)
+            local target_guid = tostring(arguments.target_guid)
+            local _, before = mission_readback(side, side_selector, mission_guid)
+            if before.mission_class ~= "strike" then
+                error("mission targets can only be changed on a strike mission")
+            end
+            BRIDGE.require_mission_target_guid(side_selector, target_guid)
+            return {
+                side = side,
+                side_selector = side_selector,
+                mission_guid = mission_guid,
+                target_guid = target_guid,
+                before = before,
+            }
+        end
+        handler = function(context)
+            return mission_target_result(arguments, true, context)
+        end
     elseif operation == "mission.target.remove" then
         preflight = function()
             local side = resolve_side(arguments)
@@ -8268,9 +8794,13 @@ local function dispatch()
             return mission_target_result(arguments, false, context)
         end
     elseif operation == "mission.cargo.update" then
-        handler = function() return mission_cargo_update_result(arguments) end
+        preflight = function()
+            return BRIDGE.mission_cargo_update_preflight(arguments)
+        end
+        handler = function(context) return mission_cargo_update_result(context) end
     elseif operation == "mission.delete" then
-        handler = function() return mission_delete_result(arguments) end
+        preflight = function() return BRIDGE.mission_delete_preflight(arguments) end
+        handler = function(context) return mission_delete_result(context) end
     elseif operation == "doctrine.get" then
         handler = function() return doctrine_get_result(arguments) end
     elseif operation == "doctrine.set" then
@@ -8349,17 +8879,126 @@ local function dispatch()
     elseif operation == "lua.call" then
         local function_name = tostring(arguments["function"])
         local call_arguments = arguments.arguments or {}
-        local component_list = tostring(call_arguments.mode) == "list"
-            and (
-                function_name == "ScenEdit_SetTrigger"
-                or function_name == "ScenEdit_SetCondition"
-                or function_name == "ScenEdit_SetAction"
-            )
+        local component_api = function_name == "ScenEdit_SetTrigger"
+            or function_name == "ScenEdit_SetCondition"
+            or function_name == "ScenEdit_SetAction"
+        local component_mode = tostring(call_arguments.mode)
+        local component_list = component_mode == "list" and component_api
         if component_list then
             preflight = function()
                 return { result = lua_call_result(arguments) }
             end
             handler = function(context) return context.result end
+        elseif component_api
+            and (component_mode == "update" or component_mode == "remove")
+        then
+            preflight = function()
+                local api_function = ScenEdit_SetTrigger
+                if function_name == "ScenEdit_SetCondition" then
+                    api_function = ScenEdit_SetCondition
+                elseif function_name == "ScenEdit_SetAction" then
+                    api_function = ScenEdit_SetAction
+                end
+                local selector = tostring(call_arguments.component_id_or_name)
+                if is_managed_bridge_object(selector)
+                    or (
+                        call_arguments.new_description ~= nil
+                        and call_arguments.new_description ~= Json.null
+                        and is_managed_bridge_object(call_arguments.new_description)
+                    )
+                then
+                    error("bridge-managed event components cannot be modified")
+                end
+                local list_ok, listed = pcall(
+                    api_function,
+                    { mode = "list", description = selector }
+                )
+                if not list_ok or listed == nil or listed == false then
+                    error(
+                        function_name
+                            .. " list preflight failed: "
+                            .. text_or(listed, "component not found")
+                    )
+                end
+                local function matches(component)
+                    if component == nil or component == false then
+                        return false
+                    end
+                    local expected = lower_text(selector)
+                    for _, field_name in ipairs({
+                        "guid",
+                        "Guid",
+                        "GUID",
+                        "id",
+                        "ID",
+                        "name",
+                        "Name",
+                        "description",
+                        "Description",
+                    }) do
+                        local value = safe_get(component, { field_name })
+                        if value ~= nil and lower_text(value) == expected then
+                            return true
+                        end
+                    end
+                    return false
+                end
+                local component = nil
+                if matches(listed) then
+                    component = listed
+                else
+                    for _, candidate in ipairs(collect_ordered(listed)) do
+                        if matches(candidate) then
+                            component = candidate
+                            break
+                        end
+                    end
+                end
+                if component == nil then
+                    error(
+                        function_name
+                            .. " list preflight could not confirm component exists: "
+                            .. selector
+                    )
+                end
+                if component_mode == "update" then
+                    local parameters = Json.decode(
+                        tostring(call_arguments.parameters_json or "{}")
+                    )
+                    local has_parameters = false
+                    for _, _ in pairs(parameters) do
+                        has_parameters = true
+                        break
+                    end
+                    if has_parameters then
+                        local expected_type = call_arguments.component_type
+                        if expected_type == nil or expected_type == Json.null then
+                            error(
+                                function_name
+                                    .. " parameter update requires component_type"
+                            )
+                        end
+                        local actual_type = safe_get(component, { "type", "Type" })
+                        if actual_type == nil then
+                            error(
+                                function_name
+                                    .. " list preflight could not read component type"
+                            )
+                        end
+                        if tostring(actual_type) ~= tostring(expected_type) then
+                            error(
+                                function_name
+                                    .. " component type mismatch: expected "
+                                    .. tostring(expected_type)
+                                    .. ", found "
+                                    .. tostring(actual_type)
+                            )
+                        end
+                    end
+                end
+                return { component = component }
+            end
+            handler = function() return lua_call_result(arguments) end
         else
             handler = function() return lua_call_result(arguments) end
         end

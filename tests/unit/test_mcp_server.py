@@ -1299,35 +1299,512 @@ async def test_final_campaign_contract_is_reflected_in_mcp_input_schemas() -> No
     server = create_mcp_server(_FakeApplication({}))
     tools_by_name = {tool.name: tool for tool in await server.list_tools()}
 
-    def any_of(tool_name: str, field_name: str) -> list[dict[str, JsonValue]]:
+    def property_schema(tool_name: str, field_name: str) -> dict[str, JsonValue]:
         schema = cast(dict[str, JsonValue], tools_by_name[tool_name].inputSchema)
         properties = cast(dict[str, JsonValue], schema["properties"])
-        field_schema = cast(dict[str, JsonValue], properties[field_name])
+        return cast(dict[str, JsonValue], properties[field_name])
+
+    def any_of(tool_name: str, field_name: str) -> list[dict[str, JsonValue]]:
+        field_schema = property_schema(tool_name, field_name)
         return [
             cast(dict[str, JsonValue], branch)
             for branch in cast(list[JsonValue], field_schema["anyOf"])
         ]
 
-    manual_throttle = any_of("cmo_unit_set", "manual_throttle")
-    assert any(branch.get("type") == "string" for branch in manual_throttle)
-    assert any(branch.get("type") == "number" for branch in manual_throttle)
+    def enum_branch(tool_name: str, field_name: str) -> dict[str, JsonValue]:
+        return next(branch for branch in any_of(tool_name, field_name) if "enum" in branch)
 
-    strike_trigger = any_of("cmo_mission_update", "strike_minimum_trigger")
-    assert any(
-        branch.get("type") == "string" and branch.get("minLength") == 1 for branch in strike_trigger
+    def enum_values(schema: dict[str, JsonValue]) -> set[JsonValue]:
+        values = set(cast(list[JsonValue], schema.get("enum", [])))
+        for branch in cast(list[JsonValue], schema.get("anyOf", [])):
+            values.update(enum_values(cast(dict[str, JsonValue], branch)))
+        return values
+
+    def schema_branches(schema: dict[str, JsonValue]) -> list[dict[str, JsonValue]]:
+        branches = [schema]
+        for branch in cast(list[JsonValue], schema.get("anyOf", [])):
+            branches.extend(schema_branches(cast(dict[str, JsonValue], branch)))
+        return branches
+
+    manual_throttle_schema = property_schema("cmo_unit_set", "manual_throttle")
+    manual_throttle_value_schema = next(
+        cast(dict[str, JsonValue], branch)
+        for branch in cast(list[JsonValue], manual_throttle_schema["anyOf"])
+        if cast(dict[str, JsonValue], branch).get("type") != "null"
     )
+    assert enum_values(manual_throttle_schema) == {
+        "OFF",
+        "FullStop",
+        "Loiter",
+        "Cruise",
+        "Full",
+        "Flank",
+        0,
+        1,
+        2,
+        3,
+        4,
+    }
+    assert "manual-throttle" in str(manual_throttle_value_schema["description"])
+
+    unit_throttle = enum_branch("cmo_unit_set", "throttle")
+    assert cast(list[JsonValue], unit_throttle["enum"]) == [
+        "FullStop",
+        "Loiter",
+        "Cruise",
+        "Full",
+        "Flank",
+    ]
+    unit_add_type = property_schema("cmo_unit_add", "unit_type")
+    assert cast(list[JsonValue], unit_add_type["enum"]) == [
+        "Aircraft",
+        "Ship",
+        "Sub",
+        "Facility",
+        "Satellite",
+        "Weapon",
+    ]
+
+    mission_throttle_fields = (
+        "transit_throttle_aircraft",
+        "transit_throttle_ship",
+        "transit_throttle_submarine",
+        "station_throttle_aircraft",
+        "station_throttle_ship",
+        "station_throttle_submarine",
+        "attack_throttle_aircraft",
+        "attack_throttle_ship",
+        "attack_throttle_submarine",
+    )
+    expected_mission_throttles = {
+        "FullStop",
+        "Loiter",
+        "Cruise",
+        "Full",
+        "Flank",
+        "None",
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+    }
+    for field_name in mission_throttle_fields:
+        throttle = property_schema("cmo_mission_update", field_name)
+        assert enum_values(throttle) == expected_mission_throttles
+        value_schema = next(
+            cast(dict[str, JsonValue], branch)
+            for branch in cast(list[JsonValue], throttle["anyOf"])
+            if cast(dict[str, JsonValue], branch).get("type") != "null"
+        )
+        assert "Other names and codes are rejected" in str(value_schema["description"])
+
+    doctrine_fields = (
+        "engaging_ambiguous_targets",
+        "fuel_state_planned",
+        "fuel_state_rtb",
+        "weapon_state_planned",
+        "weapon_state_rtb",
+        "withdraw_on_attack",
+        "withdraw_on_damage",
+        "withdraw_on_defence",
+        "withdraw_on_fuel",
+        "bvr_logic",
+        "dipping_sonar",
+        "use_aip",
+        "recharge_on_attack",
+        "recharge_on_patrol",
+    )
+    for field_name in doctrine_fields:
+        doctrine_value = property_schema("cmo_doctrine_set", field_name)
+        assert "inherit" in enum_values(doctrine_value)
+        assert any(
+            "description" in cast(dict[str, JsonValue], branch)
+            for branch in cast(list[JsonValue], doctrine_value["anyOf"])
+        )
+
+    contact_type = enum_branch("cmo_contact_list", "contact_type")
+    assert "Air" in cast(list[JsonValue], contact_type["enum"])
+    assert "ActivationPoint" in cast(list[JsonValue], contact_type["enum"])
+    mission_class = enum_branch("cmo_mission_list", "mission_class")
+    assert set(cast(list[JsonValue], mission_class["enum"])) == {
+        "none",
+        "strike",
+        "patrol",
+        "support",
+        "ferry",
+        "mining",
+        "mine_clearing",
+        "escort",
+        "cargo",
+    }
+
+    assert enum_values(property_schema("cmo_mission_update", "group_size")) == {1, 2, 3, 4, 6}
+    assert enum_values(property_schema("cmo_mission_update", "flight_size")) == {1, 2, 3, 4, 6}
+    assert enum_values(property_schema("cmo_mission_update", "minimum_aircraft_required")) == {
+        0,
+        1,
+        2,
+        3,
+        4,
+        6,
+        8,
+        12,
+    }
+    assert enum_values(property_schema("cmo_mission_update", "loop_type")) == {0, 1, 2}
+    assert enum_values(property_schema("cmo_mission_update", "laying_method")) == {0, 1}
+    assert enum_values(property_schema("cmo_mission_cargo_update", "object_type")) == {
+        2,
+        3,
+        4,
+        5,
+    }
+    assert enum_values(property_schema("cmo_scenario_time_compression_set", "code")) == set(
+        range(6)
+    )
+    assert enum_values(property_schema("cmo_time_set", "rate_code")) == set(range(6))
+
+    for field_name in (
+        "strike_min_distance_aircraft",
+        "strike_max_distance_aircraft",
+        "strike_min_distance_ship",
+        "strike_max_distance_ship",
+    ):
+        distance_branches = schema_branches(property_schema("cmo_mission_update", field_name))
+        assert all(
+            branch.get("minimum") == 0
+            for branch in distance_branches
+            if branch.get("type") in {"integer", "number"}
+        )
+        assert not any(branch.get("type") == "string" for branch in distance_branches)
+
+    arming_delay = schema_branches(property_schema("cmo_mission_update", "arming_delay"))
+    arming_delay_string = next(branch for branch in arming_delay if branch.get("type") == "string")
+    assert arming_delay_string["pattern"] == r"^\d+:\d{1,2}:\d{1,2}:\d{1,2}$"
+    assert "hours must be 0-23" in str(arming_delay_string["description"])
+
+    strike_trigger = property_schema("cmo_mission_update", "strike_minimum_trigger")
+    assert enum_values(strike_trigger) == {
+        "Neutral",
+        "Friendly",
+        "Unfriendly",
+        "Hostile",
+        "Unknown",
+        0,
+        1,
+        2,
+        3,
+        4,
+    }
+    assert any(
+        "Canonical CMO contact stance" in str(branch.get("description", ""))
+        for branch in schema_branches(strike_trigger)
+    )
+
+    assert enum_values(property_schema("cmo_doctrine_set", "weapon_control_air")) == {
+        "Free",
+        "Tight",
+        "Hold",
+        "inherit",
+        0,
+        1,
+        2,
+    }
+    assert enum_values(property_schema("cmo_doctrine_set", "refuel_unrep")) == {
+        "Always_ExceptTankersRefuellingTankers",
+        "Never",
+        "Always_IncludingTankersRefuellingTankers",
+        "inherit",
+        0,
+        1,
+        2,
+    }
+    nuclear_use = schema_branches(property_schema("cmo_doctrine_set", "nuclear_use"))
+    assert any(branch.get("type") == "boolean" for branch in nuclear_use)
+    assert any(branch.get("const") == "inherit" for branch in nuclear_use)
 
     doctrine_boolean = any_of("cmo_doctrine_set", "engage_opportunity_targets")
     assert any(branch.get("type") == "boolean" for branch in doctrine_boolean)
     assert any(branch.get("const") == "inherit" for branch in doctrine_boolean)
 
     for tool_name in {"cmo_doctrine_wra_get", "cmo_doctrine_wra_set"}:
-        target_type = any_of(tool_name, "target_type")
+        target_type_schema = property_schema(tool_name, "target_type")
+        target_type = schema_branches(target_type_schema)
         assert any(
             branch.get("type") == "string" and branch.get("minLength") == 1
             for branch in target_type
         )
         assert any(branch.get("type") == "integer" for branch in target_type)
+        assert any(
+            "runtime/readback" in str(branch.get("description", "")) for branch in target_type
+        )
+
+    expected_salvo_tokens = {"inherit", "system", "max", "none"}
+    for field_name in ("weapons_per_salvo", "shooters_per_salvo"):
+        field_schema = property_schema("cmo_doctrine_wra_set", field_name)
+        branches = cast(list[JsonValue], field_schema["anyOf"])
+        salvo_enum_values = next(
+            cast(list[JsonValue], cast(dict[str, JsonValue], branch)["enum"])
+            for branch in branches
+            if "enum" in cast(dict[str, JsonValue], branch)
+        )
+        assert set(salvo_enum_values) == expected_salvo_tokens
+        assert all(
+            cast(dict[str, JsonValue], branch).get("minimum") == 0
+            for branch in branches
+            if cast(dict[str, JsonValue], branch).get("type") in {"integer", "number"}
+        )
+        assert "non-negative number" in str(field_schema["description"])
+
+    firing_range_schema = property_schema("cmo_doctrine_wra_set", "firing_range")
+    firing_range_branches = cast(list[JsonValue], firing_range_schema["anyOf"])
+    firing_range_tokens = next(
+        cast(list[JsonValue], cast(dict[str, JsonValue], branch)["enum"])
+        for branch in firing_range_branches
+        if "enum" in cast(dict[str, JsonValue], branch)
+    )
+    assert set(firing_range_tokens) == {
+        "inherit",
+        "max",
+        "none",
+        "25ofmax",
+        "50ofmax",
+        "75ofmax",
+    }
+    assert "system" not in firing_range_tokens
+    assert "system is not valid" in str(firing_range_schema["description"])
+
+    self_defence_schema = property_schema("cmo_doctrine_wra_set", "self_defence_range")
+    self_defence_branches = cast(list[JsonValue], self_defence_schema["anyOf"])
+    self_defence_tokens = next(
+        cast(list[JsonValue], cast(dict[str, JsonValue], branch)["enum"])
+        for branch in self_defence_branches
+        if "enum" in cast(dict[str, JsonValue], branch)
+    )
+    assert set(self_defence_tokens) == expected_salvo_tokens
+    assert "self-defence-range" in str(self_defence_schema["description"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "attack_throttle_aircraft": "Military",
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "group_size": 5,
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "strike_min_distance_aircraft": "20",
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "arming_delay": "0:24:00:00",
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "strike_minimum_trigger": "hostile",
+            },
+        ),
+        (
+            "cmo_mission_cargo_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "action": "assign",
+                "cargo_kind": "object",
+                "dbid": 6001,
+                "object_type": 1,
+                "cargo_guid": "CARGO-1",
+            },
+        ),
+        (
+            "cmo_unit_set",
+            {"unit_guid": "UNIT-1", "manual_throttle": 2.5},
+        ),
+        (
+            "cmo_unit_add",
+            {
+                "side_guid": "SIDE-1",
+                "unit_type": "Submarine",
+                "dbid": 1,
+                "name": "Alpha",
+                "latitude": 1,
+                "longitude": 2,
+            },
+        ),
+        (
+            "cmo_doctrine_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "bvr_logic": "Aggressive",
+            },
+        ),
+        (
+            "cmo_doctrine_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "weapon_control_air": True,
+            },
+        ),
+        (
+            "cmo_doctrine_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "refuel_unrep": 2.0,
+            },
+        ),
+        (
+            "cmo_doctrine_wra_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "target_type": "Air_Contact_Unknown_Type",
+                "weapon_dbid": 2001,
+                "weapons_per_salvo": "automatic",
+                "shooters_per_salvo": "max",
+                "firing_range": "75ofmax",
+                "self_defence_range": "none",
+            },
+        ),
+        (
+            "cmo_doctrine_wra_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "target_type": "Air_Contact_Unknown_Type",
+                "weapon_dbid": 2001,
+                "weapons_per_salvo": "SYSTEM",
+                "shooters_per_salvo": "max",
+                "firing_range": "50ofmax",
+                "self_defence_range": "none",
+            },
+        ),
+        (
+            "cmo_scenario_time_compression_set",
+            {"code": True},
+        ),
+        (
+            "cmo_time_set",
+            {"state": "running", "rate_code": 2.0},
+        ),
+        (
+            "cmo_doctrine_wra_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "target_type": "Air_Contact_Unknown_Type",
+                "weapon_dbid": 2001,
+                "weapons_per_salvo": "inherit",
+                "shooters_per_salvo": "max",
+                "firing_range": "system",
+                "self_defence_range": "none",
+            },
+        ),
+        (
+            "cmo_doctrine_wra_set",
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                "target_type": "Air_Contact_Unknown_Type",
+                "weapon_dbid": 2001,
+                "weapons_per_salvo": -1,
+                "shooters_per_salvo": "max",
+                "firing_range": "50ofmax",
+                "self_defence_range": "none",
+            },
+        ),
+    ],
+)
+async def test_mcp_rejects_unknown_enums_before_queue_submission(
+    tool_name: str,
+    arguments: dict[str, JsonValue],
+) -> None:
+    application = _FakeApplication({})
+    server = create_mcp_server(application)
+
+    with pytest.raises(ToolError):
+        await server.call_tool(tool_name, arguments)
+
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("tool_name", "arguments"),
+    [
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "active": 1,
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "one_third_rule": "false",
+            },
+        ),
+        (
+            "cmo_mission_update",
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "transit_altitude_aircraft": True,
+            },
+        ),
+        (
+            "cmo_unit_set",
+            {
+                "unit_guid": "UNIT-1",
+                "speed": True,
+            },
+        ),
+    ],
+)
+async def test_mcp_rejects_coercive_mutation_scalars_before_queue_submission(
+    tool_name: str,
+    arguments: dict[str, JsonValue],
+) -> None:
+    application = _FakeApplication({})
+    server = create_mcp_server(application)
+
+    with pytest.raises(ToolError):
+        await server.call_tool(tool_name, arguments)
+
+    assert application.calls == []
+    assert application.submissions == []
 
 
 @pytest.mark.asyncio
@@ -1579,7 +2056,7 @@ async def test_campaign_extension_tools_map_to_operations_and_structured_results
                 "action": "assign",
                 "cargo_kind": "object",
                 "dbid": 6001,
-                "object_type": 1,
+                "object_type": 2,
                 "cargo_guid": "CARGO-1",
             },
         ),
@@ -1716,7 +2193,7 @@ async def test_campaign_extension_tools_map_to_operations_and_structured_results
                 "action": "assign",
                 "cargo_kind": "object",
                 "dbid": 6001,
-                "object_type": 1,
+                "object_type": 2,
                 "cargo_guid": "CARGO-1",
                 "quantity": None,
             },
@@ -1789,7 +2266,7 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
             "force_speed": True,
             "desired_heading": 180.0,
             "move_to": True,
-            "manual_throttle": 2.5,
+            "manual_throttle": 2,
             "manual_speed": 12.0,
             "manual_altitude": -60.0,
             "hold_position": False,
@@ -1816,8 +2293,8 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
             "transit_throttle_submarine": "Loiter",
             "station_throttle_aircraft": "Loiter",
             "station_throttle_ship": "Loiter",
-            "station_throttle_submarine": "Creep",
-            "attack_throttle_aircraft": "Military",
+            "station_throttle_submarine": "Loiter",
+            "attack_throttle_aircraft": "Full",
             "attack_throttle_ship": "Full",
             "attack_throttle_submarine": "Full",
             "transit_altitude_aircraft": 9_000.0,
@@ -1826,7 +2303,7 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
             "transit_depth_submarine": -80.0,
             "station_depth_submarine": -120.0,
             "attack_depth_submarine": -60.0,
-            "strike_minimum_trigger": "3",
+            "strike_minimum_trigger": 3,
             "strike_max_flights": 4,
             "strike_auto_planner": True,
             "strike_min_distance_aircraft": 20.0,
@@ -1890,7 +2367,7 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
                 "force_speed": True,
                 "desired_heading": 180.0,
                 "move_to": True,
-                "manual_throttle": 2.5,
+                "manual_throttle": 2,
                 "manual_speed": 12.0,
                 "manual_altitude": -60.0,
                 "hold_position": False,
@@ -1919,8 +2396,8 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
                 "transit_throttle_submarine": "Loiter",
                 "station_throttle_aircraft": "Loiter",
                 "station_throttle_ship": "Loiter",
-                "station_throttle_submarine": "Creep",
-                "attack_throttle_aircraft": "Military",
+                "station_throttle_submarine": "Loiter",
+                "attack_throttle_aircraft": "Full",
                 "attack_throttle_ship": "Full",
                 "attack_throttle_submarine": "Full",
                 "transit_altitude_aircraft": 9_000.0,
@@ -1929,7 +2406,7 @@ async def test_existing_tools_forward_extended_campaign_options() -> None:
                 "transit_depth_submarine": -80.0,
                 "station_depth_submarine": -120.0,
                 "attack_depth_submarine": -60.0,
-                "strike_minimum_trigger": "3",
+                "strike_minimum_trigger": 3,
                 "strike_max_flights": 4,
                 "strike_auto_planner": True,
                 "strike_min_distance_aircraft": 20.0,

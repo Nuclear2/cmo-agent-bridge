@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
-from typing import Annotated, Literal, Protocol, TypeVar, cast
+from typing import Annotated, Any, Literal, Protocol, TypeVar, cast
 from uuid import UUID
 
 from mcp.server.fastmcp import FastMCP
@@ -34,36 +34,55 @@ from cmo_agent_bridge.mcp_runtime import (
     McpTimeState,
 )
 from cmo_agent_bridge.operations.models import (
+    ArmingDelayValue,
+    BatteryRechargeUpdateValue,
     BridgeStatusResult,
+    BvrLogicUpdateValue,
     CargoTransferItem,
     ContactDetailResult,
     ContactResult,
+    ContactType,
     ContactWeaponAllocationsResult,
     CourseWaypoint,
-    DoctrineSettingValue,
+    DippingSonarUpdateValue,
+    DoctrineBooleanUpdateValue,
+    DoctrineRefuelUnrepUpdateValue,
     DoctrineResult,
     DoctrineWraResult,
+    EngagingAmbiguousTargetsUpdateValue,
     EmconValue,
     FlightSize,
+    FuelStatePlannedUpdateValue,
+    GroupSize,
+    ManualThrottleValue,
     MissionCategory,
     MissionDetails,
     MissionFlightPlanListResult,
     MissionResult,
+    MissionResultClass,
+    MissionCargoObjectType,
+    MissionLayingMethodUpdateValue,
+    MissionLoopTypeUpdateValue,
+    MissionThrottleValue,
     MissionStageValue,
     MinimumAircraftRequired,
-    NuclearUseValue,
+    NonNegativeMissionDistanceValue,
+    NuclearUseUpdateValue,
     OrderedReferencePointGuidList,
     PagedResult,
     ReferencePointResult,
     ReferencePointAnchorType,
     ReferencePointBearingType,
     RefuelUnrepValue,
+    RtbBehaviorUpdateValue,
+    ScenarioTimeCompressionCode,
     ScenarioResult,
     ScenarioContextResult,
     ScoreResult,
     SidePostureResult,
     SideResult,
     SpecialActionListResult,
+    StrikeMinimumTriggerValue,
     UnitCombatStatusResult,
     UnitCatalogResult,
     UnitEngagementOptionsResult,
@@ -72,9 +91,22 @@ from cmo_agent_bridge.operations.models import (
     UnitOperationalStatusBatchResult,
     UnitOverviewResult,
     UnitResult,
+    UnitAddType,
+    UnitThrottleValue,
+    UnitTypeFilter,
+    UuidValue,
     TankerUsage,
-    WraSettingValue,
+    UseAipUpdateValue,
+    WraFiringRangeSettingValue,
+    WraSalvoSettingValue,
+    WraSelfDefenceRangeSettingValue,
+    WraTargetTypeValue,
+    WeaponStatePlannedUpdateValue,
     WeaponControlUpdateValue,
+    WithdrawOnAttackUpdateValue,
+    WithdrawOnDamageUpdateValue,
+    WithdrawOnDefenceUpdateValue,
+    WithdrawOnFuelUpdateValue,
 )
 from cmo_agent_bridge.scenario_authoring_mcp import register_scenario_authoring_tools
 
@@ -158,7 +190,6 @@ class McpApplicationPort(ApplicationPort, Protocol):
 
 
 ResultModelT = TypeVar("ResultModelT", bound=BaseModel)
-DoctrineBooleanUpdateValue = bool | Literal["inherit"]
 
 
 def _read_only_annotations() -> ToolAnnotations:
@@ -279,6 +310,21 @@ def _queued_mutation_description(description: str) -> str:
         "not return CMO's eventual result. Use cmo_request_get or cmo_request_wait with the "
         "returned request_id to inspect that result. A wait timeout does not cancel the request."
     )
+
+
+def _require_strict_mcp_inputs(server: FastMCP[None]) -> None:
+    """Make JSON scalar validation match the registered public schemas."""
+
+    manager = cast(Any, server)._tool_manager
+    for tool in manager.list_tools():
+        argument_model = tool.fn_metadata.arg_model
+        argument_model.model_config = {
+            **argument_model.model_config,
+            "strict": True,
+            "allow_inf_nan": False,
+        }
+        argument_model.model_rebuild(force=True)
+        tool.parameters = argument_model.model_json_schema(by_alias=True)
 
 
 def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
@@ -447,7 +493,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def time_set(
         state: Literal["paused", "running"],
-        rate_code: Annotated[int | None, Field(ge=0, le=5)] = None,
+        rate_code: ScenarioTimeCompressionCode | None = None,
     ) -> McpTimeSetResult:
         try:
             return await application.time_set(state=state, rate_code=rate_code)
@@ -470,7 +516,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     )
 
     async def simulation_pulse(
-        request_ids: tuple[UUID, ...] = (),
+        request_ids: Annotated[tuple[UuidValue, ...], Field(strict=False)] = (),
         handshake: bool = False,
         accept_lineage_id: str | None = None,
         timeout_seconds: Annotated[float, Field(gt=0, le=120)] = 10.0,
@@ -491,19 +537,22 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         title="Pulse a paused CMO simulation",
         description=(
             "Only from an already paused simulation, require request_ids to include every current "
-            "non-terminal durable request, then run at 1x until that complete set is terminal "
-            "and/or a bridge handshake completes. timeout_seconds bounds the work wait after "
-            "verified release; final pause and rate-restoration cleanup may extend total duration. "
-            "Handshake and request completion still require the mounted Regular Time poll. "
-            "The result reports whether re-pause and prior compression restoration were verified. "
-            "The tool never cancels or resubmits a queued request. Use ordinary calls without this "
-            "pulse while CMO is already running."
+            "non-terminal durable request and require no unresolved quarantine barrier. Run at 1x "
+            "until every selected request is completed and/or a bridge handshake completes. "
+            "Rejected, cancelled, or quarantined requests are failures; a barrier present before "
+            "release prevents release, and one appearing during the pulse ends the work wait "
+            "immediately. timeout_seconds bounds the work wait after verified release; final pause "
+            "and rate-restoration cleanup may extend total duration. Handshake and request "
+            "completion still require the mounted Regular Time poll. The result reports whether "
+            "re-pause and prior compression restoration were verified. The tool never cancels or "
+            "resubmits a queued request. Use ordinary calls without this pulse while CMO is "
+            "already running."
         ),
         annotations=_non_idempotent_mutation_annotations(),
         structured_output=True,
     )
 
-    async def request_get(request_id: UUID) -> QueuedOperationStatus:
+    async def request_get(request_id: UuidValue) -> QueuedOperationStatus:
         try:
             return await application.queue_get(request_id)
         except BridgeError as error:
@@ -522,7 +571,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     )
 
     async def request_wait(
-        request_id: UUID,
+        request_id: UuidValue,
         timeout_seconds: Annotated[float, Field(ge=0)],
     ) -> QueueWaitResult:
         try:
@@ -559,7 +608,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         structured_output=True,
     )
 
-    async def request_cancel(request_id: UUID) -> CancelQueuedOperationResult:
+    async def request_cancel(request_id: UuidValue) -> CancelQueuedOperationResult:
         try:
             return await application.queue_cancel(request_id)
         except BridgeError as error:
@@ -628,7 +677,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     )
 
     async def scenario_time_compression_set(
-        code: Annotated[int, Field(ge=0, le=5)],
+        code: ScenarioTimeCompressionCode,
     ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
@@ -698,7 +747,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_name: str | None = None,
         page_size: Annotated[int, Field(ge=1, le=500)] = 100,
         cursor: str | None = None,
-        unit_type: str | None = None,
+        unit_type: UnitTypeFilter | None = None,
         name_contains: str | None = None,
     ) -> PagedResult[UnitResult]:
         return await _invoke(
@@ -734,7 +783,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_name: str | None = None,
         page_size: Annotated[int, Field(ge=1, le=500)] = 500,
         cursor: str | None = None,
-        unit_type: str | None = None,
+        unit_type: UnitTypeFilter | None = None,
         name_contains: str | None = None,
     ) -> UnitCatalogResult:
         return await _invoke(
@@ -770,7 +819,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         page_size: Annotated[int, Field(ge=1, le=50)] = 40,
         cursor: str | None = None,
         unit_guids: Annotated[list[str] | None, Field(min_length=1, max_length=500)] = None,
-        unit_type: str | None = None,
+        unit_type: UnitTypeFilter | None = None,
         name_contains: str | None = None,
     ) -> CallToolResult:
         result = await _invoke(
@@ -1069,11 +1118,11 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         altitude: float | None = None,
         depth: float | None = None,
         heading: Annotated[float | None, Field(ge=0, le=360)] = None,
-        throttle: str | None = None,
+        throttle: UnitThrottleValue | None = None,
         force_speed: bool | None = None,
         desired_heading: Annotated[float | None, Field(ge=0, le=360)] = None,
         move_to: bool | None = None,
-        manual_throttle: str | float | None = None,
+        manual_throttle: ManualThrottleValue | None = None,
         manual_speed: str | float | None = None,
         manual_altitude: str | float | None = None,
         hold_position: bool | None = None,
@@ -1376,7 +1425,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_name: str | None = None,
         page_size: Annotated[int, Field(ge=1, le=500)] = 100,
         cursor: str | None = None,
-        contact_type: str | None = None,
+        contact_type: ContactType | None = None,
     ) -> PagedResult[ContactResult]:
         return await _invoke(
             application,
@@ -1485,7 +1534,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         side_name: str | None = None,
         page_size: Annotated[int, Field(ge=1, le=500)] = 100,
         cursor: str | None = None,
-        mission_class: str | None = None,
+        mission_class: MissionResultClass | None = None,
         category: MissionCategory | None = None,
     ) -> PagedResult[MissionResult]:
         return await _invoke(
@@ -1655,9 +1704,9 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def doctrine_get(
         scope: Literal["side", "unit", "mission"],
-        side_guid: str | None = None,
-        unit_guid: str | None = None,
-        mission_guid: str | None = None,
+        side_guid: Annotated[str | None, Field(min_length=1)] = None,
+        unit_guid: Annotated[str | None, Field(min_length=1)] = None,
+        mission_guid: Annotated[str | None, Field(min_length=1)] = None,
         actual: bool = True,
     ) -> DoctrineResult:
         return await _invoke(
@@ -1689,7 +1738,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         mission_guid: Annotated[str | None, Field(min_length=1)] = None,
         weapon_dbid: Annotated[int | None, Field(ge=1)] = None,
         contact_guid: Annotated[str | None, Field(min_length=1)] = None,
-        target_type: Annotated[str, Field(min_length=1)] | int | None = None,
+        target_type: WraTargetTypeValue | None = None,
         full_wra: bool = False,
     ) -> DoctrineWraResult:
         return await _invoke(
@@ -1722,7 +1771,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def unit_add(
         side_guid: Annotated[str, Field(min_length=1)],
-        unit_type: Annotated[str, Field(min_length=1)],
+        unit_type: UnitAddType,
         dbid: Annotated[int, Field(ge=1)],
         name: Annotated[str, Field(min_length=1)],
         base_guid: Annotated[str | None, Field(min_length=1)] = None,
@@ -1809,40 +1858,40 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         reference_point_guids: OrderedReferencePointGuidList | None = None,
         prosecution_zone_reference_point_guids: OrderedReferencePointGuidList | None = None,
         destination_guid: Annotated[str | None, Field(min_length=1)] = None,
-        loop_type: Annotated[int | None, Field(ge=0, le=2)] = None,
+        loop_type: MissionLoopTypeUpdateValue | None = None,
         active_emcon: bool | None = None,
         check_opa: bool | None = None,
         check_wwr: bool | None = None,
-        group_size: Annotated[int | None, Field(ge=1)] = None,
+        group_size: GroupSize | None = None,
         use_group_size: bool | None = None,
-        transit_throttle_aircraft: MissionStageValue | None = None,
-        transit_throttle_ship: MissionStageValue | None = None,
-        transit_throttle_submarine: MissionStageValue | None = None,
-        station_throttle_aircraft: MissionStageValue | None = None,
-        station_throttle_ship: MissionStageValue | None = None,
-        station_throttle_submarine: MissionStageValue | None = None,
-        attack_throttle_aircraft: MissionStageValue | None = None,
-        attack_throttle_ship: MissionStageValue | None = None,
-        attack_throttle_submarine: MissionStageValue | None = None,
+        transit_throttle_aircraft: MissionThrottleValue | None = None,
+        transit_throttle_ship: MissionThrottleValue | None = None,
+        transit_throttle_submarine: MissionThrottleValue | None = None,
+        station_throttle_aircraft: MissionThrottleValue | None = None,
+        station_throttle_ship: MissionThrottleValue | None = None,
+        station_throttle_submarine: MissionThrottleValue | None = None,
+        attack_throttle_aircraft: MissionThrottleValue | None = None,
+        attack_throttle_ship: MissionThrottleValue | None = None,
+        attack_throttle_submarine: MissionThrottleValue | None = None,
         transit_altitude_aircraft: MissionStageValue | None = None,
         station_altitude_aircraft: MissionStageValue | None = None,
         attack_altitude_aircraft: MissionStageValue | None = None,
         transit_depth_submarine: MissionStageValue | None = None,
         station_depth_submarine: MissionStageValue | None = None,
         attack_depth_submarine: MissionStageValue | None = None,
-        strike_minimum_trigger: Annotated[str, Field(min_length=1)] | None = None,
+        strike_minimum_trigger: StrikeMinimumTriggerValue | None = None,
         strike_max_flights: Annotated[int | None, Field(ge=0)] = None,
         strike_auto_planner: bool | None = None,
-        strike_min_distance_aircraft: MissionStageValue | None = None,
-        strike_max_distance_aircraft: MissionStageValue | None = None,
-        strike_min_distance_ship: MissionStageValue | None = None,
-        strike_max_distance_ship: MissionStageValue | None = None,
+        strike_min_distance_aircraft: NonNegativeMissionDistanceValue | None = None,
+        strike_max_distance_aircraft: NonNegativeMissionDistanceValue | None = None,
+        strike_min_distance_ship: NonNegativeMissionDistanceValue | None = None,
+        strike_max_distance_ship: NonNegativeMissionDistanceValue | None = None,
         focus_on_strike: bool | None = None,
-        arming_delay: str | None = None,
+        arming_delay: ArmingDelayValue | None = None,
         mines_per_set: Annotated[int | None, Field(ge=1)] = None,
         mine_spacing_m: Annotated[float | None, Field(ge=0)] = None,
         set_spacing_m: Annotated[float | None, Field(ge=0)] = None,
-        laying_method: Literal[0, 1] | None = None,
+        laying_method: MissionLayingMethodUpdateValue | None = None,
         cargo_subtype: Literal["transfer", "delivery"] | None = None,
         move_all_cargo: bool | None = None,
         allow_ground_self_delivery: bool | None = None,
@@ -1918,7 +1967,10 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         title="Update CMO mission",
         description=_queued_mutation_description(
             "Update activation, schedule, force grouping, movement profiles, patrol behavior, "
-            "strike limits, mining options, cargo options, or ordered mission zones."
+            "strike limits, mining options, cargo options, or ordered mission zones. Finite values "
+            "must use the exact enums in the input schema. Field applicability is checked against "
+            "the current mission class before CMO's mutation barrier; do not transfer Patrol, "
+            "Support, Strike, Ferry, Mining, MineClear, or Cargo options between classes."
         ),
         annotations=_mutation_annotations(),
         structured_output=True,
@@ -2101,7 +2153,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         action: Literal["assign", "unassign"],
         cargo_kind: Literal["mount", "object"],
         dbid: Annotated[int, Field(ge=1)],
-        object_type: Annotated[int | None, Field(ge=1, le=5)] = None,
+        object_type: MissionCargoObjectType | None = None,
         cargo_guid: Annotated[str | None, Field(min_length=1)] = None,
         quantity: Annotated[int | None, Field(ge=1)] = None,
     ) -> QueuedOperationReceipt:
@@ -2135,35 +2187,35 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
 
     async def doctrine_set(
         scope: Literal["side", "unit", "mission"],
-        side_guid: str | None = None,
-        unit_guid: str | None = None,
-        mission_guid: str | None = None,
+        side_guid: Annotated[str | None, Field(min_length=1)] = None,
+        unit_guid: Annotated[str | None, Field(min_length=1)] = None,
+        mission_guid: Annotated[str | None, Field(min_length=1)] = None,
         weapon_control_air: WeaponControlUpdateValue | None = None,
         weapon_control_surface: WeaponControlUpdateValue | None = None,
         weapon_control_subsurface: WeaponControlUpdateValue | None = None,
         weapon_control_land: WeaponControlUpdateValue | None = None,
-        nuclear_use: NuclearUseValue | None = None,
-        refuel_unrep: RefuelUnrepValue | None = None,
+        nuclear_use: NuclearUseUpdateValue | None = None,
+        refuel_unrep: DoctrineRefuelUnrepUpdateValue | None = None,
         engage_opportunity_targets: DoctrineBooleanUpdateValue | None = None,
         automatic_evasion: DoctrineBooleanUpdateValue | None = None,
         ignore_plotted_course: DoctrineBooleanUpdateValue | None = None,
         ignore_emcon_while_under_attack: DoctrineBooleanUpdateValue | None = None,
         maintain_standoff: DoctrineBooleanUpdateValue | None = None,
         use_sams_in_anti_surface_mode: DoctrineBooleanUpdateValue | None = None,
-        engaging_ambiguous_targets: DoctrineSettingValue | None = None,
-        fuel_state_planned: DoctrineSettingValue | None = None,
-        fuel_state_rtb: DoctrineSettingValue | None = None,
-        weapon_state_planned: DoctrineSettingValue | None = None,
-        weapon_state_rtb: DoctrineSettingValue | None = None,
-        withdraw_on_attack: DoctrineSettingValue | None = None,
-        withdraw_on_damage: DoctrineSettingValue | None = None,
-        withdraw_on_defence: DoctrineSettingValue | None = None,
-        withdraw_on_fuel: DoctrineSettingValue | None = None,
-        bvr_logic: DoctrineSettingValue | None = None,
-        dipping_sonar: DoctrineSettingValue | None = None,
-        use_aip: DoctrineSettingValue | None = None,
-        recharge_on_attack: DoctrineSettingValue | None = None,
-        recharge_on_patrol: DoctrineSettingValue | None = None,
+        engaging_ambiguous_targets: EngagingAmbiguousTargetsUpdateValue | None = None,
+        fuel_state_planned: FuelStatePlannedUpdateValue | None = None,
+        fuel_state_rtb: RtbBehaviorUpdateValue | None = None,
+        weapon_state_planned: WeaponStatePlannedUpdateValue | None = None,
+        weapon_state_rtb: RtbBehaviorUpdateValue | None = None,
+        withdraw_on_attack: WithdrawOnAttackUpdateValue | None = None,
+        withdraw_on_damage: WithdrawOnDamageUpdateValue | None = None,
+        withdraw_on_defence: WithdrawOnDefenceUpdateValue | None = None,
+        withdraw_on_fuel: WithdrawOnFuelUpdateValue | None = None,
+        bvr_logic: BvrLogicUpdateValue | None = None,
+        dipping_sonar: DippingSonarUpdateValue | None = None,
+        use_aip: UseAipUpdateValue | None = None,
+        recharge_on_attack: BatteryRechargeUpdateValue | None = None,
+        recharge_on_patrol: BatteryRechargeUpdateValue | None = None,
     ) -> QueuedOperationReceipt:
         updates: dict[str, JsonValue] = {}
         for field_name, value in (
@@ -2225,14 +2277,14 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         scope: Literal["side", "unit", "mission"],
         side_guid: Annotated[str, Field(min_length=1)],
         weapon_dbid: Annotated[int, Field(ge=1)],
-        weapons_per_salvo: WraSettingValue,
-        shooters_per_salvo: WraSettingValue,
-        firing_range: WraSettingValue,
-        self_defence_range: WraSettingValue,
+        weapons_per_salvo: WraSalvoSettingValue,
+        shooters_per_salvo: WraSalvoSettingValue,
+        firing_range: WraFiringRangeSettingValue,
+        self_defence_range: WraSelfDefenceRangeSettingValue,
         unit_guid: Annotated[str | None, Field(min_length=1)] = None,
         mission_guid: Annotated[str | None, Field(min_length=1)] = None,
         contact_guid: Annotated[str | None, Field(min_length=1)] = None,
-        target_type: Annotated[str, Field(min_length=1)] | int | None = None,
+        target_type: WraTargetTypeValue | None = None,
     ) -> QueuedOperationReceipt:
         return await _invoke(
             application,
@@ -2362,6 +2414,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     )
 
     register_scenario_authoring_tools(server, application)
+    _require_strict_mcp_inputs(server)
     return server
 
 

@@ -4,6 +4,7 @@ import json
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -190,6 +191,303 @@ async def test_registers_the_complete_scenario_authoring_surface() -> None:
 
 
 @pytest.mark.asyncio
+async def test_side_options_schema_exposes_official_enums_and_descriptions() -> None:
+    server = _server(_FakeApplication([]))
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    schema = cast(dict[str, object], tools["cmo_side_options_set"].inputSchema)
+    properties = cast(dict[str, object], schema["properties"])
+
+    expected = {
+        "awareness": {
+            "Blind",
+            "Normal",
+            "AutoSideID",
+            "AutoSideAndUnitID",
+            "Omniscient",
+            -1,
+            0,
+            1,
+            2,
+            3,
+        },
+        "proficiency": {
+            "Novice",
+            "Cadet",
+            "Regular",
+            "Veteran",
+            "Ace",
+            0,
+            1,
+            2,
+            3,
+            4,
+        },
+    }
+
+    def enum_values(schema: dict[str, object]) -> set[object]:
+        values = set(cast(list[object], schema.get("enum", [])))
+        for branch in cast(list[object], schema.get("anyOf", [])):
+            values.update(enum_values(cast(dict[str, object], branch)))
+        return values
+
+    for field_name, expected_values in expected.items():
+        field_schema = cast(dict[str, object], properties[field_name])
+        branches = cast(list[object], field_schema["anyOf"])
+        value_branch = next(
+            cast(dict[str, object], branch)
+            for branch in branches
+            if cast(dict[str, object], branch).get("type") != "null"
+        )
+        assert enum_values(field_schema) == expected_values
+        assert "CMO side" in str(value_branch["description"])
+
+
+@pytest.mark.asyncio
+async def test_event_component_schema_exposes_official_types_and_parameter_contract() -> None:
+    server = _server(_FakeApplication([]))
+    tools = {tool.name: tool for tool in await server.list_tools()}
+    schema = cast(dict[str, object], tools["cmo_event_component_set"].inputSchema)
+    properties = cast(dict[str, object], schema["properties"])
+    event_list_schema = cast(dict[str, object], tools["cmo_event_list"].inputSchema)
+    event_list_properties = cast(dict[str, object], event_list_schema["properties"])
+    assert cast(dict[str, object], event_list_properties["level"])["enum"] == [0, 1, 2, 3, 4]
+    component_schema = cast(dict[str, object], properties["component_type"])
+    branches = cast(list[object], component_schema["anyOf"])
+    enum_sets = [
+        set(cast(list[object], cast(dict[str, object], branch)["enum"]))
+        for branch in branches
+        if "enum" in cast(dict[str, object], branch)
+    ]
+
+    assert {
+        "Points",
+        "RandomTime",
+        "RegularTime",
+        "ScenEnded",
+        "ScenLoaded",
+        "Time",
+        "UnitDamaged",
+        "UnitDestroyed",
+        "UnitDetected",
+        "UnitEmissions",
+        "UnitEntersArea",
+        "UnitRemainsInArea",
+        "UnitBaseStatus",
+        "UnitCargoMoved",
+    } in enum_sets
+    assert {"LuaScript", "ScenHasStarted", "SidePosture"} in enum_sets
+    assert {
+        "ChangeMissionStatus",
+        "EndScenario",
+        "LuaScript",
+        "Message",
+        "Points",
+        "TeleportInArea",
+    } in enum_sets
+    assert (
+        "official type-specific fields"
+        in str(cast(dict[str, object], properties["parameters"])["description"]).lower()
+    )
+    description = str(tools["cmo_event_component_set"].description)
+    assert "Message=SideID+Text" in description
+    assert "UnitCargoMoved=CargoFilter plus at least one" in description
+    assert "lists the selected component" in description
+    assert "exactly match the listed component type" in description
+    parameter_schema = cast(dict[str, object], properties["parameters"])
+    parameter_branches = cast(list[object], parameter_schema["anyOf"])
+    parameter_refs = {
+        cast(dict[str, object], branch).get("$ref")
+        for branch in parameter_branches
+        if cast(dict[str, object], branch).get("type") != "null"
+    }
+    assert len(parameter_refs) == 23
+
+    definitions = cast(dict[str, object], schema["$defs"])
+    target_filter = cast(dict[str, object], definitions["EventTargetFilter"])
+    cargo_filter = cast(dict[str, object], definitions["EventCargoFilter"])
+    assert target_filter["additionalProperties"] is False
+    assert cargo_filter["additionalProperties"] is False
+    assert set(cast(dict[str, object], target_filter["properties"])) == {
+        "TargetSide",
+        "TargetType",
+        "TargetSubType",
+        "SpecificUnitClass",
+        "SpecificUnitID",
+    }
+    cargo_target_type = cast(
+        dict[str, object],
+        cast(dict[str, object], cargo_filter["properties"])["TargetType"],
+    )
+    cargo_enums = [
+        cast(dict[str, object], branch).get("enum")
+        for branch in cast(list[object], cargo_target_type["anyOf"])
+    ]
+    assert [0, 1000, 2000, 3000, 4000, 5000] in cargo_enums
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "component_type"),
+    [
+        ("trigger", "Message"),
+        ("condition", "UnitDestroyed"),
+        ("action", "ScenHasStarted"),
+        ("action", "UnknownAction"),
+    ],
+)
+async def test_event_component_types_are_rejected_before_submission(
+    kind: str,
+    component_type: str,
+) -> None:
+    application = _FakeApplication([])
+    server = _server(application)
+
+    with pytest.raises(ToolError):
+        await server.call_tool(
+            "cmo_event_component_set",
+            {
+                "kind": kind,
+                "mode": "add",
+                "component_id_or_name": "Invalid component",
+                "component_type": component_type,
+            },
+        )
+
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+async def test_event_component_update_parameters_require_type_hint() -> None:
+    application = _FakeApplication([])
+    server = _server(application)
+
+    with pytest.raises(ToolError, match="component update parameters require component_type"):
+        await server.call_tool(
+            "cmo_event_component_set",
+            {
+                "kind": "action",
+                "mode": "update",
+                "component_id_or_name": "ACTION-1",
+                "parameters": {"Text": "Updated"},
+            },
+        )
+
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+async def test_event_component_update_serializes_canonical_parameters() -> None:
+    application = _FakeApplication([_success(_authoring_result())])
+    server = _server(application)
+
+    await server.call_tool(
+        "cmo_event_component_set",
+        {
+            "kind": "trigger",
+            "mode": "update",
+            "component_id_or_name": "TRIGGER-1",
+            "component_type": "UnitDestroyed",
+            "parameters": {"TargetFilter": {"SpecificUnit": "UNIT-1"}},
+        },
+    )
+
+    assert application.calls == [
+        _lua_call(
+            "ScenEdit_SetTrigger",
+            {
+                "mode": "update",
+                "component_id_or_name": "TRIGGER-1",
+                "component_type": "UnitDestroyed",
+                "new_description": None,
+                "parameters_json": '{"TargetFilter":{"SpecificUnitID":"UNIT-1"}}',
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "kind": "action",
+            "mode": "add",
+            "component_id_or_name": "Empty message",
+            "component_type": "Message",
+        },
+        {
+            "kind": "trigger",
+            "mode": "add",
+            "component_id_or_name": "Cargo without limit",
+            "component_type": "UnitCargoMoved",
+            "parameters": {"CargoFilter": {"TargetType": "Personnel"}},
+        },
+        {
+            "kind": "action",
+            "mode": "update",
+            "component_id_or_name": "ACTION-1",
+        },
+    ],
+)
+async def test_event_component_safe_minimum_is_enforced_before_submission(
+    payload: dict[str, JsonValue],
+) -> None:
+    application = _FakeApplication([])
+    server = _server(application)
+
+    with pytest.raises(ToolError):
+        await server.call_tool("cmo_event_component_set", payload)
+
+    assert application.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit_field", ["TargetLimitReceived", "TargetLimitSent"])
+async def test_event_component_cargo_add_accepts_either_limit(
+    limit_field: str,
+) -> None:
+    application = _FakeApplication([])
+    server = _server(application)
+
+    await server.call_tool(
+        "cmo_event_component_set",
+        {
+            "kind": "trigger",
+            "mode": "add",
+            "component_id_or_name": f"Cargo {limit_field}",
+            "component_type": "UnitCargoMoved",
+            "parameters": {
+                "CargoFilter": {"TargetType": "Personnel"},
+                limit_field: 0,
+            },
+        },
+    )
+
+    parameters_json = json.dumps(
+        {
+            "CargoFilter": {"TargetType": "Personnel"},
+            limit_field: 0,
+        },
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    assert application.calls == [
+        _lua_call(
+            "ScenEdit_SetTrigger",
+            {
+                "mode": "add",
+                "component_id_or_name": f"Cargo {limit_field}",
+                "component_type": "UnitCargoMoved",
+                "new_description": None,
+                "parameters_json": parameters_json,
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_all_authoring_tools_map_arguments_to_the_application_port() -> None:
     weather = _weather_result()
     scenario = _scenario_result()
@@ -292,7 +590,6 @@ async def test_all_authoring_tools_map_arguments_to_the_application_port() -> No
             "new_description": "Update state",
             "parameters": {
                 "ScriptText": "local x = 1\nreturn x",
-                "Value": 2,
             },
         },
     )
@@ -347,7 +644,7 @@ async def test_all_authoring_tools_map_arguments_to_the_application_port() -> No
     )
 
     component_json = json.dumps(
-        {"ScriptText": "local x = 1\r\nreturn x", "Value": 2},
+        {"ScriptText": "local x = 1\r\nreturn x"},
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
@@ -571,7 +868,7 @@ async def test_component_parameters_cannot_override_trusted_envelope_fields() ->
     application = _FakeApplication([])
     server = _server(application)
 
-    with pytest.raises(ToolError, match="reserved envelope fields"):
+    with pytest.raises(ToolError, match="Extra inputs are not permitted"):
         await server.call_tool(
             "cmo_event_component_set",
             {
@@ -596,8 +893,50 @@ async def test_component_parameters_cannot_override_trusted_envelope_fields() ->
         ("cmo_scenario_timeline_set", {}),
         ("cmo_side_options_set", {"side_guid": "SIDE-1"}),
         (
+            "cmo_side_options_set",
+            {"side_guid": "SIDE-1", "awareness": "Godlike"},
+        ),
+        (
+            "cmo_side_options_set",
+            {"side_guid": "SIDE-1", "proficiency": 5},
+        ),
+        (
             "cmo_event_set",
             {"mode": "update", "event_id_or_name": "EVENT-1"},
+        ),
+        (
+            "cmo_event_set",
+            {
+                "mode": "update",
+                "event_id_or_name": "EVENT-1",
+                "active": "false",
+            },
+        ),
+        (
+            "cmo_event_set",
+            {
+                "mode": "update",
+                "event_id_or_name": "EVENT-1",
+                "probability": True,
+            },
+        ),
+        (
+            "cmo_scenario_weather_set",
+            {
+                "temperature_c": "20",
+                "rainfall": 0,
+                "undercloud_fraction": 0.2,
+                "sea_state": 2,
+            },
+        ),
+        (
+            "cmo_scenario_weather_set",
+            {
+                "temperature_c": 20,
+                "rainfall": float("inf"),
+                "undercloud_fraction": 0.2,
+                "sea_state": 2,
+            },
         ),
         (
             "cmo_event_component_link",

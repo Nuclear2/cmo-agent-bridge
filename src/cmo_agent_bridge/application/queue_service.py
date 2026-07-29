@@ -24,6 +24,7 @@ from cmo_agent_bridge.state.request_ledger import RequestLedger
 from cmo_agent_bridge.state.session_store import SessionRecord
 
 from .queue_models import (
+    ActiveQueueQuarantineBarrier,
     CancelQueuedOperationResult,
     QueueClock,
     QueueQuarantineResolution,
@@ -260,25 +261,55 @@ class QueueService:
             or any(item.barrier_active for item in resolutions),
         )
 
+    def active_quarantine_barriers(self) -> tuple[ActiveQueueQuarantineBarrier, ...]:
+        """Return active barriers without materialising terminal queue history."""
+
+        terminal_host_states = frozenset(
+            {
+                HostRequestState.COMPLETED,
+                HostRequestState.REJECTED,
+                HostRequestState.CANCELLED,
+                HostRequestState.RESOLVED,
+            }
+        )
+        candidates = self._ledger.list_requests(
+            root_key=self._root_key,
+            states=frozenset(HostRequestState) - terminal_host_states,
+        )
+        barriers: list[ActiveQueueQuarantineBarrier] = []
+        for ledger_record in candidates:
+            queued = self._queue_store.get(ledger_record.request_id)
+            queue_barrier = (
+                queued is not None
+                and queued.root_key == self._root_key
+                and queued.state is QueuedOperationState.QUARANTINED
+            )
+            if ledger_record.state is not HostRequestState.QUARANTINED and not queue_barrier:
+                continue
+            barriers.append(
+                ActiveQueueQuarantineBarrier(
+                    request_id=ledger_record.request_id,
+                    operation=ledger_record.operation,
+                    sequence=(
+                        queued.queue_sequence
+                        if queued is not None and queued.root_key == self._root_key
+                        else None
+                    ),
+                )
+            )
+        return tuple(
+            sorted(
+                barriers,
+                key=lambda item: (
+                    item.sequence is None,
+                    0 if item.sequence is None else item.sequence,
+                    str(item.request_id),
+                ),
+            )
+        )
+
     def _unresolved_quarantine_request_ids(self) -> tuple[UUID, ...]:
-        host_barriers = self._ledger.list_requests(
-            root_key=self._root_key,
-            states=frozenset({HostRequestState.QUARANTINED}),
-        )
-        quarantined = self._queue_store.list(
-            root_key=self._root_key,
-            states=frozenset({QueuedOperationState.QUARANTINED}),
-        )
-        request_ids = [record.request_id for record in host_barriers]
-        seen = set(request_ids)
-        for record in quarantined:
-            if (
-                record.request_id not in seen
-                and self._quarantine_resolution(record).barrier_active
-            ):
-                request_ids.append(record.request_id)
-                seen.add(record.request_id)
-        return tuple(request_ids)
+        return tuple(item.request_id for item in self.active_quarantine_barriers())
 
     def _status(self, record: QueuedOperationRecord) -> QueuedOperationStatus:
         resolution = (

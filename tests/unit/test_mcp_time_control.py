@@ -13,6 +13,8 @@ import cmo_agent_bridge.mcp_runtime as runtime_module
 from cmo_agent_bridge import __version__
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
+    ActiveQueueQuarantineBarrier,
+    QueueQuarantineResolution,
     QueuedOperationList,
     QueuedOperationStatus,
 )
@@ -120,6 +122,8 @@ def _queued_status(
     state: OperationQueueState,
     *,
     sequence: int,
+    quarantine_state: Literal["unresolved", "resolved"] | None = None,
+    barrier_active: bool = False,
 ) -> QueuedOperationStatus:
     terminal = state in {
         OperationQueueState.COMPLETED,
@@ -136,6 +140,16 @@ def _queued_status(
         started_at_ms=(20 if state is OperationQueueState.ACTIVE else None),
         completed_at_ms=(30 if terminal else None),
         result=({"accepted": True} if state is OperationQueueState.COMPLETED else None),
+        quarantine_resolution=(
+            None
+            if quarantine_state is None
+            else QueueQuarantineResolution(
+                state=quarantine_state,
+                disposition=("not_applied" if quarantine_state == "resolved" else None),
+                resolved_at_ms=(40 if quarantine_state == "resolved" else None),
+                barrier_active=barrier_active,
+            )
+        ),
     )
 
 
@@ -153,6 +167,7 @@ class _FakeQueueService:
         self.list_calls = 0
         self.nonterminal_list_calls = 0
         self.wait_calls = 0
+        self.barrier_calls = 0
 
     def get(self, *, request_id: UUID) -> QueuedOperationStatus:
         self.get_calls.append(request_id)
@@ -176,6 +191,21 @@ class _FakeQueueService:
             if status.state in {OperationQueueState.QUEUED, OperationQueueState.ACTIVE}
         )
         return QueuedOperationList(items=items)
+
+    def active_quarantine_barriers(self) -> tuple[ActiveQueueQuarantineBarrier, ...]:
+        self.barrier_calls += 1
+        return tuple(
+            ActiveQueueQuarantineBarrier(
+                request_id=status.request_id,
+                operation=status.operation,
+                sequence=status.sequence,
+            )
+            for status in sorted(self._current.values(), key=lambda item: item.sequence)
+            if status.state is OperationQueueState.QUARANTINED
+            and status.quarantine_resolution is not None
+            and status.quarantine_resolution.state == "unresolved"
+            and status.quarantine_resolution.barrier_active
+        )
 
     async def wait(self, *, request_id: UUID, timeout_seconds: float) -> None:
         del request_id, timeout_seconds
@@ -1065,6 +1095,268 @@ async def test_request_pulse_timeout_still_pauses_and_restores_prior_rate(
         ("play_1x", None),
         ("pause", None),
         ("set_rate", TimeRate.X150),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "quarantine_state", "barrier_active", "expected_message"),
+    [
+        (
+            OperationQueueState.REJECTED,
+            None,
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.CANCELLED,
+            None,
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.QUARANTINED,
+            "resolved",
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.QUARANTINED,
+            "unresolved",
+            True,
+            "simulation pulse stopped at an unresolved quarantine barrier",
+        ),
+    ],
+)
+async def test_request_pulse_refreshes_armed_fifo_head_and_blocks_failure_before_release(
+    state: OperationQueueState,
+    quarantine_state: Literal["unresolved", "resolved"] | None,
+    barrier_active: bool,
+    expected_message: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = _FakeQueueService(
+        {
+            _REQUEST_A: (
+                _queued_status(_REQUEST_A, OperationQueueState.QUEUED, sequence=1),
+                _queued_status(
+                    _REQUEST_A,
+                    state,
+                    sequence=1,
+                    quarantine_state=quarantine_state,
+                    barrier_active=barrier_active,
+                ),
+            ),
+            _REQUEST_B: (_queued_status(_REQUEST_B, OperationQueueState.QUEUED, sequence=2),),
+        }
+    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X30))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        queue_service=queue,
+    )
+    manager._queue_lifecycle_started = True  # pyright: ignore[reportPrivateUsage]
+
+    result = await asyncio.wait_for(
+        manager.simulation_pulse(
+            request_ids=(_REQUEST_A, _REQUEST_B),
+            timeout_seconds=120.0,
+        ),
+        timeout=1.0,
+    )
+
+    assert result.ok is False
+    assert result.released is False
+    assert result.timed_out is False
+    assert result.work_error is not None
+    assert result.work_error.code is ErrorCode.STATE_CONFLICT
+    assert result.work_error.message == expected_message
+    assert [item.state for item in result.requests] == [
+        state,
+        OperationQueueState.QUEUED,
+    ]
+    assert result.final_pause_verified is True
+    assert result.prior_rate_restored is True
+    assert queue.get_calls.count(_REQUEST_A) == 3
+    assert queue.get_calls.count(_REQUEST_B) == 2
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_request_pulse_detects_unselected_terminal_quarantine_before_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = _FakeQueueService(
+        {
+            _REQUEST_A: (
+                _queued_status(
+                    _REQUEST_A,
+                    OperationQueueState.QUARANTINED,
+                    sequence=1,
+                    quarantine_state="unresolved",
+                    barrier_active=True,
+                ),
+            ),
+            _REQUEST_B: (_queued_status(_REQUEST_B, OperationQueueState.QUEUED, sequence=2),),
+        }
+    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X30))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        queue_service=queue,
+    )
+
+    result = await manager.simulation_pulse(
+        request_ids=(_REQUEST_B,),
+        timeout_seconds=120.0,
+    )
+
+    assert result.ok is False
+    assert result.released is False
+    assert result.timed_out is False
+    assert result.requests[0].request_id == _REQUEST_B
+    assert result.requests[0].state is OperationQueueState.QUEUED
+    assert result.work_error is not None
+    assert result.work_error.code is ErrorCode.STATE_CONFLICT
+    assert result.work_error.details["barrier_request_ids"] == [str(_REQUEST_A)]
+    assert result.work_error.details["barrier_sequences"] == [1]
+    assert result.work_error.details["barriers"] == [
+        {
+            "request_id": str(_REQUEST_A),
+            "operation": "mission.create",
+            "sequence": 1,
+        }
+    ]
+    assert result.final_pause_verified is True
+    assert result.prior_rate_restored is True
+    assert queue.nonterminal_list_calls == 0
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "quarantine_state", "barrier_active", "expected_message"),
+    [
+        (
+            OperationQueueState.REJECTED,
+            None,
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.CANCELLED,
+            None,
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.QUARANTINED,
+            "resolved",
+            False,
+            "simulation pulse durable work did not complete successfully",
+        ),
+        (
+            OperationQueueState.QUARANTINED,
+            "unresolved",
+            True,
+            "simulation pulse stopped at an unresolved quarantine barrier",
+        ),
+    ],
+)
+@pytest.mark.parametrize("handshake", [False, True])
+async def test_initial_terminal_failed_request_pulse_is_failure_without_release(
+    state: OperationQueueState,
+    quarantine_state: Literal["unresolved", "resolved"] | None,
+    barrier_active: bool,
+    expected_message: str,
+    handshake: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = _FakeQueueService(
+        {
+            _REQUEST_A: (
+                _queued_status(
+                    _REQUEST_A,
+                    state,
+                    sequence=1,
+                    quarantine_state=quarantine_state,
+                    barrier_active=barrier_active,
+                ),
+            )
+        }
+    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        queue_service=queue,
+    )
+
+    result = await manager.simulation_pulse(
+        request_ids=(_REQUEST_A,),
+        handshake=handshake,
+    )
+
+    assert result.ok is False
+    assert result.released is False
+    assert result.timed_out is False
+    assert result.work_error is not None
+    assert result.work_error.code is ErrorCode.STATE_CONFLICT
+    assert result.work_error.message == expected_message
+    assert result.final_pause_verified is True
+    assert result.prior_rate_restored is True
+    assert result.handshake is None
+    assert application.calls == []
+    assert controller.calls == [("get_state", None)]
+
+
+@pytest.mark.asyncio
+async def test_request_pulse_rejected_after_release_is_structured_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    queue = _FakeQueueService(
+        {
+            _REQUEST_A: (
+                _queued_status(_REQUEST_A, OperationQueueState.QUEUED, sequence=1),
+                _queued_status(_REQUEST_A, OperationQueueState.ACTIVE, sequence=1),
+                _queued_status(_REQUEST_A, OperationQueueState.REJECTED, sequence=1),
+            )
+        }
+    )
+    controller = _FakeUiTimeController(_ui_state(SimulationRunState.PAUSED, TimeRate.X15))
+    manager, _queue, _application = _manager(
+        tmp_path,
+        monkeypatch,
+        controller=controller,
+        queue_service=queue,
+    )
+
+    result = await manager.simulation_pulse(request_ids=(_REQUEST_A,))
+
+    assert result.ok is False
+    assert result.released is True
+    assert result.timed_out is False
+    assert result.requests[0].state is OperationQueueState.REJECTED
+    assert result.work_error is not None
+    assert result.work_error.code is ErrorCode.STATE_CONFLICT
+    assert result.final_pause_verified is True
+    assert result.prior_rate_restored is True
+    assert controller.calls == [
+        ("get_state", None),
+        ("play_1x", None),
+        ("pause", None),
+        ("set_rate", TimeRate.X15),
     ]
 
 

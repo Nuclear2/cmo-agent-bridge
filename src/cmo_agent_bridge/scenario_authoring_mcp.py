@@ -7,7 +7,15 @@ from typing import Annotated, Literal, Protocol, TypeVar
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, Field, JsonValue, ValidationError
+from pydantic import (
+    BaseModel,
+    Field,
+    JsonValue,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    ValidationError,
+)
 
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import QueuedOperationReceipt
@@ -18,11 +26,15 @@ from cmo_agent_bridge.operations.models import (
 )
 from cmo_agent_bridge.operations.scenario_authoring import (
     AuthoringDataResult,
+    EventActionSetArgs,
+    EventComponentParameters,
+    EventComponentType,
     EventComponentLinkArgs,
-    EventComponentSetArgs,
+    EventConditionSetArgs,
     EventGetArgs,
     EventListArgs,
     EventSetArgs,
+    EventTriggerSetArgs,
     ScenarioTimelineSetArgs,
     ScenarioTitleSetArgs,
     ScenarioWeatherGetArgs,
@@ -30,11 +42,15 @@ from cmo_agent_bridge.operations.scenario_authoring import (
     ScenarioWeatherSetArgs,
     ScoreSetArgs,
     SideAddArgs,
+    SideAwarenessValue,
     SideOptionsSetArgs,
     SidePostureSetArgs,
+    SideProficiencyValue,
+    StrictEventLevel,
     SpecialActionAddArgs,
     SpecialActionSetArgs,
     normalize_script_newlines,
+    validate_event_component_type,
 )
 
 
@@ -189,8 +205,12 @@ def _lua_arguments(function: str, arguments: Mapping[str, JsonValue]) -> dict[st
     return {"function": function, "arguments": dict(arguments)}
 
 
-def _component_parameters_json(parameters: Mapping[str, JsonValue] | None) -> str:
-    normalized = dict(parameters or {})
+def _component_parameters_json(parameters: EventComponentParameters | None) -> str:
+    normalized = (
+        {}
+        if parameters is None
+        else parameters.model_dump(mode="json", by_alias=True, exclude_none=True)
+    )
     reserved = {
         "mode",
         "description",
@@ -257,10 +277,13 @@ def register_scenario_authoring_tools(
     )
 
     async def scenario_weather_set(
-        temperature_c: float,
-        rainfall: Annotated[float, Field(ge=0, le=50)],
-        undercloud_fraction: Annotated[float, Field(ge=0, le=1)],
-        sea_state: Annotated[int, Field(ge=0, le=9)],
+        temperature_c: Annotated[StrictFloat, Field(allow_inf_nan=False)],
+        rainfall: Annotated[StrictFloat, Field(ge=0, le=50, allow_inf_nan=False)],
+        undercloud_fraction: Annotated[
+            StrictFloat,
+            Field(ge=0, le=1, allow_inf_nan=False),
+        ],
+        sea_state: Annotated[StrictInt, Field(ge=0, le=9)],
     ) -> QueuedOperationReceipt:
         arguments = ScenarioWeatherSetArgs(
             temperature_c=temperature_c,
@@ -376,8 +399,8 @@ def register_scenario_authoring_tools(
 
     async def side_options_set(
         side_guid: Annotated[str, Field(min_length=1)],
-        awareness: str | int | None = None,
-        proficiency: str | int | None = None,
+        awareness: SideAwarenessValue | None = None,
+        proficiency: SideProficiencyValue | None = None,
         auto_track_civilians: bool | None = None,
         collective_responsibility: bool | None = None,
         computer_controlled_only: bool | None = None,
@@ -469,7 +492,7 @@ def register_scenario_authoring_tools(
     )
 
     async def event_list(
-        level: Literal[0, 1, 2, 3, 4] = 4,
+        level: StrictEventLevel = 4,
     ) -> AuthoringDataResult:
         arguments = EventListArgs(level=level)
         return await _invoke(
@@ -496,7 +519,7 @@ def register_scenario_authoring_tools(
 
     async def event_get(
         event_id_or_name: Annotated[str, Field(min_length=1)],
-        level: Literal[0, 1, 2, 3, 4] = 4,
+        level: StrictEventLevel = 4,
     ) -> AuthoringDataResult:
         arguments = EventGetArgs(
             event_id_or_name=event_id_or_name,
@@ -525,10 +548,10 @@ def register_scenario_authoring_tools(
         mode: Literal["add", "update", "remove"],
         event_id_or_name: Annotated[str, Field(min_length=1)],
         new_description: Annotated[str | None, Field(min_length=1)] = None,
-        active: bool | None = None,
-        shown: bool | None = None,
-        repeatable: bool | None = None,
-        probability: Annotated[int | None, Field(ge=0, le=100)] = None,
+        active: StrictBool | None = None,
+        shown: StrictBool | None = None,
+        repeatable: StrictBool | None = None,
+        probability: Annotated[StrictInt | None, Field(ge=0, le=100)] = None,
     ) -> QueuedOperationReceipt:
         if mode == "add":
             active = False if active is None else active
@@ -569,16 +592,37 @@ def register_scenario_authoring_tools(
         kind: Literal["trigger", "condition", "action"],
         mode: Literal["list", "add", "update", "remove"],
         component_id_or_name: Annotated[str, Field(min_length=1)],
-        component_type: Annotated[str | None, Field(min_length=1)] = None,
+        component_type: EventComponentType | None = None,
         new_description: Annotated[str | None, Field(min_length=1)] = None,
-        parameters: dict[str, JsonValue] | None = None,
+        parameters: Annotated[
+            EventComponentParameters | None,
+            Field(
+                description=(
+                    "Official type-specific fields for component_type. Add requires the complete "
+                    "safe minimum documented in the tool description; update accepts only changed "
+                    "fields and requires component_type when parameters are present. Omit unchanged "
+                    "fields instead of passing null. Unknown fields and non-canonical enum values "
+                    "are rejected before queueing."
+                )
+            ),
+        ] = None,
     ) -> QueuedOperationReceipt:
+        if component_type is not None:
+            try:
+                validate_event_component_type(kind, component_type)
+            except ValueError as error:
+                raise ToolError(str(error)) from error
         function = {
             "trigger": "ScenEdit_SetTrigger",
             "condition": "ScenEdit_SetCondition",
             "action": "ScenEdit_SetAction",
         }[kind]
-        arguments = EventComponentSetArgs(
+        arguments_model = {
+            "trigger": EventTriggerSetArgs,
+            "condition": EventConditionSetArgs,
+            "action": EventActionSetArgs,
+        }[kind]
+        arguments = arguments_model(
             mode=mode,
             component_id_or_name=component_id_or_name,
             component_type=component_type,
@@ -600,7 +644,24 @@ def register_scenario_authoring_tools(
         title="Manage CMO event component",
         description=_queued_mutation_description(
             "Scenario-authoring tool. List, add, update, or remove a trigger, condition, or event "
-            "action. Pass official type-specific fields in parameters."
+            "action. Add requires component_type and these parameters: trigger Points="
+            "SideID+PointValue+ReachDirection; RandomTime=EarliestTime+LatestTime; "
+            "RegularTime=Interval; ScenEnded/ScenLoaded=none; Time=Time; "
+            "UnitDamaged=DamagePercent+TargetFilter; UnitDestroyed=TargetFilter; "
+            "UnitDetected/UnitEmissions=TargetFilter+DetectorSideID+MCL (Area optional); "
+            "UnitEntersArea=TargetFilter+Area; UnitRemainsInArea=TargetFilter+Area+TD; "
+            "UnitBaseStatus=TargetFilter+TargetCondition (TargetBase optional); "
+            "UnitCargoMoved=CargoFilter plus at least one of TargetLimitReceived or "
+            "TargetLimitSent. Condition LuaScript=ScriptText; ScenHasStarted=none; "
+            "SidePosture=ObserverSideID+TargetSideID+TargetPosture. Action "
+            "ChangeMissionStatus=MissionID+NewStatus; EndScenario=none; LuaScript=ScriptText; "
+            "Message=SideID+Text; Points=PointChange+SideID; "
+            "TeleportInArea=UnitIDs+Area. Update requires a rename or non-empty parameters. "
+            "Before update/remove, the bridge lists the selected component and fails without "
+            "starting mutation unless it exists. Parameter updates additionally require "
+            "component_type to exactly match the listed component type; this validation hint is "
+            "never sent in the CMO update descriptor. Use only the exact fields and enum values "
+            "exposed by the parameters schema."
         ),
         annotations=_mixed_destructive_annotations(),
         structured_output=True,

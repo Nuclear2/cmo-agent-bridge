@@ -15,14 +15,18 @@ from cmo_agent_bridge.operations.models import (
     BridgeStatusWireArgs,
     CompatProbeArgs,
     ConfirmedDeleteUnitWireArgs,
+    ContactListArgs,
     DestructivePreviewResult,
     DoctrineGetArgs,
     DoctrineSelector,
     DoctrineSetArgs,
     DoctrineSetResult,
+    DoctrineWraSetArgs,
     EmconSetArgs,
     MissionCreateArgs,
+    MissionCargoUpdateArgs,
     MissionGetArgs,
+    MissionListArgs,
     MissionResult,
     MissionUpdateArgs,
     MissionUpdateResult,
@@ -30,6 +34,7 @@ from cmo_agent_bridge.operations.models import (
     ReferencePointUpdateArgs,
     ReconcileArgs,
     ReconciliationResult,
+    ScenarioTimeCompressionSetArgs,
     StrikeMissionDetails,
     UnitAttackContactArgs,
     UnitAddArgs,
@@ -204,6 +209,79 @@ def test_lua_call_is_allowlisted_and_inherits_manifest_class(registry: Operation
             "lua.call", {"function": "ScenEdit_DeleteUnit", "arguments": {}}
         )
     assert caught.value.code is ErrorCode.POLICY_DENIED
+
+
+@pytest.mark.parametrize(
+    ("function", "component_type"),
+    [
+        ("ScenEdit_SetTrigger", "Message"),
+        ("ScenEdit_SetCondition", "UnitDestroyed"),
+        ("ScenEdit_SetAction", "ScenHasStarted"),
+    ],
+)
+def test_lua_event_components_reject_cross_kind_types_before_queueing(
+    registry: OperationRegistry,
+    function: str,
+    component_type: str,
+) -> None:
+    with pytest.raises(ValidationError):
+        registry.resolve_invocation(
+            "lua.call",
+            {
+                "function": function,
+                "arguments": {
+                    "mode": "add",
+                    "component_id_or_name": "Invalid component",
+                    "component_type": component_type,
+                    "parameters_json": "{}",
+                },
+            },
+        )
+
+
+@pytest.mark.parametrize(
+    ("function", "arguments"),
+    [
+        (
+            "ScenEdit_SetTrigger",
+            {
+                "mode": "add",
+                "component_id_or_name": "Invalid score threshold",
+                "component_type": "Points",
+                "parameters_json": (
+                    '{"SideID":"SIDE-1","PointValue":10,"ReachDirection":3}'
+                ),
+            },
+        ),
+        (
+            "ScenEdit_SetAction",
+            {
+                "mode": "update",
+                "component_id_or_name": "ACTION-1",
+                "parameters_json": '{"Text":"Missing type hint"}',
+            },
+        ),
+        (
+            "ScenEdit_SetTrigger",
+            {
+                "mode": "add",
+                "component_id_or_name": "Invalid cargo type",
+                "component_type": "UnitCargoMoved",
+                "parameters_json": '{"CargoFilter":{"TargetType":123}}',
+            },
+        ),
+    ],
+)
+def test_lua_event_component_parameters_fail_before_queueing(
+    registry: OperationRegistry,
+    function: str,
+    arguments: dict[str, object],
+) -> None:
+    with pytest.raises(ValidationError):
+        registry.resolve_invocation(
+            "lua.call",
+            {"function": function, "arguments": arguments},
+        )
 
 
 @pytest.mark.parametrize(
@@ -712,6 +790,46 @@ def test_selector_and_update_invariants_are_strict() -> None:
         )
 
 
+def test_mutation_scalar_inputs_are_strict_and_finite() -> None:
+    assert UnitSetArgs.model_config.get("strict") is True
+    assert UnitSetArgs.model_config.get("allow_inf_nan") is False
+
+    for invalid_bool in (0, 1, "false", "true"):
+        with pytest.raises(ValidationError):
+            UnitSetArgs.model_validate(
+                {"unit_guid": "UNIT-1", "force_speed": invalid_bool}
+            )
+
+    for invalid_number in (True, False, "12.5", float("inf"), float("-inf"), float("nan")):
+        with pytest.raises(ValidationError):
+            UnitSetArgs.model_validate(
+                {"unit_guid": "UNIT-1", "speed": invalid_number}
+            )
+
+    for invalid_integer in (True, False, "2"):
+        with pytest.raises(ValidationError):
+            UnitAttackContactArgs.model_validate(
+                {
+                    "side_guid": "SIDE-1",
+                    "attacker_unit_guid": "UNIT-1",
+                    "contact_guid": "CONTACT-1",
+                    "mode": "manual_weapon",
+                    "weapon_dbid": 2001,
+                    "quantity": invalid_integer,
+                }
+            )
+
+    for invalid_stage_value in (True, False):
+        with pytest.raises(ValidationError):
+            MissionUpdateArgs.model_validate(
+                {
+                    "side_guid": "SIDE-1",
+                    "mission_guid": "MISSION-1",
+                    "transit_altitude_aircraft": invalid_stage_value,
+                }
+            )
+
+
 def test_unit_add_requires_exactly_one_complete_location_form() -> None:
     common = {
         "side_guid": "SIDE-1",
@@ -729,6 +847,68 @@ def test_unit_add_requires_exactly_one_complete_location_form() -> None:
     ):
         with pytest.raises(ValidationError):
             UnitAddArgs.model_validate(invalid)
+
+
+def test_public_enum_inputs_reject_unknown_aliases_before_invocation() -> None:
+    for throttle in ("FullStop", "Loiter", "Cruise", "Full", "Flank"):
+        UnitSetArgs.model_validate({"unit_guid": "UNIT-1", "throttle": throttle})
+    for manual_throttle in ("OFF", "FullStop", "Loiter", "Cruise", "Full", "Flank", 0, 1, 2, 3, 4):
+        UnitSetArgs.model_validate({"unit_guid": "UNIT-1", "manual_throttle": manual_throttle})
+    for unsupported in ("Military", "Creep", "None", 3, 5, 2.5):
+        with pytest.raises(ValidationError):
+            UnitSetArgs.model_validate({"unit_guid": "UNIT-1", "throttle": unsupported})
+    for unsupported in ("Military", "Creep", 5, 2.5):
+        with pytest.raises(ValidationError):
+            UnitSetArgs.model_validate({"unit_guid": "UNIT-1", "manual_throttle": unsupported})
+
+    for throttle in ("FullStop", "Loiter", "Cruise", "Full", "Flank", "None", 0, 1, 2, 3, 4, 5):
+        MissionUpdateArgs.model_validate(
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "attack_throttle_aircraft": throttle,
+            }
+        )
+    for unsupported in ("Military", "Creep", -1, 6, 2.5):
+        with pytest.raises(ValidationError):
+            MissionUpdateArgs.model_validate(
+                {
+                    "side_guid": "SIDE-1",
+                    "mission_guid": "MISSION-1",
+                    "attack_throttle_aircraft": unsupported,
+                }
+            )
+
+    for unit_type in ("Aircraft", "Ship", "Sub", "Facility", "Satellite", "Weapon"):
+        UnitAddArgs.model_validate(
+            {
+                "side_guid": "SIDE-1",
+                "unit_type": unit_type,
+                "dbid": 1,
+                "name": "Alpha",
+                "latitude": 1,
+                "longitude": 2,
+            }
+        )
+    for unsupported in ("Air", "Submarine", "Ground unit", "Aimpoint"):
+        with pytest.raises(ValidationError):
+            UnitAddArgs.model_validate(
+                {
+                    "side_guid": "SIDE-1",
+                    "unit_type": unsupported,
+                    "dbid": 1,
+                    "name": "Alpha",
+                    "latitude": 1,
+                    "longitude": 2,
+                }
+            )
+
+    ContactListArgs.model_validate({"side_guid": "SIDE-1", "contact_type": "Air"})
+    MissionListArgs.model_validate({"side_guid": "SIDE-1", "mission_class": "patrol"})
+    with pytest.raises(ValidationError):
+        ContactListArgs.model_validate({"side_guid": "SIDE-1", "contact_type": "Bogey"})
+    with pytest.raises(ValidationError):
+        MissionListArgs.model_validate({"side_guid": "SIDE-1", "mission_class": "CAP"})
 
 
 def test_unit_refuel_selector_is_optional_but_unambiguous() -> None:
@@ -808,6 +988,20 @@ def test_doctrine_set_uses_official_allowlisted_values() -> None:
             "weapon_control_air": "Hold",
             "nuclear_use": True,
             "refuel_unrep": "Never",
+            "engaging_ambiguous_targets": "Optimistic",
+            "fuel_state_planned": "Joker40Percent",
+            "fuel_state_rtb": "YesLeaveGroup",
+            "weapon_state_planned": "Winchester",
+            "weapon_state_rtb": "YesLastUnit",
+            "withdraw_on_attack": "Percent50",
+            "withdraw_on_damage": "Percent25",
+            "withdraw_on_defence": "Exhausted",
+            "withdraw_on_fuel": "Bingo",
+            "bvr_logic": "Crank",
+            "dipping_sonar": "ManualAndMissionOnly",
+            "use_aip": "Yes_AttackOnly",
+            "recharge_on_attack": 30,
+            "recharge_on_patrol": "Recharge_60_Percent",
         }
     )
     inherited = DoctrineSetArgs.model_validate(
@@ -823,6 +1017,119 @@ def test_doctrine_set_uses_official_allowlisted_values() -> None:
         DoctrineSetArgs.model_validate(
             {"scope": "side", "side_guid": "SIDE-1", "refuel_unrep": "Allowed"}
         )
+    for field_name in (
+        "engaging_ambiguous_targets",
+        "fuel_state_planned",
+        "fuel_state_rtb",
+        "weapon_state_planned",
+        "weapon_state_rtb",
+        "withdraw_on_attack",
+        "withdraw_on_damage",
+        "withdraw_on_defence",
+        "withdraw_on_fuel",
+        "bvr_logic",
+        "dipping_sonar",
+        "use_aip",
+        "recharge_on_attack",
+        "recharge_on_patrol",
+    ):
+        with pytest.raises(ValidationError):
+            DoctrineSetArgs.model_validate(
+                {
+                    "scope": "side",
+                    "side_guid": "SIDE-1",
+                    field_name: "GuessMe",
+                }
+            )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("flight_size", True),
+        ("flight_size", 3.0),
+        ("minimum_aircraft_required", False),
+        ("minimum_aircraft_required", 4.0),
+        ("group_size", 5),
+        ("group_size", True),
+        ("loop_type", 1.0),
+        ("laying_method", False),
+        ("attack_throttle_aircraft", True),
+        ("attack_throttle_aircraft", 3.0),
+        ("strike_min_distance_aircraft", -1),
+        ("strike_min_distance_aircraft", "20"),
+        ("strike_minimum_trigger", "hostile"),
+        ("strike_minimum_trigger", "3"),
+        ("strike_minimum_trigger", True),
+        ("strike_minimum_trigger", 3.0),
+        ("arming_delay", "0:24:00:00"),
+        ("arming_delay", "0:00:60:00"),
+        ("arming_delay", "00:00:00"),
+    ],
+)
+def test_mission_update_rejects_noncanonical_finite_values(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        MissionUpdateArgs.model_validate(
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                field_name: invalid_value,
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_name", "invalid_value"),
+    [
+        ("weapon_control_air", True),
+        ("weapon_control_air", 1.0),
+        ("nuclear_use", 1),
+        ("refuel_unrep", True),
+        ("refuel_unrep", 2.0),
+        ("engaging_ambiguous_targets", False),
+        ("fuel_state_planned", 4.0),
+        ("weapon_state_planned", 2001.0),
+        ("withdraw_on_fuel", True),
+        ("bvr_logic", 1.0),
+        ("dipping_sonar", False),
+        ("recharge_on_patrol", 30.0),
+    ],
+)
+def test_doctrine_update_codes_are_strict_integers(
+    field_name: str,
+    invalid_value: object,
+) -> None:
+    with pytest.raises(ValidationError):
+        DoctrineSetArgs.model_validate(
+            {
+                "scope": "side",
+                "side_guid": "SIDE-1",
+                field_name: invalid_value,
+            }
+        )
+
+
+def test_finite_integer_selectors_reject_booleans_and_integral_floats() -> None:
+    for invalid_code in (True, 2.0):
+        with pytest.raises(ValidationError):
+            ScenarioTimeCompressionSetArgs.model_validate({"code": invalid_code})
+    with pytest.raises(ValidationError):
+        MissionCargoUpdateArgs.model_validate(
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "action": "assign",
+                "cargo_kind": "object",
+                "dbid": 6001,
+                "object_type": 1,
+                "cargo_guid": "CARGO-1",
+            }
+        )
+    with pytest.raises(ValidationError):
+        DoctrineSelector.model_validate({"scope": "side", "side_guid": ""})
 
 
 def test_doctrine_boolean_updates_accept_only_bool_or_inherit() -> None:
@@ -866,6 +1173,47 @@ def test_doctrine_boolean_updates_accept_only_bool_or_inherit() -> None:
                 "engage_opportunity_targets": "inherit",
             }
         )
+
+
+def test_doctrine_wra_set_uses_field_specific_official_values() -> None:
+    canonical = DoctrineWraSetArgs.model_validate(
+        {
+            "scope": "side",
+            "side_guid": "SIDE-1",
+            "target_type": "Air_Contact_Unknown_Type",
+            "weapon_dbid": 2001,
+            "weapons_per_salvo": "system",
+            "shooters_per_salvo": 0,
+            "firing_range": "75ofmax",
+            "self_defence_range": 12.5,
+        }
+    )
+    assert canonical.weapons_per_salvo == "system"
+    assert canonical.shooters_per_salvo == 0
+    assert canonical.firing_range == "75ofmax"
+    assert canonical.self_defence_range == 12.5
+
+    common = {
+        "scope": "side",
+        "side_guid": "SIDE-1",
+        "target_type": "Air_Contact_Unknown_Type",
+        "weapon_dbid": 2001,
+        "weapons_per_salvo": "inherit",
+        "shooters_per_salvo": "max",
+        "firing_range": "none",
+        "self_defence_range": "system",
+    }
+    for field_name, invalid_value in (
+        ("weapons_per_salvo", "automatic"),
+        ("weapons_per_salvo", "SYSTEM"),
+        ("weapons_per_salvo", True),
+        ("shooters_per_salvo", -1),
+        ("firing_range", "system"),
+        ("firing_range", "100ofmax"),
+        ("self_defence_range", -0.1),
+    ):
+        with pytest.raises(ValidationError):
+            DoctrineWraSetArgs.model_validate({**common, field_name: invalid_value})
 
 
 def test_emcon_wire_adapter_emits_official_grammar(registry: OperationRegistry) -> None:

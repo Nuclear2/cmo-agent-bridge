@@ -47,6 +47,16 @@ class QueueQuarantineResolution(BaseModel):
     barrier_active: bool
 
 
+class ActiveQueueQuarantineBarrier(BaseModel):
+    """An unresolved Host barrier that currently blocks this queue root."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
+
+    request_id: UUID
+    operation: StrictStr
+    sequence: StrictInt | None = Field(default=None, ge=1)
+
+
 def canonical_queue_json(value: object) -> bytes:
     return json.dumps(
         value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")

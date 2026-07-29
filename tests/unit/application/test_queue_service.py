@@ -377,6 +377,11 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
     assert blocked_status.quarantine_resolution is not None
     assert blocked_status.quarantine_resolution.state == "unresolved"
     assert blocked_status.quarantine_resolution.barrier_active is True
+    active_barriers = service.active_quarantine_barriers()
+    assert len(active_barriers) == 1
+    assert active_barriers[0].request_id == first.request_id
+    assert active_barriers[0].operation == "scenario.time_compression.set"
+    assert active_barriers[0].sequence == first.sequence
     blocked_summary = service.summary()
     assert blocked_summary.queued == 0
     assert blocked_summary.quarantined == 1
@@ -404,6 +409,7 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
     assert resolved_status.quarantine_resolution.disposition == "not_applied"
     assert resolved_status.quarantine_resolution.resolved_at_ms == 1_103
     assert resolved_status.quarantine_resolution.barrier_active is False
+    assert service.active_quarantine_barriers() == ()
     resolved_summary = service.summary()
     assert resolved_summary.quarantined == 1
     assert resolved_summary.unresolved_quarantined == 0
@@ -415,6 +421,39 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
         arguments={"code": 4},
     )
     assert accepted.state is QueuedOperationState.QUEUED
+
+
+def test_active_quarantine_barriers_does_not_scan_terminal_queue_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _service(tmp_path)
+    store = service._queue_store  # pyright: ignore[reportPrivateUsage]
+    receipt = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    _insert_prepared_ledger(service, receipt.request_id)
+    assert store.claim_next(root_key=ROOT_KEY, at_ms=1_101) is not None
+    assert (
+        store.quarantine(
+            receipt.request_id,
+            _error_bytes(ErrorCode.INDETERMINATE_OUTCOME),
+            at_ms=1_102,
+        )
+        is not None
+    )
+
+    def reject_history_scan(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("active barrier lookup must not scan queue history")
+
+    monkeypatch.setattr(store, "list", reject_history_scan)
+
+    barriers = service.active_quarantine_barriers()
+
+    assert len(barriers) == 1
+    assert barriers[0].request_id == receipt.request_id
+    assert barriers[0].sequence == receipt.sequence
 
 
 def test_host_only_quarantine_blocks_submission_and_activates_summary_barrier(
@@ -457,6 +496,10 @@ def test_host_only_quarantine_blocks_submission_and_activates_summary_barrier(
     assert summary.unresolved_quarantined == 0
     assert summary.resolved_quarantined == 0
     assert summary.barrier_active is True
+    host_only_barriers = service.active_quarantine_barriers()
+    assert len(host_only_barriers) == 1
+    assert host_only_barriers[0].request_id == receipt.request_id
+    assert host_only_barriers[0].sequence is None
 
 
 @pytest.mark.parametrize(
