@@ -95,8 +95,9 @@ ACTIVATION_ID = UUID("44444444-4444-4444-8444-444444444444")
 # A successful automatic retry includes durable SQLite commits and fsync-backed
 # inbox publications inside one shared deadline.  Windows CI can legitimately
 # spend well over 50 ms in those synchronous durability boundaries, so success
-# tests need enough wall-clock budget to exercise the response path reliably.
-_DURABLE_RETRY_TEST_TIMEOUT = 1.0
+# tests need enough wall-clock budget to exercise the response path reliably
+# even when two Windows Actions jobs contend for slow hosted-runner storage.
+_DURABLE_RETRY_TEST_TIMEOUT = 4.0
 
 
 def _forbidden(*_args: object, **_kwargs: object) -> Never:
