@@ -1,0 +1,7 @@
+Command: Modern Operations cover artwork
+
+cmo-agent-bridge-cover.png incorporates library_hero.jpg and logo.png distributed through Steam
+with Command: Modern Operations. All copyright and trademark rights in the game artwork and logo
+remain with their respective owners. The image is used only to identify compatibility and is not
+covered by this project's MIT license. CMO Agent Bridge is an unofficial community project and is
+not affiliated with the game's developers or publishers.

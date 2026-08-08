@@ -605,6 +605,41 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
             "contacts": contact_refs,
             "missions": missions,
             "rps": reference_points,
+            "losses": lua.table_from(
+                [
+                    _lua_table(
+                        lua,
+                        {
+                            "type": "Custom",
+                            "dbid": 0,
+                            "name": "Personnel casualties",
+                            "count": "25",
+                        },
+                    ),
+                    _lua_table(
+                        lua,
+                        {
+                            "type": "Aircraft",
+                            "dbid": "101",
+                            "name": "Test Fighter",
+                            "number": 2,
+                        },
+                    ),
+                ]
+            ),
+            "expenditures": lua.table_from(
+                [
+                    _lua_table(
+                        lua,
+                        {
+                            "type": "Weapon",
+                            "dbid": 301,
+                            "name": "Test AAM",
+                            "count": "6",
+                        },
+                    )
+                ]
+            ),
         },
     )
     red = _lua_table(
@@ -618,6 +653,7 @@ def _cmo_fixture(lua: LuaRuntime) -> _CmoFixture:
             "units": lua.table_from([]),
             "contacts": lua.table_from([]),
             "missions": lua.table_from([]),
+            "losses": lua.table_from([]),
         },
     )
     return _CmoFixture(
@@ -747,6 +783,7 @@ def _run_lua(
     task_pool_mission_guid: str | None = None,
     extra_mission_class: str | None = None,
     special_action_execute_effect: str = "none",
+    side_losses_mode: str = "normal",
 ) -> _LuaRun:
     assert not (export_failures_before_success and zero_export_results_before_success)
     assert target_api_return_mode in {
@@ -767,6 +804,13 @@ def _run_lua(
     assert mission_delete_mode in {"normal", "failure", "residual", "verify_error"}
     assert mission_cargo_update_mode in {"normal", "no_op_nil", "no_op_truthy"}
     assert special_action_execute_effect in {"none", "delete", "rename"}
+    assert side_losses_mode in {
+        "normal",
+        "property_error",
+        "enumeration_error",
+        "invalid_count",
+        "oversize",
+    }
     snapshot = create_runtime_snapshot()
     activation_id = uuid4()
     invocation = _invocation(operation, public_arguments, activation_id)
@@ -798,6 +842,26 @@ def _run_lua(
     globals_ = cast(Any, lua.globals())
     scenario = _scenario(lua, player_side=player_side)
     fixture = _cmo_fixture(lua)
+    blue_side = fixture.sides[2]
+    if side_losses_mode == "property_error":
+        proxy_factory = cast(
+            Any,
+            lua.eval(
+                "function(source) return setmetatable({}, {"
+                "__index=function(_, key) "
+                "if key == 'losses' or key == 'Losses' then error('loss property failed') end "
+                "return source[key] end}) end"
+            ),
+        )
+        fixture.sides[2] = proxy_factory(blue_side)
+    elif side_losses_mode == "enumeration_error":
+        blue_side["losses"] = lua.eval(
+            "setmetatable({}, {__pairs=function() error('loss iteration failed') end})"
+        )
+    elif side_losses_mode == "invalid_count":
+        blue_side["losses"][1]["count"] = "not-a-number"
+    elif side_losses_mode == "oversize":
+        blue_side["losses"][1]["name"] = "X" * (49 * 1024)
     engagement_contact = fixture.contacts[1]
     engagement_contact["typed"] = engagement_contact_type_code
     engagement_contact["type"] = engagement_contact_type_text
@@ -2668,6 +2732,76 @@ def test_lua_side_list_round_trip_supports_projection_and_paging(
     assert result["next_cursor"] == next_cursor
     if "fields" in arguments:
         assert set(items[0]) == {"guid", "name"}
+
+
+def test_lua_side_losses_get_normalizes_native_and_custom_entries() -> None:
+    run = _run_lua("side.losses.get", {"side_guid": "SIDE-BLUE"})
+
+    assert run.result == {
+        "side_guid": "SIDE-BLUE",
+        "side_name": "Blue",
+        "losses": [
+            {
+                "type": "Aircraft",
+                "dbid": 101,
+                "name": "Test Fighter",
+                "count": 2,
+                "is_custom": False,
+            },
+            {
+                "type": "Custom",
+                "dbid": 0,
+                "name": "Personnel casualties",
+                "count": 25,
+                "is_custom": True,
+            },
+        ],
+        "expenditures": [
+            {
+                "type": "Weapon",
+                "dbid": 301,
+                "name": "Test AAM",
+                "count": 6,
+                "is_custom": False,
+            }
+        ],
+    }
+
+
+def test_lua_side_losses_get_returns_empty_collections_when_none_are_reported() -> None:
+    run = _run_lua("side.losses.get", {"side_name": "Red"})
+
+    assert run.result == {
+        "side_guid": "SIDE-RED",
+        "side_name": "Red",
+        "losses": [],
+        "expenditures": [],
+    }
+
+
+@pytest.mark.parametrize(
+    ("mode", "reason"),
+    [
+        ("property_error", "side losses could not be read"),
+        ("enumeration_error", "side losses could not be enumerated"),
+        ("invalid_count", "side losses entry has an invalid count"),
+        ("oversize", "side losses result exceeds the safe response budget"),
+    ],
+)
+def test_lua_side_losses_get_fails_closed_on_untrustworthy_results(
+    mode: str,
+    reason: str,
+) -> None:
+    run = _run_lua(
+        "side.losses.get",
+        {"side_guid": "SIDE-BLUE"},
+        side_losses_mode=mode,
+        expect_ok=False,
+    )
+
+    error = cast(dict[str, JsonValue], run.result)
+    assert error["code"] == "CMO_LUA_ERROR"
+    assert reason in str(cast(dict[str, JsonValue], error["details"])["reason"])
 
 
 @pytest.mark.parametrize(

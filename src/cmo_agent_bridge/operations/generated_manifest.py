@@ -2,7 +2,7 @@
 
 from typing import Final
 
-MANIFEST_SHA256: Final = "a187d1e065f0f3a7b2bbdf16bbde93dd37ec5d153e603838939b1e6f1cd67043"
+MANIFEST_SHA256: Final = "7733ae76ba4f1c3c1ae54c0306a9a1cd672baba5297d0febfd4c0e4422e778c8"
 OPERATIONS: Final[tuple[dict[str, object], ...]] = ({'arguments_ast': {'no_extra_fields': True,
                     'properties': {'accept_lineage_id': {'nullable': True, 'type': 'uuid'},
                                    'activation_candidate': {'type': 'uuid'}},
@@ -94,6 +94,25 @@ OPERATIONS: Final[tuple[dict[str, object], ...]] = ({'arguments_ast': {'no_extra
   'wire_arguments_model': 'PageArgs',
   'wire_resolver': 'model',
   'wire_result_factory': 'paged:SideResult'},
+ {'arguments_ast': {'no_extra_fields': True,
+                    'properties': {'side_guid': {'nullable': True, 'type': 'string'},
+                                   'side_name': {'nullable': True, 'type': 'string'}},
+                    'required': [],
+                    'type': 'object'},
+  'base_class': 'read',
+  'confirmation_required': False,
+  'effective_class_resolver': 'constant',
+  'expose_mcp': True,
+  'invariant_ids': ['exactly_one_side_selector'],
+  'name': 'side.losses.get',
+  'public_arguments_model': 'SideSelector',
+  'public_result_factory': 'SideLossesResult',
+  'recovery_factory': 'none',
+  'target': 'cmo',
+  'trusted_fields': [],
+  'wire_arguments_model': 'SideSelector',
+  'wire_resolver': 'model',
+  'wire_result_factory': 'SideLossesResult'},
  {'arguments_ast': {'no_extra_fields': True,
                     'properties': {'cursor': {'nullable': True, 'type': 'string'},
                                    'fields': {'items': {'enum': ['guid',
@@ -2564,8 +2583,8 @@ OPERATIONS: Final[tuple[dict[str, object], ...]] = ({'arguments_ast': {'no_extra
   'wire_arguments_model': 'CompatProbeArgs',
   'wire_resolver': 'model',
   'wire_result_factory': 'discriminated'})
-CMO_OPERATION_NAMES: Final = ('bridge.status', 'bridge.reconcile', 'scenario.get', 'side.list', 'reference_point.list', 'unit.list', 'unit.catalog', 'unit.overview', 'unit.get', 'unit.combat_status.get', 'unit.operational_status.batch', 'unit.loadout.get', 'unit.engagement_options.get', 'contact.list', 'mission.list', 'mission.get', 'doctrine.get', 'reference_point.add', 'reference_point.update', 'unit.set', 'unit.add', 'unit.assign_mission', 'unit.unassign_mission', 'unit.loadout.set', 'unit.launch', 'unit.rtb', 'unit.refuel', 'unit.attack_contact', 'mission.create', 'mission.update', 'mission.air_refueling.update', 'mission.flight_plan.list', 'mission.flight_plan.create', 'mission.target.add', 'mission.target.remove', 'doctrine.set', 'emcon.set', 'scenario.time_compression.set', 'side.posture.get', 'contact.get', 'contact.posture.set', 'contact.weapon_allocations.get', 'unit.inventory.get', 'unit.sensor.set', 'unit.magazine.adjust', 'unit.mount_reload.adjust', 'unit.cargo.transfer', 'unit.cargo.unload', 'mission.cargo.update', 'doctrine.wra.get', 'doctrine.wra.set', 'special_action.list', 'special_action.execute', 'unit.delete', 'mission.delete', 'lua.call', 'compat.probe.step')
-MCP_OPERATION_NAMES: Final = ('bridge.status', 'scenario.get', 'side.list', 'reference_point.list', 'unit.list', 'unit.catalog', 'unit.overview', 'unit.get', 'unit.combat_status.get', 'unit.operational_status.batch', 'unit.loadout.get', 'unit.engagement_options.get', 'contact.list', 'mission.list', 'mission.get', 'doctrine.get', 'reference_point.add', 'reference_point.update', 'unit.set', 'unit.add', 'unit.assign_mission', 'unit.unassign_mission', 'unit.loadout.set', 'unit.launch', 'unit.rtb', 'unit.refuel', 'unit.attack_contact', 'mission.create', 'mission.update', 'mission.air_refueling.update', 'mission.flight_plan.list', 'mission.flight_plan.create', 'mission.target.add', 'mission.target.remove', 'doctrine.set', 'emcon.set', 'scenario.time_compression.set', 'side.posture.get', 'contact.get', 'contact.posture.set', 'contact.weapon_allocations.get', 'unit.inventory.get', 'unit.sensor.set', 'unit.magazine.adjust', 'unit.mount_reload.adjust', 'unit.cargo.transfer', 'unit.cargo.unload', 'mission.cargo.update', 'doctrine.wra.get', 'doctrine.wra.set', 'special_action.list', 'special_action.execute', 'lua.call')
+CMO_OPERATION_NAMES: Final = ('bridge.status', 'bridge.reconcile', 'scenario.get', 'side.list', 'side.losses.get', 'reference_point.list', 'unit.list', 'unit.catalog', 'unit.overview', 'unit.get', 'unit.combat_status.get', 'unit.operational_status.batch', 'unit.loadout.get', 'unit.engagement_options.get', 'contact.list', 'mission.list', 'mission.get', 'doctrine.get', 'reference_point.add', 'reference_point.update', 'unit.set', 'unit.add', 'unit.assign_mission', 'unit.unassign_mission', 'unit.loadout.set', 'unit.launch', 'unit.rtb', 'unit.refuel', 'unit.attack_contact', 'mission.create', 'mission.update', 'mission.air_refueling.update', 'mission.flight_plan.list', 'mission.flight_plan.create', 'mission.target.add', 'mission.target.remove', 'doctrine.set', 'emcon.set', 'scenario.time_compression.set', 'side.posture.get', 'contact.get', 'contact.posture.set', 'contact.weapon_allocations.get', 'unit.inventory.get', 'unit.sensor.set', 'unit.magazine.adjust', 'unit.mount_reload.adjust', 'unit.cargo.transfer', 'unit.cargo.unload', 'mission.cargo.update', 'doctrine.wra.get', 'doctrine.wra.set', 'special_action.list', 'special_action.execute', 'unit.delete', 'mission.delete', 'lua.call', 'compat.probe.step')
+MCP_OPERATION_NAMES: Final = ('bridge.status', 'scenario.get', 'side.list', 'side.losses.get', 'reference_point.list', 'unit.list', 'unit.catalog', 'unit.overview', 'unit.get', 'unit.combat_status.get', 'unit.operational_status.batch', 'unit.loadout.get', 'unit.engagement_options.get', 'contact.list', 'mission.list', 'mission.get', 'doctrine.get', 'reference_point.add', 'reference_point.update', 'unit.set', 'unit.add', 'unit.assign_mission', 'unit.unassign_mission', 'unit.loadout.set', 'unit.launch', 'unit.rtb', 'unit.refuel', 'unit.attack_contact', 'mission.create', 'mission.update', 'mission.air_refueling.update', 'mission.flight_plan.list', 'mission.flight_plan.create', 'mission.target.add', 'mission.target.remove', 'doctrine.set', 'emcon.set', 'scenario.time_compression.set', 'side.posture.get', 'contact.get', 'contact.posture.set', 'contact.weapon_allocations.get', 'unit.inventory.get', 'unit.sensor.set', 'unit.magazine.adjust', 'unit.mount_reload.adjust', 'unit.cargo.transfer', 'unit.cargo.unload', 'mission.cargo.update', 'doctrine.wra.get', 'doctrine.wra.set', 'special_action.list', 'special_action.execute', 'lua.call')
 COMPAT_PROBE_STEP_CLASSES: Final = {'apply-profile': 'mutation',
  'dedupe': 'mutation',
  'high-speed': 'read',

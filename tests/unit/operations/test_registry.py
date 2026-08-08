@@ -56,6 +56,7 @@ EXPECTED_NAMES = {
     "scenario.get",
     "scenario.time_compression.set",
     "side.list",
+    "side.losses.get",
     "side.posture.get",
     "reference_point.list",
     "unit.list",
@@ -128,11 +129,11 @@ def test_operation_kind_values_are_stable() -> None:
 
 
 def test_registry_surface_is_locked(registry: OperationRegistry) -> None:
-    assert len(registry) == 61
+    assert len(registry) == 62
     assert registry.names == EXPECTED_NAMES
-    assert registry.count(target="cmo") == 57
+    assert registry.count(target="cmo") == 58
     assert registry.count(target="local") == 4
-    assert registry.count(expose_mcp=True) == 53
+    assert registry.count(expose_mcp=True) == 54
     assert registry.hidden_names == {
         "bridge.reconcile",
         "unit.delete",
@@ -1621,5 +1622,5 @@ def test_generated_manifest_is_canonical_and_complete() -> None:
         raw, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")
     ).encode()
     assert MANIFEST_SHA256 == hashlib.sha256(canonical).hexdigest()
-    assert len(OPERATIONS) == 61
+    assert len(OPERATIONS) == 62
     assert {entry["name"] for entry in OPERATIONS} == EXPECTED_NAMES

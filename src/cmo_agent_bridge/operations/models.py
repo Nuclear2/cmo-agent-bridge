@@ -1899,6 +1899,21 @@ class SideResult(StrictModel):
     mission_count: int = Field(ge=0)
 
 
+class SideLossEntryResult(StrictModel):
+    type: NonEmptyStr
+    dbid: int = Field(ge=0)
+    name: NonEmptyStr
+    count: int = Field(ge=0)
+    is_custom: bool
+
+
+class SideLossesResult(StrictModel):
+    side_guid: NonEmptyStr
+    side_name: str
+    losses: list[SideLossEntryResult]
+    expenditures: list[SideLossEntryResult]
+
+
 class UnitDamageResult(StrictModel):
     dp: float | None
     start_dp: float | None

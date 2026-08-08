@@ -338,6 +338,47 @@
       "caller_arguments": {
         "side_guid": "SIDE-1"
       },
+      "id": "side.losses.get:valid",
+      "invariant_id": null,
+      "operation": "side.losses.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": true,
+      "wire_arguments": {
+        "side_guid": "SIDE-1",
+        "side_name": null
+      }
+    },
+    {
+      "caller_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      },
+      "id": "side.losses.get:invalid-extra",
+      "invariant_id": null,
+      "operation": "side.losses.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {
+        "__unexpected__": true,
+        "side_guid": "SIDE-1"
+      }
+    },
+    {
+      "caller_arguments": {},
+      "id": "side.losses.get:invalid-invariant-1",
+      "invariant_id": "exactly_one_side_selector",
+      "operation": "side.losses.get",
+      "surface": "registry-wire",
+      "trusted_enrichment": {},
+      "valid": false,
+      "wire_arguments": {}
+    },
+    {
+      "caller_arguments": {
+        "side_guid": "SIDE-1"
+      },
       "id": "reference_point.list:valid",
       "invariant_id": null,
       "operation": "reference_point.list",
@@ -5553,5 +5594,5 @@
       }
     }
   ],
-  "manifest_sha256": "a187d1e065f0f3a7b2bbdf16bbde93dd37ec5d153e603838939b1e6f1cd67043"
+  "manifest_sha256": "7733ae76ba4f1c3c1ae54c0306a9a1cd672baba5297d0febfd4c0e4422e778c8"
 }

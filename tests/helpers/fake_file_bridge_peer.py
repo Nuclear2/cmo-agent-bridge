@@ -789,6 +789,32 @@ class FakeFileBridgePeer:
                 allowed = {"guid", *cast(list[str], fields)}
                 item = {key: value for key, value in item.items() if key in allowed}
             return cast(dict[str, JsonValue], {"items": [item], "next_cursor": None})
+        if name == "side.losses.get":
+            return cast(
+                dict[str, JsonValue],
+                {
+                    "side_guid": "SIDE-1",
+                    "side_name": "Blue",
+                    "losses": [
+                        {
+                            "type": "Aircraft",
+                            "dbid": 101,
+                            "name": "Fighter",
+                            "count": 1,
+                            "is_custom": False,
+                        }
+                    ],
+                    "expenditures": [
+                        {
+                            "type": "Weapon",
+                            "dbid": 301,
+                            "name": "AAM",
+                            "count": 2,
+                            "is_custom": False,
+                        }
+                    ],
+                },
+            )
         if name == "unit.get":
             return unit
         if name == "mission.get":

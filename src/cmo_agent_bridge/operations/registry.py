@@ -823,7 +823,7 @@ class OperationRegistry:
             self.count(target=ExecutionTarget.LOCAL),
             self.count(expose_mcp=True),
         )
-        expected = (61, 57, 4, 53)
+        expected = (62, 58, 4, 54)
         if actual != expected:
             raise RuntimeError(
                 f"operation registry surface mismatch: expected {expected}, got {actual}"

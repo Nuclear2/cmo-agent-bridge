@@ -390,6 +390,31 @@ def _side_list_result() -> dict[str, JsonValue]:
     }
 
 
+def _side_losses_result() -> dict[str, JsonValue]:
+    return {
+        "side_guid": "SIDE-1",
+        "side_name": "PLAAF",
+        "losses": [
+            {
+                "type": "Aircraft",
+                "dbid": 6611,
+                "name": "J-36",
+                "count": 2,
+                "is_custom": False,
+            }
+        ],
+        "expenditures": [
+            {
+                "type": "Weapon",
+                "dbid": 2001,
+                "name": "PL-XX",
+                "count": 8,
+                "is_custom": False,
+            }
+        ],
+    }
+
+
 def _unit_result() -> dict[str, JsonValue]:
     return {
         "guid": "UNIT-1",
@@ -1093,6 +1118,7 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         "cmo_scenario_context_get",
         "cmo_scenario_time_compression_set",
         "cmo_side_list",
+        "cmo_side_losses_get",
         "cmo_side_posture_get",
         "cmo_unit_list",
         "cmo_unit_catalog",
@@ -2463,6 +2489,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     status = _status_result()
     scenario = _scenario_result()
     sides = _side_list_result()
+    side_losses = _side_losses_result()
     units = _unit_list_result()
     unit = _unit_result()
     unit_set = _unit_set_result()
@@ -2494,6 +2521,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
             "bridge.status": _success(status),
             "scenario.get": _success(scenario),
             "side.list": _success(sides),
+            "side.losses.get": _success(side_losses),
             "unit.list": _success(units),
             "unit.get": _success(unit),
             "unit.combat_status.get": _success(combat_status),
@@ -2535,6 +2563,10 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     side_response = await server.call_tool(
         "cmo_side_list",
         {"page_size": 1, "cursor": "1"},
+    )
+    side_losses_response = await server.call_tool(
+        "cmo_side_losses_get",
+        {"side_guid": "SIDE-1"},
     )
     unit_list_response = await server.call_tool(
         "cmo_unit_list",
@@ -2766,6 +2798,7 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
     assert _structured_result(scenario_response) == scenario
     assert _structured_result(scenario_context_response) == _scenario_context_result()
     assert _structured_result(side_response) == sides
+    assert _structured_result(side_losses_response) == side_losses
     assert _structured_result(unit_list_response) == units
     assert _structured_result(unit_get_response) == unit
     assert _structured_result(unit_combat_status_response) == combat_status
@@ -2802,6 +2835,11 @@ async def test_tools_map_to_bridge_operations_and_return_structured_results() ->
         ),
         _Call("scenario.get", {}, None),
         _Call("side.list", {"page_size": 1, "cursor": "1"}, None),
+        _Call(
+            "side.losses.get",
+            {"side_guid": "SIDE-1", "side_name": None},
+            None,
+        ),
         _Call(
             "unit.list",
             {

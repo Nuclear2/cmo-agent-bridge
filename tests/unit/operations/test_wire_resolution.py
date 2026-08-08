@@ -1262,6 +1262,14 @@ def test_selector_scalars_preserve_exact_json_type_and_unicode_bytes(
         ("scenario.get", {}, {}, "named", "ScenarioResult", None),
         ("side.list", {}, {}, "paged", "SideResult", None),
         (
+            "side.losses.get",
+            {"side_guid": "SIDE-1"},
+            {},
+            "named",
+            "SideLossesResult",
+            None,
+        ),
+        (
             "unit.list",
             {"side_guid": "SIDE-1", "fields": ["name"]},
             {},

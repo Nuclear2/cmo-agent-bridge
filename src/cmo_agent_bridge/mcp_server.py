@@ -79,6 +79,7 @@ from cmo_agent_bridge.operations.models import (
     ScenarioResult,
     ScenarioContextResult,
     ScoreResult,
+    SideLossesResult,
     SidePostureResult,
     SideResult,
     SpecialActionListResult,
@@ -718,6 +719,32 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         name="cmo_side_list",
         title="List CMO sides",
         description="List sides in the current CMO scenario, with cursor-based paging.",
+        annotations=_read_only_annotations(),
+        structured_output=True,
+    )
+
+    async def side_losses_get(
+        side_guid: str | None = None,
+        side_name: str | None = None,
+    ) -> SideLossesResult:
+        return await _invoke(
+            application,
+            "side.losses.get",
+            {"side_guid": side_guid, "side_name": side_name},
+            SideLossesResult,
+        )
+
+    server.add_tool(
+        side_losses_get,
+        name="cmo_side_losses_get",
+        title="Get CMO side losses and expenditures",
+        description=(
+            "Return one side's cumulative native losses and weapon expenditures. Select exactly "
+            "one side by GUID or name. Entries are aggregated by CMO and do not identify loss "
+            "time, cause, attacker, or weapon. CMO exposes this report to normal players. In "
+            "LIVE_PLAYER, defer the commanded and relevant participating sides until the "
+            "simulation has ended and use the table for post-action review, not live BDA."
+        ),
         annotations=_read_only_annotations(),
         structured_output=True,
     )

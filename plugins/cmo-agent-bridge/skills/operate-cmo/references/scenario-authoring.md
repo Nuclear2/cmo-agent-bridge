@@ -263,13 +263,16 @@ activate only within the trusted `SCENARIO_AUTHOR` or `UMPIRE` scope. Never use 
 3. Prefer event `Points` actions for rule-driven scoring. Use direct score setting only for
    initialization, reset, migration, or a deliberate adjudication.
 4. Use current `cmo_score_get` to read a side's score.
-5. Use `cmo_score_set` for an absolute score assignment, preserve its required reason, resolve the
+5. Use `cmo_side_losses_get` for each in-scope side during author/umpire playtesting to inspect
+   cumulative native losses and weapon expenditures independently of scoring. Retain snapshots to
+   compare phases; the table has no event time or attacker attribution.
+6. Use `cmo_score_set` for an absolute score assignment, preserve its required reason, resolve the
    queue request, and read the score back.
-6. Create Points or EndScenario actions with `cmo_event_component_set(kind="action", mode="add",
+7. Create Points or EndScenario actions with `cmo_event_component_set(kind="action", mode="add",
    ...)`, attach them with `cmo_event_component_link`, and verify them before activating the event.
-7. Scoring-log editing remains unavailable; use score/event readback and observed effects as
+8. Scoring-log editing remains unavailable; use score/event readback and observed effects as
    evidence.
-8. Test each scoring path once, repeat it when repeatability matters, and test failure cases that
+9. Test each scoring path once, repeat it when repeatability matters, and test failure cases that
    should not award points.
 
 ### 10. Playtest and release

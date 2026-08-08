@@ -1832,6 +1832,130 @@ end
 
 local UnitRead = { RESULT_BUDGET_BYTES = 48 * 1024 }
 
+function UnitRead.side_loss_property(side, names, collection_name)
+    local access_failure = nil
+    for _, field_name in ipairs(names) do
+        local ok, value = pcall(function() return side[field_name] end)
+        if ok and value ~= nil then
+            return value
+        elseif not ok then
+            access_failure = value
+        end
+    end
+    if access_failure ~= nil then
+        error(
+            collection_name
+                .. " could not be read: "
+                .. text_or(access_failure, "unknown wrapper error")
+        )
+    end
+    return nil
+end
+
+function UnitRead.collect_side_loss_entries(value, collection_name)
+    local result = {}
+    if value == nil then
+        return result
+    end
+    local ok, failure = pcall(function()
+        for _, entry in pairs(value) do
+            result[#result + 1] = entry
+        end
+    end)
+    if not ok then
+        error(
+            collection_name
+                .. " could not be enumerated: "
+                .. text_or(failure, "unknown wrapper error")
+        )
+    end
+    return result
+end
+
+function UnitRead.side_loss_entry_result(value, collection_name)
+    local entry_type = text_or(safe_get(value, { "type", "Type" }), "")
+    local name = text_or(safe_get(value, { "name", "Name" }), "")
+    if entry_type == "" or name == "" then
+        error(collection_name .. " entry is missing type or name")
+    end
+
+    local raw_dbid = safe_get(value, { "dbid", "DBID", "DbId" })
+    local dbid = tonumber(raw_dbid)
+    if dbid == nil
+        or dbid ~= dbid
+        or dbid == math.huge
+        or dbid == -math.huge
+        or dbid < 0
+        or dbid ~= math.floor(dbid)
+    then
+        error(collection_name .. " entry has an invalid dbid")
+    end
+
+    local raw_count = safe_get(value, { "count", "Count", "number", "Number" })
+    local count = tonumber(raw_count)
+    if count == nil
+        or count ~= count
+        or count == math.huge
+        or count == -math.huge
+        or count < 0
+        or count ~= math.floor(count)
+    then
+        error(collection_name .. " entry has an invalid count")
+    end
+
+    return {
+        type = entry_type,
+        dbid = dbid,
+        name = name,
+        count = count,
+        is_custom = string.lower(entry_type) == "custom",
+    }
+end
+
+function UnitRead.normalized_side_loss_collection(value, collection_name)
+    local normalized = {}
+    for _, entry in ipairs(UnitRead.collect_side_loss_entries(value, collection_name)) do
+        normalized[#normalized + 1] = UnitRead.side_loss_entry_result(entry, collection_name)
+    end
+    table.sort(normalized, function(left, right)
+        if left.type ~= right.type then
+            return left.type < right.type
+        elseif left.dbid ~= right.dbid then
+            return left.dbid < right.dbid
+        elseif left.name ~= right.name then
+            return left.name < right.name
+        end
+        return left.count < right.count
+    end)
+    return normalized
+end
+
+function UnitRead.side_losses_get_result(arguments)
+    local side = resolve_side(arguments)
+    local losses = UnitRead.normalized_side_loss_collection(
+        UnitRead.side_loss_property(side, { "losses", "Losses" }, "side losses"),
+        "side losses"
+    )
+    local expenditures = UnitRead.normalized_side_loss_collection(
+        UnitRead.side_loss_property(
+            side,
+            { "expenditures", "Expenditures" },
+            "side expenditures"
+        ),
+        "side expenditures"
+    )
+    local result = Json.object({
+        side_guid = object_guid(side),
+        side_name = object_name(side),
+        losses = Json.array(losses),
+        expenditures = Json.array(expenditures),
+    })
+    if #Json.encode(result) > UnitRead.RESULT_BUDGET_BYTES then
+        error("side losses result exceeds the safe response budget")
+    end
+    return result
+end
+
 function UnitRead.exact_get(value, name)
     if value == nil or value == Json.null then
         return nil
@@ -8617,6 +8741,8 @@ local function dispatch()
         handler = function() return scenario_time_compression_set_result(arguments) end
     elseif operation == "side.list" then
         handler = function() return side_list_result(arguments) end
+    elseif operation == "side.losses.get" then
+        handler = function() return UnitRead.side_losses_get_result(arguments) end
     elseif operation == "side.posture.get" then
         handler = function() return side_posture_get_result(arguments) end
     elseif operation == "unit.list" then

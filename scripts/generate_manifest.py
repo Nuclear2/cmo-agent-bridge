@@ -96,6 +96,7 @@ VALID_ARGUMENTS: dict[str, dict[str, object]] = {
     "bridge.reconcile": {},
     "scenario.get": {},
     "side.list": {},
+    "side.losses.get": {"side_guid": "SIDE-1"},
     "reference_point.list": {"side_guid": "SIDE-1"},
     "unit.list": {"side_guid": "SIDE-1"},
     "unit.catalog": {"side_guid": "SIDE-1"},
@@ -794,6 +795,7 @@ INVALID_INVOCATIONS: dict[str, list[tuple[str | None, dict[str, object]]]] = {
     "bridge.status": [(None, {})],
     "bridge.reconcile": [("reconcile_disposition_pair", {"disposition": "applied"})],
     "side.list": [("projection_allowlist", {"fields": ["not_a_side_field"]})],
+    "side.losses.get": [("exactly_one_side_selector", {})],
     "reference_point.list": [("exactly_one_side_selector", {})],
     "unit.list": [("exactly_one_side_selector", {"side_guid": "SIDE-1", "side_name": "Blue"})],
     "unit.catalog": [("exactly_one_side_selector", {"side_guid": "SIDE-1", "side_name": "Blue"})],
@@ -1358,7 +1360,7 @@ def _validate_surface(entries: list[dict[str, object]]) -> None:
         "local": sum(entry["target"] == "local" for entry in entries),
         "mcp": sum(entry["expose_mcp"] is True for entry in entries),
     }
-    expected = {"entries": 61, "cmo": 57, "local": 4, "mcp": 53}
+    expected = {"entries": 62, "cmo": 58, "local": 4, "mcp": 54}
     if actual != expected:
         raise ValueError(f"operation surface mismatch: expected {expected}, got {actual}")
     hidden = {str(entry["name"]) for entry in entries if entry["expose_mcp"] is False}

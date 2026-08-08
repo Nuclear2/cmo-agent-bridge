@@ -1,6 +1,6 @@
 ---
 name: operate-cmo
-description: "Assess, plan, command, operate, test, or author Command: Modern Operations (CMO) scenarios through cmo-agent-bridge. Use for live battlespace assessment, courses of action, missions, contacts, units, doctrine, WRA, EMCON, sensors, weapons, logistics, attacks, time control, scenario-author or umpire work, event designs, special actions, scoring, and playtesting. Also use when the plugin or Skill is installed but its MCP tools are missing, uv/uvx or the release-bound CMO runtime needs setup, or the polling event must be mounted or repaired."
+description: "Assess, plan, command, operate, test, or author Command: Modern Operations (CMO) scenarios through cmo-agent-bridge. Use for live battlespace assessment, courses of action, missions, contacts, units, doctrine, WRA, EMCON, sensors, weapons, logistics, attacks, battle-loss and expenditure assessment, time control, scenario-author or umpire work, event designs, special actions, scoring, and playtesting. Also use when the plugin or Skill is installed but its MCP tools are missing, uv/uvx or the release-bound CMO runtime needs setup, or the polling event must be mounted or repaired."
 ---
 
 # Operate CMO
@@ -104,7 +104,7 @@ plan never authorizes a mode change.
 
 | Mode | Information boundary | Permitted purpose |
 |---|---|---|
-| `LIVE_PLAYER` | Commanded-side information; adversaries only through that side's contacts | Fair scenario play, operational planning, deployment, engagement, sustainment, and assessment |
+| `LIVE_PLAYER` | Commanded-side information; adversaries through that side's contacts during execution, plus CMO's player-visible post-action loss/expenditure report | Fair scenario play, operational planning, deployment, engagement, sustainment, and assessment |
 | `SCENARIO_AUTHOR` | Omniscient scenario state as needed | Build or revise the scenario, forces, missions, logic, scoring, and presentation |
 | `UMPIRE` | Omniscient state limited to the adjudication requested | Diagnose, inject, correct, or assess a controlled test without claiming fair player play |
 
@@ -179,6 +179,13 @@ the polling event, change the configured log destination, or require scenario ti
 them during ordinary assessment and before diagnosing an unexpected pause: scenario messages can
 contain tasking, event outcomes, warnings, and other decision-relevant information that is not
 available from unit or contact wrappers.
+
+During execution, use the native log and observer-side BDA for the unfolding picture; do not poll
+the cumulative loss report as a routine BDA shortcut. At post-action review, use
+`cmo_side_losses_get` rather than message text for CMO's player-visible cumulative loss and
+expenditure totals. The native log remains useful for timing and narrative cause, but
+`Contact ... has been lost` means lost track, not confirmed destruction; component-damage messages
+and repeated sinking/BDA messages also cannot be summed as platform losses.
 
 In `LIVE_PLAYER`, pass only the exact resolved commanded-side name and keep
 `include_unscoped=false`. Do not read another side's prefixed messages. Use `start="recent"` only for
@@ -437,6 +444,31 @@ and never resubmit a durable request because a pulse or local wait timed out.
 11. Retain the native message-log cursor across decision cycles. If its process, file, side filter,
     or scenario lineage no longer matches, establish a new binding and a new `start="now"` baseline
     instead of coercing or reusing it.
+12. Treat `cmo_side_losses_get` as a cumulative aggregate, not a kill ledger. CMO exposes the
+    battle-loss report to normal players, so a terminal `LIVE_PLAYER` review may query the
+    commanded side and relevant opposing or participating sides without switching modes. Defer it
+    until the simulation is complete; never infer attacker, weapon, time, or cause from the table.
+
+## Close and review a completed simulation
+
+When CMO ends, the user ends the run, or the objective, desired end state, or termination criteria
+are satisfied and no further operational orders are intended, complete a post-action review before
+hand-back when polling still permits it:
+
+1. Use the normal controlled read-window procedure if the scenario is paused. Do not retry a final
+   Lua read indefinitely after CMO has irreversibly ended or a modal dialog prevents polling.
+2. Call `cmo_side_losses_get` for the commanded side and each relevant opposing or participating
+   side. This is CMO's player-visible battle report, not an `UMPIRE` mode switch.
+3. Read the final score when one exists, then compare the assigned objective and end state, final
+   messages and BDA, force preservation, opposing losses, and weapon expenditure. For an unscored
+   scenario, assess those measures separately instead of inventing a replacement score.
+4. Explain what the result says about mission design, force allocation, timing, support,
+   survivability, weapon efficiency, branches, and execution. Distinguish observed results from
+   causal inference and identify concrete lessons or a better alternative plan.
+
+Do not turn the aggregate table into per-unit kill attribution: it has no event time, victim GUID,
+cause, attacker, or weapon. Do not read it during ordinary combat; wait until the simulation has
+ended and use it in the post-action review.
 
 ## Handle capability gaps honestly
 

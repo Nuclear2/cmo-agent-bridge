@@ -31,6 +31,8 @@ forces and opposing plans, but do not present omniscient results as fair player 
 - Use `cmo_side_list` to resolve side identity and posture relationships, but ignore opponent unit,
   contact, and mission counts as intelligence. Query scores and special actions only for the
   commanded side unless the scenario or user explicitly authorizes an umpire view.
+- Treat `cmo_side_losses_get` as CMO's player-visible post-action report. Defer relevant-side loss
+  and expenditure tables until the simulation has ended instead of using them as live BDA.
 - Do not treat an absent contact as an absent unit or a vanished contact as a confirmed kill.
 - Keep contact GUIDs distinct from actual unit GUIDs. Use `actual_unit_guid` only when CMO exposes
   it to the observing side.
@@ -89,6 +91,11 @@ Write a one-sentence mission statement containing who, what effect, where, when,
 - acceptable loss or risk guidance when the user supplied it;
 - termination, pause, or hand-back conditions;
 - the degree of autonomy the user granted.
+
+Do not require victory points as the sole measure of success. If the scenario is unscored, derive
+assessment criteria from the assigned objective and end state. At post-action review, keep
+objective achievement, losses, and expenditure as separate measures rather than inventing a
+replacement score.
 
 Ask the user only when missing authority, ROE, target identity, or an end-state choice would
 materially change the operation. Otherwise state a conservative assumption and continue.
@@ -253,12 +260,35 @@ Compare:
 - changes in adversary freedom of action, sortie generation, sensor or weapon coverage, access,
   interference, and ability to threaten the objective (MOE);
 - friendly damage, fuel, weapons, readiness, high-value-asset exposure, and remaining endurance;
-- BDA confidence, contact uncertainty, score change, and alternative explanations.
+- BDA confidence, contact uncertainty, score change when scoring exists, and alternative
+  explanations.
+
+During the continuing operation, assess adversary attrition from commanded-side contacts and BDA.
+Treat `Contact ... has been lost` as lost track and use native messages as supporting timing or
+cause evidence rather than a platform count.
 
 Choose explicitly among continue, local adjustment, execute a branch, transition to a sequel,
 pause and reconstitute, disengage, or reframe and replan. Return to environment framing when a key
 assumption fails, the adversary changes its approach, or repeated local adjustments do not improve
 the MOE.
+
+### 9. Conduct post-action assessment
+
+When CMO ends, the user ends the run, or the objective, desired end state, or termination criteria
+are satisfied and no further operational orders are intended, read `cmo_side_losses_get` for the
+commanded side and every relevant opposing or participating side. CMO exposes this report to the
+normal player, so doing so at close remains `LIVE_PLAYER` rather than an umpire transition.
+
+Compare mission and end-state achievement, final score when present, MOPs and MOEs, own and
+opposing losses, weapon expenditure, force preservation, final messages, and BDA. Use the result to
+identify strengths and defects in mission design, force allocation, synchronization, support,
+survivability, weapon efficiency, decision timing, branches, and execution, then state concrete
+lessons and a better alternative where warranted. For an unscored scenario, retain these distinct
+measures rather than inventing a composite score.
+
+The table aggregates by type, DBID, and name and contains no loss time, victim GUID, cause,
+attacker, or weapon. Do not turn it into per-unit kill attribution; accidents, fratricide, fire,
+flooding, and third-party action can break that inference. Defer it until this terminal review.
 
 ## Maintain decision matrices
 

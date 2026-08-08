@@ -20,6 +20,7 @@ plan, also consult [operational-planning.md](operational-planning.md).
 - [Plan advanced synchronized air missions](#plan-advanced-synchronized-air-missions)
 - [Use existing special actions](#use-existing-special-actions)
 - [Run the engagement loop](#run-the-engagement-loop)
+- [Close with a post-action review](#close-with-a-post-action-review)
 - [Recover from errors](#recover-from-errors)
 
 ## Preserve the player information boundary
@@ -29,6 +30,8 @@ plan, also consult [operational-planning.md](operational-planning.md).
   positions.
 - Use `cmo_side_list` to resolve identities. Do not treat opponent unit, contact, or mission counts
   as intelligence.
+- Treat `cmo_side_losses_get` as CMO's player-visible battle report. Normally read the commanded
+  side and relevant participants only at post-action review, not as a routine live BDA shortcut.
 - Treat a vanished contact as lost track unless BDA or another commanded-side observation confirms
   destruction.
 - Keep contact GUIDs distinct from actual unit GUIDs. Use `actual_unit_guid` only when returned to
@@ -437,12 +440,38 @@ Do not create or edit special actions in `LIVE_PLAYER`.
 5. Restore or raise compression as explicitly chosen for execution and let asynchronous effects
    develop. Do not automatically slow or pause again before a routine follow-up order.
 6. Reread fuel, damage, readiness, weapons, sensors, allocations, mission coverage, contact
-   uncertainty, BDA, and score.
+   uncertainty, BDA, and score when present.
 7. Choose explicitly: continue, adjust locally, execute a branch, replenish, pause, disengage, or
    reframe.
 
 Do not let a target of opportunity displace the objective without sufficient identification,
 authority, expected gain, and a recovery path.
+
+During continuing combat, use observer-side contact BDA and native messages as evidence, preserve
+uncertainty, and avoid treating repeated BDA or sinking messages as duplicate platform losses.
+
+## Close with a post-action review
+
+Treat the simulation as ready for review when CMO ends, the user ends it, or the objective, desired
+end state, or termination criteria are satisfied and no further operational orders are intended.
+Before deliberately ending or handing back the run, take the final snapshot while polling still
+permits it when possible:
+
+1. If paused, use one controlled 1x read window and restore the prior state afterward. Stop rather
+   than loop if an ended scenario or modal dialog cannot service Lua polling.
+2. Call `cmo_side_losses_get` for the commanded side and every relevant opposing or participating
+   side. CMO presents this battle report to normal players; reading it here remains `LIVE_PLAYER`.
+3. Read final score when available and the final native-message tail. Compare objective and end
+   state achievement, own losses, opposing losses, weapon expenditure, force preservation, BDA,
+   and any unresolved effects. In an unscored scenario, keep these as separate measures.
+4. Assess the plan and execution: mission geometry and activation, allocation and reserve,
+   sequencing and synchronization, support and logistics, survivability, weapon efficiency,
+   decision timing, branches, and abort criteria. State what worked, what failed, why the evidence
+   supports that judgment, and what a better plan would change.
+
+The table is cumulative and has no event time, victim GUID, cause, attacker, or weapon. It proves
+loss and expenditure totals reported by CMO, not who killed each platform. Do not read it
+mid-battle; wait for the post-action review. Do not count `Contact ... has been lost` as destruction.
 
 ## Recover from errors
 

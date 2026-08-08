@@ -4,6 +4,37 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-08 (Preview)
+
+这一版为无计分想定补充了 CMO 原生战损与武器消耗表，并把它纳入推演结束后的复盘流程；README
+同时加入新的项目封面。
+
+### Added
+
+- 新增 `cmo_side_losses_get`：直接读取 CMO `Side.losses` 与 `Side.expenditures` 的累计表，
+  统一官方文档与实际 wrapper 中不一致的 `number`/`count` 字段，并标记自定义损失。
+  该结果不依赖想定得分，也不包含损失时间、原因、攻击方或武器归因。
+- README 使用 CMO Steam 素材加入 `AGENT BRIDGE` 项目封面，并保留开头醒目的 Windows-only
+  平台说明。
+
+### Changed
+
+- `operate-cmo` Skill 将战损表明确为 CMO 对普通玩家可见的累计报告。在 `LIVE_PLAYER` 中，Agent
+  应在想定结束、用户结束推演或判断推演已经完成时读取己方及相关参战方的战损和消耗，并结合任务
+  目标、兵力保存、时序、保障和武器效率反思部署与执行；持续交战中仍使用接触目标 BDA 与消息
+  日志，不把累计表当作实时战果捷径。
+- 无计分想定不再需要虚构替代分数；复盘分别报告目标达成、双方损失、武器消耗和剩余作战能力。
+- 项目版本升级到 `0.7.1`。
+
+### Testing
+
+- 在 CMO Build 1868 实机想定中读取敌对 USAF 的原生累计表，正确返回 15 架 F-16V 损失以及
+  AIM-120C-7、干扰弹消耗；结果与游戏内玩家战损报告一致。
+- 覆盖空表、官方 `number`/实际 `count` 字段、自定义损失、属性读取失败、枚举失败、非法计数和
+  响应预算上限，并验证 MCP、协议 manifest/corpus、Skill 与发行元数据。
+- 非实机测试 2618 项、Release 测试 20 项通过；Pyright、Ruff、插件与 Skill 校验和本地六项
+  发行产物构建通过。
+
 ## [0.7.0] - 2026-07-29 (Preview)
 
 这一版把公开 MCP/CLI 输入合同改为严格、可枚举的模型，并把任务、事件与时间释放路径中能够在
@@ -447,6 +478,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.7.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0
 [0.6.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2
 [0.6.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.1

@@ -125,6 +125,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_scenario_context_get` | none | Read the saved scenario description, only the live current player's side briefing, plain-text projections, and that side's five victory-score thresholds; reports unsaved/missing/incompatible sources instead of exposing another side |
 | `cmo_scenario_time_compression_set` | code `0..5` | Queued Lua mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=CPU-driven coarse one-second slices`, or `5=CPU-driven coarse five-second slices`; codes 4/5 may show legacy 30x/150x labels but are not fixed clocks; it cannot execute while polling is frozen and is not a way to release a paused scenario |
 | `cmo_side_list` | paging | Resolve sides and counts; opponent counts are not live-player intelligence |
+| `cmo_side_losses_get` | exactly one side GUID or name | Read CMO's player-visible cumulative battle-loss and weapon-expenditure report for that side as normalized type/DBID/name/count entries; custom losses are flagged, and no event or kill attribution is implied |
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
 | `cmo_unit_catalog` | exactly one side selector; optional type/name filter, page size, opaque cursor | Fast friendly-force index for stable GUID/name/type selection; use first for a large-side assessment |
@@ -164,8 +165,17 @@ too: verified pause returns `SCENARIO_NOT_ADVANCING` before publishing the opera
 or retrying Lua polling. Never retry that result while still paused.
 
 In `LIVE_PLAYER`, unit, mission, inventory, doctrine, and score reads apply to the commanded side.
-Read adversaries through `cmo_contact_*`. In author or umpire mode, omniscient reads are permitted
-only within the requested scope.
+Read adversaries through `cmo_contact_*` during execution. CMO's battle-loss and expenditure report
+is player-visible: after the simulation ends, `cmo_side_losses_get` may select the commanded side
+and relevant opposing or participating sides without an umpire mode switch. In author or
+umpire mode, other omniscient reads remain limited to the requested scope.
+
+`cmo_side_losses_get` normalizes the official wrapper's inconsistent `number`/`count` field to
+`count` and marks `type="Custom"` entries with `is_custom=true`. The two arrays are cumulative
+snapshots since CMO's current loss/expenditure reset, not phase deltas. Read them once at
+post-action review. Do not sum custom casualties together with platform counts into a synthetic score. The
+wrapper supplies no event time, victim GUID, cause, attacker, or weapon, so it cannot prove which
+side or unit caused a loss.
 
 The native message-log tools require an already established persisted scenario session, but not an
 active Lua poll for each read. `cmo_message_log_read` filters side prefixes case-insensitively using
@@ -424,6 +434,7 @@ Some current tools are valid in both modes but contain author-only shortcuts:
 | `cmo_unit_loadout_set.ignore_magazines` | Keep false | May use for scenario initialization or a controlled test |
 | `cmo_unit_loadout_set.exclude_optional_weapons` | Use only as a legitimate loadout choice | May use for exact test composition |
 | Enemy `cmo_unit_*`, `cmo_mission_*`, `cmo_doctrine_*`, inventories | Forbidden | Permitted within explicit omniscient scope |
+| `cmo_side_losses_get` | Player-visible; query relevant sides after the simulation ends for post-action review | May also be used during authoring or controlled test assessment |
 | `cmo_contact_posture_set` | Identification/ROE decision only | May be used to prepare or correct observer-side perception |
 | `cmo_scenario_time_compression_set` | Normal simulation control | May be used for test acceleration but never as deterministic single-step |
 | `cmo_time_get_state`, `cmo_time_set`, `cmo_simulation_pulse` | Normal host UI time control under the decision-window policy | May also be used for authoring/test control; a pulse remains a bounded 1x run, not a zero-time or deterministic single step |
@@ -490,8 +501,9 @@ The current MCP surface does not provide:
 - deterministic zero-time or fixed-simulation-duration single-step control;
 - automatic multi-mission assignment queues or generated-flight waypoint mutation;
 - complete structured airbase runway, taxi, launch-queue, diversion, quick-turn-history,
-  losses/expenditures-log, scoring-log, or refueling-history projections; native side-prefixed
-  message-log text is current, but it is not a structured substitute for these projections;
+  loss-event/kill-attribution history, scoring-log, or refueling-history projections; cumulative
+  side losses and expenditures are current, while native side-prefixed message-log text remains
+  supporting evidence rather than a structured event history;
 - every official doctrine, mission, operation-planner, zone, group, formation, or scenario field.
 
 Some may become experimental targets. Until then, state the gap or use the editor/manual Lua in
