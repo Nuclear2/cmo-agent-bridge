@@ -4,10 +4,13 @@ import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, overload
+from typing import Literal, cast, overload
 from uuid import uuid4
 
 from cmo_agent_bridge.application.confirmation import ConfirmationTokenStore
+from cmo_agent_bridge.application.host_barrier_policy import (
+    is_effectful_host_operation,
+)
 from cmo_agent_bridge.application.host_quarantine import (
     HostQuarantineResolutionService,
 )
@@ -47,8 +50,13 @@ from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot, render_dispatcher
 from cmo_agent_bridge.state.session_store import SessionStore
+from cmo_agent_bridge.state.models import HostRequestState
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NON_EFFECTFUL_HOST_RESOLUTION_FORMAT,
+    NonEffectfulHostResolutionMarker,
+)
 from cmo_agent_bridge.state.pending_journal import PendingJournalStore
-from cmo_agent_bridge.state.request_ledger import RequestLedger
+from cmo_agent_bridge.state.request_ledger import RequestLedger, RequestRecord
 from cmo_agent_bridge.state.operation_queue import (
     OperationQueueState,
     OperationQueueStore,
@@ -64,6 +72,27 @@ from cmo_agent_bridge.transports.file_bridge.transport import FileBridgeTranspor
 
 POLL_ACTION_SCRIPT = "return ScenEdit_RunScript('CMOAgentBridge/inbox/request.lua')"
 _POLL_FILE = (POLL_ACTION_SCRIPT + "\n").encode("ascii")
+_NON_EFFECTFUL_OPERATION_CLASSES = frozenset(
+    {OperationClass.STATUS, OperationClass.READ}
+)
+_MIGRATABLE_NON_EFFECTFUL_STATES = frozenset(
+    {
+        HostRequestState.PREPARED,
+        HostRequestState.PUBLISHED,
+        HostRequestState.RESPONSE_ACCEPTED,
+        HostRequestState.IDLE_PUBLISHED,
+        HostRequestState.QUARANTINED,
+    }
+)
+_PREPARE_HOST_SCAN_STATES = frozenset(HostRequestState) - frozenset(
+    {
+        HostRequestState.COMPLETED,
+        HostRequestState.REJECTED,
+        HostRequestState.CANCELLED,
+        HostRequestState.RESOLVED,
+    }
+)
+_PREPARE_MIGRATION_REASON = "prepare_migrated_orphaned_non_effectful_request"
 
 
 @dataclass(frozen=True, slots=True)
@@ -250,23 +279,97 @@ async def _prepare_bridge_locked(
         database = StateDatabase(paths.sqlite_file)
         database.initialize()
         queue_store = OperationQueueStore(database)
+        catalog = ManifestCatalog(
+            ReleaseBinding(snapshot=snapshot, registry=OPERATION_REGISTRY)
+        )
+        ledger = RequestLedger(database, catalog)
         nonterminal = queue_store.list(
             root_key=paths.root_key,
             states=frozenset({OperationQueueState.QUEUED, OperationQueueState.ACTIVE}),
         )
-        if paths.pending_file.exists() or nonterminal:
+        host_requests = ledger.list_requests(
+            root_key=paths.root_key,
+            states=_PREPARE_HOST_SCAN_STATES,
+        )
+        migration_candidates: list[RequestRecord] = []
+        host_blockers: list[dict[str, object]] = []
+        for record in host_requests:
+            queue_record = queue_store.get(record.request_id)
+            if queue_record is not None:
+                host_blockers.append(
+                    _prepare_host_blocker(
+                        record,
+                        reason="associated_operation_queue_record",
+                        queue_state=queue_record.state.value,
+                    )
+                )
+            elif (
+                record.operation_class in _NON_EFFECTFUL_OPERATION_CLASSES
+                and record.state in _MIGRATABLE_NON_EFFECTFUL_STATES
+            ):
+                migration_candidates.append(record)
+            else:
+                host_blockers.append(
+                    _prepare_host_blocker(
+                        record,
+                        reason=(
+                            "effectful_host_nonterminal"
+                            if is_effectful_host_operation(record.operation_class)
+                            else "unsupported_host_state_or_operation_class"
+                        ),
+                    )
+                )
+
+        pending_journal = paths.pending_file.exists()
+        if pending_journal or nonterminal or host_blockers:
             raise BridgeError(
                 ErrorCode.STATE_CONFLICT,
                 "bridge preparation is blocked by unfinished CMO work",
                 {
-                    "pending_journal": paths.pending_file.exists(),
+                    "pending_journal": pending_journal,
                     "nonterminal_queue_requests": len(nonterminal),
+                    "nonterminal_queue_request_ids": [
+                        str(record.request_id) for record in nonterminal
+                    ],
+                    "host_quarantine_barriers": host_blockers,
                     "next_step": (
                         "let the current bridge finish, or cancel still-queued requests; "
-                        "resolve any active/quarantined request before upgrading or preparing"
+                        "resolve any effectful active/quarantined request before upgrading "
+                        "or preparing; a missing mutation journal requires investigation"
                     ),
                 },
             )
+
+        for record in migration_candidates:
+            resolved_at_ms = max(time.time_ns() // 1_000_000, record.updated_at_ms)
+            operation_class = cast(
+                Literal[OperationClass.STATUS, OperationClass.READ],
+                record.operation_class,
+            )
+            marker = NonEffectfulHostResolutionMarker(
+                format=NON_EFFECTFUL_HOST_RESOLUTION_FORMAT,
+                mode="non_effectful_outcome_irrelevant",
+                disposition="abandoned",
+                root_key=record.root_key,
+                request_id=record.request_id,
+                request_hash=record.request_hash,
+                operation=record.operation,
+                operation_class=operation_class,
+                reason=_PREPARE_MIGRATION_REASON,
+                resolved_at_ms=resolved_at_ms,
+                failure=None,
+            )
+            resolved = ledger.resolve_non_effectful(
+                record.request_id,
+                expected_states=frozenset({record.state}),
+                marker=marker,
+            )
+            if resolved.state is not HostRequestState.RESOLVED:
+                raise BridgeError(
+                    ErrorCode.STATE_CONFLICT,
+                    "non-effectful Host request migration failed to converge",
+                    {"request_id": str(record.request_id)},
+                )
 
         dispatcher_path.parent.mkdir(parents=True, exist_ok=True)
         paths.inbox.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +399,24 @@ async def _prepare_bridge_locked(
         dispatcher_path=dispatcher_path,
         poll_path=poll_path,
     )
+
+
+def _prepare_host_blocker(
+    record: RequestRecord,
+    *,
+    reason: str,
+    queue_state: str | None = None,
+) -> dict[str, object]:
+    detail: dict[str, object] = {
+        "request_id": str(record.request_id),
+        "operation": record.operation,
+        "operation_class": record.operation_class.value,
+        "host_request_state": record.state.value,
+        "reason": reason,
+    }
+    if queue_state is not None:
+        detail["operation_queue_state"] = queue_state
+    return detail
 
 
 def build_application_runtime(

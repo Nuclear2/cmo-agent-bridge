@@ -6,13 +6,13 @@ Codex plugin 同时安装 CMO 的 MCP 配置和完整 `operate-cmo` Skill。先�
 
 ## 只有 ChatGPT / Codex Desktop
 
-如果没有可用的 `codex` CLI，下载 v0.7.2 Release 中的本地安装脚本，再从磁盘执行：
+如果没有可用的 `codex` CLI，下载 v0.7.3 Release 中的本地安装脚本，再从磁盘执行：
 
 ```powershell
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -76,7 +76,7 @@ enabled = true
 command = 'C:\Users\you\.local\bin\cmo-bridge.exe'
 ```
 
-仅注册 MCP 不会安装 Skill。还需从 `v0.7.2` 标签复制完整目录
+仅注册 MCP 不会安装 Skill。还需从 `v0.7.3` 标签复制完整目录
 `plugins/cmo-agent-bridge/skills/operate-cmo` 到 `~/.agents/skills/operate-cmo/`；项目级可使用
 `<project>/.agents/skills/operate-cmo/`。必须包含 `SKILL.md`、`agents/` 和 `references/`。
 

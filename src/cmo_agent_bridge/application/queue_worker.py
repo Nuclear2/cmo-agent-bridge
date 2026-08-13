@@ -29,6 +29,10 @@ from cmo_agent_bridge.transports.file_bridge.models import (
 )
 from cmo_agent_bridge.transports.file_bridge.process_guard import ProcessInfo
 
+from .host_barrier_policy import (
+    NONTERMINAL_HOST_REQUEST_STATES,
+    host_request_blocks_mutations,
+)
 from .queue_models import (
     QueueClock,
     QueueError,
@@ -200,6 +204,12 @@ class QueueWorker:
                     # not consume or reject later FIFO items until that barrier is
                     # resolved through the dedicated quarantine workflow.
                     return False
+                # The first barrier scan happens before RootLock acquisition.
+                # Recheck inside the worker session after recovery and before a
+                # new claim so a concurrently persisted Host-only orphan cannot
+                # slip into the publication window.
+                if self._has_unresolved_quarantine_barrier():
+                    return False
                 record = self._queue_store.claim_next(
                     root_key=self._root_key, at_ms=self._clock.now_ms()
                 )
@@ -281,18 +291,21 @@ class QueueWorker:
         raise BridgeError(ErrorCode.SCENARIO_CHANGED, message, details)
 
     def _has_unresolved_quarantine_barrier(self) -> bool:
-        quarantined = self._queue_store.list(
+        host_candidates = self._ledger.list_requests(
             root_key=self._root_key,
-            states=frozenset({QueuedOperationState.QUARANTINED}),
+            states=NONTERMINAL_HOST_REQUEST_STATES,
         )
-        for record in quarantined:
-            ledger = self._ledger.get_request(record.request_id)
-            if ledger is not None and ledger.state not in {
-                HostRequestState.COMPLETED,
-                HostRequestState.REJECTED,
-                HostRequestState.CANCELLED,
-                HostRequestState.RESOLVED,
-            }:
+        for record in host_candidates:
+            queued = self._queue_store.get(record.request_id)
+            queue_state = (
+                queued.state
+                if queued is not None and queued.root_key == self._root_key
+                else None
+            )
+            if host_request_blocks_mutations(
+                record,
+                queue_state=queue_state,
+            ):
                 return True
         return False
 

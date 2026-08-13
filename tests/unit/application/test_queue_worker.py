@@ -25,7 +25,7 @@ from cmo_agent_bridge.application.queue_worker import (  # pyright: ignore[repor
 )
 from cmo_agent_bridge.errors import ErrorCode
 from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
-from cmo_agent_bridge.protocol.canonical import request_sha256
+from cmo_agent_bridge.protocol.canonical import canonical_body_bytes, request_sha256
 from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.models import ExchangeCommand, RequestBody
 from cmo_agent_bridge.protocol.response_models import (
@@ -425,6 +425,59 @@ def _insert_prepared_ledger(rig: _Rig, record: QueuedOperationRecord) -> None:
     )
 
 
+def _insert_host_only_read_quarantine(rig: _Rig) -> RequestRecord:
+    request_id = uuid4()
+    invocation = OPERATION_REGISTRY.resolve_wire_invocation("scenario.get", {})
+    body = RequestBody(
+        protocol=rig.snapshot.protocol,
+        release_id=rig.snapshot.release_id,
+        runtime_version=rig.snapshot.runtime_version,
+        runtime_tag=rig.snapshot.runtime_tag,
+        runtime_asset_sha256=rig.snapshot.runtime_asset_sha256,
+        expected_lineage_id=LINEAGE_ID,
+        expected_activation_id=ACTIVATION_ID,
+        operation_manifest_sha256=rig.snapshot.operation_manifest_sha256,
+        operation="scenario.get",
+        arguments={},
+    )
+    prepared = RequestRecord(
+        request_id=request_id,
+        root_key=ROOT_KEY,
+        request_hash=request_sha256(body),
+        operation="scenario.get",
+        operation_class=invocation.effective_class,
+        state=HostRequestState.PREPARED,
+        runtime_snapshot=rig.snapshot,
+        result_schema_id=invocation.result_schema.schema_id,
+        recovery_schema_id=(
+            None if invocation.recovery_schema is None else invocation.recovery_schema.schema_id
+        ),
+        body_json=canonical_body_bytes(body),
+        lineage_id=LINEAGE_ID,
+        activation_id=ACTIVATION_ID,
+        result_json=None,
+        error_json=None,
+        resolution_json=None,
+        created_at_ms=1_100,
+        updated_at_ms=1_100,
+        terminal_at_ms=None,
+    )
+    rig.ledger.insert_prepared(prepared)
+    return rig.ledger.transition(
+        request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.QUARANTINED,
+        updated_at_ms=1_101,
+        error_json=canonical_queue_json(
+            {
+                "code": ErrorCode.INDETERMINATE_OUTCOME.value,
+                "message": "read publication outcome unknown",
+                "details": {},
+            }
+        ).decode("utf-8"),
+    )
+
+
 def _settle_ledger_completed(rig: _Rig, record: QueuedOperationRecord) -> None:
     _insert_prepared_ledger(rig, record)
     result = {"accepted": True, "code": 3, "observed_time_compression": 3.0}
@@ -458,6 +511,185 @@ async def test_worker_claims_and_completes_fifo_orders_with_unbounded_exchange_t
     )
     assert rig.queue.get(first.request_id).state is QueuedOperationState.COMPLETED  # type: ignore[union-attr]
     assert rig.queue.get(second.request_id).state is QueuedOperationState.COMPLETED  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio
+async def test_worker_ignores_host_only_read_quarantine(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    orphan = _insert_host_only_read_quarantine(rig)
+    queued = _submit(rig, 3)
+
+    assert await rig.worker.run_once() is True
+
+    assert orphan.state is HostRequestState.QUARANTINED
+    assert rig.queue.get(queued.request_id).state is QueuedOperationState.COMPLETED  # type: ignore[union-attr]
+    assert [command.request_id for command in rig.channel.commands] == [queued.request_id]
+
+
+@pytest.mark.asyncio
+async def test_worker_blocks_host_only_effectful_quarantine(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    orphan = _submit(rig, 3)
+    queued = _submit(rig, 4)
+    _insert_prepared_ledger(rig, orphan)
+    rig.ledger.transition(
+        orphan.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.QUARANTINED,
+        updated_at_ms=1_200,
+        error_json=canonical_queue_json(
+            {
+                "code": ErrorCode.INDETERMINATE_OUTCOME.value,
+                "message": "mutation publication outcome unknown",
+                "details": {},
+            }
+        ).decode("utf-8"),
+    )
+    with rig.queue._database._transaction(write=True) as connection:  # pyright: ignore[reportPrivateUsage]
+        deleted = connection.execute(
+            "DELETE FROM operation_queue WHERE request_id=?",
+            (str(orphan.request_id),),
+        )
+        assert deleted.rowcount == 1
+
+    assert await rig.worker.run_once() is False
+
+    stored = rig.queue.get(queued.request_id)
+    assert stored is not None and stored.state is QueuedOperationState.QUEUED
+    assert rig.transport.session_count == 0
+    assert rig.channel.commands == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "host_state",
+    (HostRequestState.PUBLISHED, HostRequestState.IDLE_PUBLISHED),
+)
+async def test_worker_blocks_host_only_effectful_nonterminal_orphan(
+    tmp_path: Path,
+    host_state: HostRequestState,
+) -> None:
+    rig = _rig(tmp_path)
+    orphan = _submit(rig, 3)
+    queued = _submit(rig, 4)
+    _insert_prepared_ledger(rig, orphan)
+    rig.ledger.transition(
+        orphan.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=host_state,
+        updated_at_ms=1_200,
+    )
+    with rig.queue._database._transaction(write=True) as connection:  # pyright: ignore[reportPrivateUsage]
+        deleted = connection.execute(
+            "DELETE FROM operation_queue WHERE request_id=?",
+            (str(orphan.request_id),),
+        )
+        assert deleted.rowcount == 1
+
+    assert await rig.worker.run_once() is False
+
+    stored = rig.queue.get(queued.request_id)
+    assert stored is not None and stored.state is QueuedOperationState.QUEUED
+    assert rig.transport.session_count == 0
+    assert rig.channel.commands == []
+
+
+@pytest.mark.asyncio
+async def test_worker_enters_recovery_for_normal_queue_backed_active_request(
+    tmp_path: Path,
+) -> None:
+    rig = _rig(tmp_path)
+    active = _submit(rig, 3)
+    queued = _submit(rig, 4)
+    assert _claim_next(rig).request_id == active.request_id
+    _insert_prepared_ledger(rig, active)
+    rig.ledger.transition(
+        active.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.PUBLISHED,
+        updated_at_ms=1_200,
+    )
+
+    assert await rig.worker.run_once() is False
+
+    active_stored = rig.queue.get(active.request_id)
+    queued_stored = rig.queue.get(queued.request_id)
+    assert active_stored is not None and active_stored.state is QueuedOperationState.ACTIVE
+    assert queued_stored is not None and queued_stored.state is QueuedOperationState.QUEUED
+    assert rig.transport.session_count == 1
+    assert rig.channel.commands == []
+
+
+@pytest.mark.asyncio
+async def test_worker_rechecks_host_barrier_inside_session_before_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rig = _rig(tmp_path)
+    queued = _submit(rig, 3)
+    original_check = rig.worker._has_unresolved_quarantine_barrier  # pyright: ignore[reportPrivateUsage]
+    checks = 0
+    orphan_ids: list[UUID] = []
+
+    def inject_barrier_between_preflight_and_claim() -> bool:
+        nonlocal checks
+        checks += 1
+        if checks == 1:
+            return False
+        if checks == 2:
+            orphan = _submit(rig, 4)
+            _insert_prepared_ledger(rig, orphan)
+            rig.ledger.transition(
+                orphan.request_id,
+                expected_states=frozenset({HostRequestState.PREPARED}),
+                new_state=HostRequestState.PUBLISHED,
+                updated_at_ms=1_200,
+            )
+            with rig.queue._database._transaction(  # pyright: ignore[reportPrivateUsage]
+                write=True
+            ) as connection:
+                deleted = connection.execute(
+                    "DELETE FROM operation_queue WHERE request_id=?",
+                    (str(orphan.request_id),),
+                )
+                assert deleted.rowcount == 1
+            orphan_ids.append(orphan.request_id)
+        return original_check()
+
+    monkeypatch.setattr(
+        rig.worker,
+        "_has_unresolved_quarantine_barrier",
+        inject_barrier_between_preflight_and_claim,
+    )
+
+    assert await rig.worker.run_once() is False
+
+    stored = rig.queue.get(queued.request_id)
+    assert stored is not None and stored.state is QueuedOperationState.QUEUED
+    assert checks == 2
+    assert len(orphan_ids) == 1
+    assert rig.transport.session_count == 1
+    assert rig.channel.commands == []
+
+
+@pytest.mark.asyncio
+async def test_worker_blocks_unexpected_dynamic_host_quarantine(tmp_path: Path) -> None:
+    rig = _rig(tmp_path)
+    orphan = _insert_host_only_read_quarantine(rig)
+    queued = _submit(rig, 3)
+    with rig.queue._database._transaction(write=True) as connection:  # pyright: ignore[reportPrivateUsage]
+        updated = connection.execute(
+            "UPDATE requests SET operation_class='dynamic' WHERE request_id=?",
+            (str(orphan.request_id),),
+        )
+        assert updated.rowcount == 1
+
+    assert await rig.worker.run_once() is False
+
+    stored = rig.queue.get(queued.request_id)
+    assert stored is not None and stored.state is QueuedOperationState.QUEUED
+    assert rig.transport.session_count == 0
+    assert rig.channel.commands == []
 
 
 @pytest.mark.asyncio

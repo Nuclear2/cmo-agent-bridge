@@ -787,7 +787,16 @@ class UnitCatalogArgs(SideSelector):
 
 
 class UnitOverviewArgs(SideSelector):
-    page_size: int = Field(default=40, ge=1, le=50)
+    page_size: int = Field(
+        default=40,
+        ge=1,
+        le=50,
+        title="Overview Units Per Page (1-50)",
+        description=(
+            "Number of units included in one native-text overview page. "
+            "The allowed range is 1 through 50; use next_cursor for additional pages."
+        ),
+    )
     cursor: str | None = None
     unit_guids: list[NonEmptyStr] | None = Field(default=None, min_length=1, max_length=500)
     unit_type: UnitTypeFilter | None = None

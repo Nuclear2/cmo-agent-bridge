@@ -5,7 +5,12 @@ from typing import Literal
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic import JsonValue
 
+from cmo_agent_bridge.application.host_barrier_policy import (
+    host_request_blocks_mutations,
+    is_effectful_host_operation,
+)
 from cmo_agent_bridge.application.queue_models import (
     QueueError,
     QueuedOperationState,
@@ -13,8 +18,9 @@ from cmo_agent_bridge.application.queue_models import (
 )
 from cmo_agent_bridge.application.queue_service import QueueService
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.operations.kinds import OperationClass
 from cmo_agent_bridge.operations.registry import OPERATION_REGISTRY
-from cmo_agent_bridge.protocol.canonical import request_sha256
+from cmo_agent_bridge.protocol.canonical import canonical_body_bytes, request_sha256
 from cmo_agent_bridge.protocol.manifest import ManifestCatalog, ReleaseBinding
 from cmo_agent_bridge.protocol.models import RequestBody
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot
@@ -118,6 +124,60 @@ def _insert_prepared_ledger(service: QueueService, request_id: UUID) -> RequestR
     )
     service._ledger.insert_prepared(prepared)  # pyright: ignore[reportPrivateUsage]
     return prepared
+
+
+def _insert_host_only_quarantine(
+    service: QueueService,
+    *,
+    operation: str,
+    arguments: dict[str, JsonValue],
+) -> RequestRecord:
+    request_id = uuid4()
+    snapshot = _snapshot()
+    invocation = OPERATION_REGISTRY.resolve_wire_invocation(operation, arguments)
+    body = RequestBody(
+        protocol=snapshot.protocol,
+        release_id=snapshot.release_id,
+        runtime_version=snapshot.runtime_version,
+        runtime_tag=snapshot.runtime_tag,
+        runtime_asset_sha256=snapshot.runtime_asset_sha256,
+        expected_lineage_id=None,
+        expected_activation_id=None,
+        operation_manifest_sha256=snapshot.operation_manifest_sha256,
+        operation=operation,
+        arguments=arguments,
+    )
+    prepared = RequestRecord(
+        request_id=request_id,
+        root_key=ROOT_KEY,
+        request_hash=request_sha256(body),
+        operation=operation,
+        operation_class=invocation.effective_class,
+        state=HostRequestState.PREPARED,
+        runtime_snapshot=snapshot,
+        result_schema_id=invocation.result_schema.schema_id,
+        recovery_schema_id=(
+            None if invocation.recovery_schema is None else invocation.recovery_schema.schema_id
+        ),
+        body_json=canonical_body_bytes(body),
+        lineage_id=None,
+        activation_id=None,
+        result_json=None,
+        error_json=None,
+        resolution_json=None,
+        created_at_ms=1_100,
+        updated_at_ms=1_100,
+        terminal_at_ms=None,
+    )
+    service._ledger.insert_prepared(prepared)  # pyright: ignore[reportPrivateUsage]
+    quarantined = service._ledger.transition(  # pyright: ignore[reportPrivateUsage]
+        request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.QUARANTINED,
+        updated_at_ms=1_101,
+        error_json=_error_bytes(ErrorCode.INDETERMINATE_OUTCOME).decode("utf-8"),
+    )
+    return quarantined
 
 
 def _error_bytes(code: ErrorCode) -> bytes:
@@ -372,6 +432,18 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
 
     assert blocked.value.code is ErrorCode.MUTATION_QUARANTINED
     assert blocked.value.details["quarantined_request_ids"] == [str(first.request_id)]
+    assert blocked.value.details["barrier_request_ids"] == [str(first.request_id)]
+    assert blocked.value.details["active_barriers"] == [
+        {
+            "request_id": str(first.request_id),
+            "operation": "scenario.time_compression.set",
+            "operation_class": "mutation",
+            "host_request_state": "quarantined",
+            "queue_state": "quarantined",
+            "source": "queue_backed",
+            "sequence": first.sequence,
+        }
+    ]
     assert "resolve-quarantine" in blocked.value.details["next_step"]
     blocked_status = service.get(request_id=first.request_id)
     assert blocked_status.quarantine_resolution is not None
@@ -381,6 +453,10 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
     assert len(active_barriers) == 1
     assert active_barriers[0].request_id == first.request_id
     assert active_barriers[0].operation == "scenario.time_compression.set"
+    assert active_barriers[0].operation_class is OperationClass.MUTATION
+    assert active_barriers[0].host_request_state is HostRequestState.QUARANTINED
+    assert active_barriers[0].queue_state is QueuedOperationState.QUARANTINED
+    assert active_barriers[0].source == "queue_backed"
     assert active_barriers[0].sequence == first.sequence
     blocked_summary = service.summary()
     assert blocked_summary.queued == 0
@@ -388,6 +464,7 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
     assert blocked_summary.unresolved_quarantined == 1
     assert blocked_summary.resolved_quarantined == 0
     assert blocked_summary.barrier_active is True
+    assert blocked_summary.active_barriers == active_barriers
 
     service._ledger.transition(  # pyright: ignore[reportPrivateUsage]
         first.request_id,
@@ -415,6 +492,7 @@ def test_submit_fails_fast_for_unresolved_quarantine_and_allows_resolved_history
     assert resolved_summary.unresolved_quarantined == 0
     assert resolved_summary.resolved_quarantined == 1
     assert resolved_summary.barrier_active is False
+    assert resolved_summary.active_barriers == ()
 
     accepted = service.submit(
         operation="scenario.time_compression.set",
@@ -499,7 +577,267 @@ def test_host_only_quarantine_blocks_submission_and_activates_summary_barrier(
     host_only_barriers = service.active_quarantine_barriers()
     assert len(host_only_barriers) == 1
     assert host_only_barriers[0].request_id == receipt.request_id
+    assert host_only_barriers[0].operation_class is OperationClass.MUTATION
+    assert host_only_barriers[0].source == "host_only"
     assert host_only_barriers[0].sequence is None
+    assert summary.active_barriers == host_only_barriers
+
+
+@pytest.mark.parametrize(
+    "host_state",
+    (HostRequestState.PUBLISHED, HostRequestState.IDLE_PUBLISHED),
+)
+def test_host_only_effectful_nonterminal_orphan_blocks_submission(
+    tmp_path: Path,
+    host_state: HostRequestState,
+) -> None:
+    service = _service(tmp_path)
+    receipt = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    _insert_prepared_ledger(service, receipt.request_id)
+    service._ledger.transition(  # pyright: ignore[reportPrivateUsage]
+        receipt.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=host_state,
+        updated_at_ms=1_101,
+    )
+    with service._ledger._database._transaction(  # pyright: ignore[reportPrivateUsage]
+        write=True
+    ) as connection:
+        deleted = connection.execute(
+            "DELETE FROM operation_queue WHERE request_id=?",
+            (str(receipt.request_id),),
+        )
+        assert deleted.rowcount == 1
+
+    with pytest.raises(BridgeError) as blocked:
+        service.submit(
+            operation="scenario.time_compression.set",
+            arguments={"code": 4},
+        )
+
+    assert blocked.value.code is ErrorCode.MUTATION_QUARANTINED
+    barriers = service.active_quarantine_barriers()
+    assert len(barriers) == 1
+    assert barriers[0].request_id == receipt.request_id
+    assert barriers[0].operation_class is OperationClass.MUTATION
+    assert barriers[0].source == "host_only"
+    assert barriers[0].sequence is None
+
+
+def test_queue_backed_active_effectful_request_is_not_a_barrier(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    first = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    _insert_prepared_ledger(service, first.request_id)
+    active = service._queue_store.claim_next(  # pyright: ignore[reportPrivateUsage]
+        root_key=ROOT_KEY,
+        at_ms=1_101,
+    )
+    assert active is not None and active.request_id == first.request_id
+    service._ledger.transition(  # pyright: ignore[reportPrivateUsage]
+        first.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.PUBLISHED,
+        updated_at_ms=1_102,
+    )
+
+    second = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 4},
+    )
+
+    assert second.state is QueuedOperationState.QUEUED
+    assert service.active_quarantine_barriers() == ()
+    assert service.summary().barrier_active is False
+
+
+@pytest.mark.parametrize(
+    ("queue_state", "expected"),
+    (
+        (None, True),
+        (QueuedOperationState.QUEUED, True),
+        (QueuedOperationState.ACTIVE, False),
+        (QueuedOperationState.COMPLETED, True),
+        (QueuedOperationState.REJECTED, True),
+        (QueuedOperationState.QUARANTINED, True),
+        (QueuedOperationState.CANCELLED, True),
+    ),
+)
+def test_effectful_host_nonterminal_only_allows_active_queue_recovery(
+    tmp_path: Path,
+    queue_state: QueuedOperationState | None,
+    expected: bool,
+) -> None:
+    service = _service(tmp_path)
+    receipt = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    prepared = _insert_prepared_ledger(service, receipt.request_id)
+
+    assert (
+        host_request_blocks_mutations(prepared, queue_state=queue_state) is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("operation_class", "expected"),
+    (
+        (OperationClass.STATUS, False),
+        (OperationClass.READ, False),
+        (OperationClass.MUTATION, True),
+        (OperationClass.DESTRUCTIVE, True),
+        (OperationClass.RECONCILE, True),
+        (OperationClass.DYNAMIC, False),
+    ),
+)
+def test_effectful_host_operation_policy_is_explicit(
+    operation_class: OperationClass,
+    expected: bool,
+) -> None:
+    assert is_effectful_host_operation(operation_class) is expected
+
+
+def test_unexpected_dynamic_host_quarantine_fails_closed(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    orphan = _insert_host_only_quarantine(
+        service,
+        operation="scenario.get",
+        arguments={},
+    )
+    with service._ledger._database._transaction(  # pyright: ignore[reportPrivateUsage]
+        write=True
+    ) as connection:
+        updated = connection.execute(
+            "UPDATE requests SET operation_class='dynamic' WHERE request_id=?",
+            (str(orphan.request_id),),
+        )
+        assert updated.rowcount == 1
+
+    with pytest.raises(BridgeError) as blocked:
+        service.submit(
+            operation="scenario.time_compression.set",
+            arguments={"code": 4},
+        )
+
+    assert blocked.value.code is ErrorCode.MUTATION_QUARANTINED
+    barriers = service.active_quarantine_barriers()
+    assert len(barriers) == 1
+    assert barriers[0].request_id == orphan.request_id
+    assert barriers[0].operation_class is OperationClass.DYNAMIC
+    assert barriers[0].source == "host_only"
+    assert service.summary().active_barriers == barriers
+
+
+@pytest.mark.parametrize(
+    ("operation", "arguments", "expected_class"),
+    (
+        (
+            "bridge.status",
+            {"activation_candidate": "77777777-7777-4777-8777-777777777777"},
+            OperationClass.STATUS,
+        ),
+        ("scenario.get", {}, OperationClass.READ),
+    ),
+)
+def test_host_only_non_effectful_quarantine_does_not_block_mutation_submission(
+    tmp_path: Path,
+    operation: str,
+    arguments: dict[str, JsonValue],
+    expected_class: OperationClass,
+) -> None:
+    service = _service(tmp_path)
+    orphan = _insert_host_only_quarantine(
+        service,
+        operation=operation,
+        arguments=arguments,
+    )
+    assert orphan.operation_class is expected_class
+
+    accepted = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 4},
+    )
+
+    assert accepted.state is QueuedOperationState.QUEUED
+    assert service.active_quarantine_barriers() == ()
+    summary = service.summary()
+    assert summary.queued == 1
+    assert summary.barrier_active is False
+
+
+def test_queue_backed_non_effectful_host_evidence_fails_closed(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    first = service.submit(
+        operation="scenario.time_compression.set",
+        arguments={"code": 3},
+    )
+    _insert_prepared_ledger(service, first.request_id)
+    service._ledger.transition(  # pyright: ignore[reportPrivateUsage]
+        first.request_id,
+        expected_states=frozenset({HostRequestState.PREPARED}),
+        new_state=HostRequestState.QUARANTINED,
+        updated_at_ms=1_101,
+        error_json=_error_bytes(ErrorCode.INDETERMINATE_OUTCOME).decode("utf-8"),
+    )
+    with service._ledger._database._transaction(  # pyright: ignore[reportPrivateUsage]
+        write=True
+    ) as connection:
+        updated = connection.execute(
+            "UPDATE requests SET operation_class='read' WHERE request_id=?",
+            (str(first.request_id),),
+        )
+        assert updated.rowcount == 1
+
+    with pytest.raises(BridgeError) as blocked:
+        service.submit(
+            operation="scenario.time_compression.set",
+            arguments={"code": 4},
+        )
+
+    assert blocked.value.code is ErrorCode.MUTATION_QUARANTINED
+    barriers = service.active_quarantine_barriers()
+    assert len(barriers) == 1
+    assert barriers[0].request_id == first.request_id
+    assert barriers[0].operation_class is OperationClass.READ
+    assert barriers[0].source == "queue_backed"
+    assert service.summary().barrier_active is True
+
+
+def test_impossible_host_only_non_effectful_state_fails_closed(tmp_path: Path) -> None:
+    service = _service(tmp_path)
+    orphan = _insert_host_only_quarantine(
+        service,
+        operation="scenario.get",
+        arguments={},
+    )
+    with service._ledger._database._transaction(  # pyright: ignore[reportPrivateUsage]
+        write=True
+    ) as connection:
+        updated = connection.execute(
+            "UPDATE requests SET state='cancel_published',error_json=NULL WHERE request_id=?",
+            (str(orphan.request_id),),
+        )
+        assert updated.rowcount == 1
+
+    with pytest.raises(BridgeError) as blocked:
+        service.submit(
+            operation="scenario.time_compression.set",
+            arguments={"code": 4},
+        )
+
+    assert blocked.value.code is ErrorCode.MUTATION_QUARANTINED
+    barriers = service.active_quarantine_barriers()
+    assert len(barriers) == 1
+    assert barriers[0].request_id == orphan.request_id
+    assert barriers[0].operation_class is OperationClass.READ
+    assert barriers[0].source == "host_only"
+    assert service.summary().barrier_active is True
 
 
 @pytest.mark.parametrize(

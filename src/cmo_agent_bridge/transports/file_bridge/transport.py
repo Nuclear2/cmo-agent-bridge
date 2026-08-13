@@ -12,7 +12,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import TracebackType
-from typing import cast
+from typing import Literal, cast
 
 from pydantic import ValidationError
 
@@ -38,6 +38,11 @@ from cmo_agent_bridge.protocol.response_models import (
 )
 from cmo_agent_bridge.protocol.runtime import RuntimeSnapshot, Sha256, revalidate_runtime_snapshot
 from cmo_agent_bridge.state.models import DeliveryIntent, HostRequestState
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NonEffectfulFailureEvidence,
+    NonEffectfulHostResolutionMarker,
+    canonical_non_effectful_host_resolution,
+)
 from cmo_agent_bridge.state.pending_journal import PendingJournalStore
 from cmo_agent_bridge.state.request_ledger import RequestLedger, RequestRecord
 from cmo_agent_bridge.state.sqlite import StateDatabase
@@ -207,6 +212,9 @@ class _ExchangeState:
     safety_finished: bool = False
     primary: BaseException | None = None
     deferred_safety_failure: BaseException | None = None
+    active_phase: str = "validation"
+    primary_failure_phase: str | None = None
+    non_effectful_resolution: NonEffectfulHostResolutionMarker | None = None
 
 
 def _classify_exchange_error(error: BaseException) -> BaseException:
@@ -230,13 +238,23 @@ def _rejection_payload(error: BaseException) -> dict[str, object]:
     }
 
 
-def _quarantine_json(reason: str) -> str:
-    return _canonical_json_text(
-        {
-            "code": ErrorCode.STATE_CONFLICT.value,
-            "details": {"reason": reason},
-            "message": "file-bridge read exchange requires recovery",
-        }
+def _failure_evidence(
+    error: BaseException,
+    *,
+    phase: str,
+) -> NonEffectfulFailureEvidence:
+    original = error
+    observed: set[int] = set()
+    while original.__cause__ is not None and id(original) not in observed:
+        observed.add(id(original))
+        original = original.__cause__
+    winerror = getattr(original, "winerror", None)
+    if type(winerror) is not int or winerror < 0:
+        winerror = None
+    return NonEffectfulFailureEvidence(
+        phase=phase,
+        exception_type=type(original).__name__,
+        winerror=winerror,
     )
 
 
@@ -911,6 +929,7 @@ class _FileBridgeChannel:
         try:
             return await self._execute_exchange(state)
         except BaseException as error:
+            state.primary_failure_phase = state.active_phase
             primary = _classify_exchange_error(error)
             state.primary = primary
             safety_failure, safety_cancellation = await self._run_safety_protected(state)
@@ -932,6 +951,7 @@ class _FileBridgeChannel:
 
     async def _execute_exchange(self, state: _ExchangeState) -> ResponseArtifact:
         validated = state.validated
+        state.active_phase = "request_prepare"
         first = self._new_attempt(state)
         intended_at_ms = first.intent.intended_at_ms
         request = RequestRecord(
@@ -956,8 +976,10 @@ class _FileBridgeChannel:
         )
         state.request_record = request
         self._transport.ledger.insert_prepared(request)
+        state.active_phase = "delivery_intent_insert"
         self._transport.ledger.insert_delivery(first.intent)
         self._publish_attempt(state, first)
+        state.active_phase = "request_publication_transition"
         self._transport.ledger.transition(
             validated.request_id,
             expected_states=frozenset({HostRequestState.PREPARED}),
@@ -976,6 +998,7 @@ class _FileBridgeChannel:
                 else max(0.0, response_deadline - asyncio.get_running_loop().time())
             )
             try:
+                state.active_phase = "response_wait"
                 artifact = await self._wait_for_response(
                     validated=validated,
                     response_path=state.response_path,
@@ -990,6 +1013,7 @@ class _FileBridgeChannel:
                             state,
                             minimum_intended_at_ms=intended_at_ms + 1,
                         )
+                        state.active_phase = "retry_delivery_intent_insert"
                         self._transport.ledger.insert_delivery(retry.intent)
                         self._publish_attempt(state, retry)
                         second_delivery_published = True
@@ -1069,14 +1093,17 @@ class _FileBridgeChannel:
         state: _ExchangeState,
         attempt: _PublicationAttempt,
     ) -> None:
+        state.active_phase = "process_prepublication_check"
         self._require_original_process_before_publication()
         attempt.entered = True
+        state.active_phase = "inbox_request_publication"
         self._transport.inbox.publish_delivery(
             attempt.delivery,
             runtime_snapshot=state.validated.runtime_snapshot,
         )
         attempt.returned = True
         state.any_publication_returned = True
+        state.active_phase = "delivery_publication_marker"
         self._transport.ledger.mark_delivery_published(
             attempt.delivery.delivery_id,
             published_at_ms=attempt.published_at_ms,
@@ -1095,6 +1122,7 @@ class _FileBridgeChannel:
         artifact: ResponseArtifact,
     ) -> ResponseArtifact:
         state.artifact = artifact
+        state.active_phase = "response_record"
         recorded = self._transport.ledger.record_response(artifact)
         if recorded.delivery_id != artifact.accepted_response.envelope.delivery_id:
             raise _state_conflict("recorded response delivery differs from accepted artifact")
@@ -1103,6 +1131,7 @@ class _FileBridgeChannel:
         )
         response_at_ms = state.epochs.next(minimum=last_publication_at_ms)
         state.response_accepted_at_ms = response_at_ms
+        state.active_phase = "response_acceptance_transition"
         self._transport.ledger.transition(
             state.validated.request_id,
             expected_states=frozenset({HostRequestState.PUBLISHED}),
@@ -1112,6 +1141,7 @@ class _FileBridgeChannel:
         self._publish_idle(state)
         idle_at_ms = state.epochs.next(minimum=response_at_ms)
         state.idle_at_ms = idle_at_ms
+        state.active_phase = "idle_publication_transition"
         self._transport.ledger.transition(
             state.validated.request_id,
             expected_states=frozenset({HostRequestState.RESPONSE_ACCEPTED}),
@@ -1124,6 +1154,7 @@ class _FileBridgeChannel:
         return artifact
 
     def _publish_idle(self, state: _ExchangeState) -> None:
+        state.active_phase = "inbox_idle_publication"
         try:
             self._transport.inbox.publish_idle()
         except BaseException:
@@ -1143,6 +1174,7 @@ class _FileBridgeChannel:
             terminal_at_ms = state.epochs.next(minimum=minimum_epoch)
             state.terminal_at_ms = terminal_at_ms
         terminal_state, result_json, error_json = self._artifact_terminal_fields(artifact)
+        state.active_phase = "terminal_transition"
         try:
             return self._transport.ledger.transition(
                 state.validated.request_id,
@@ -1336,13 +1368,13 @@ class _FileBridgeChannel:
                     _attach_secondary(primary, idle_error, "idle publication failure")
             if state.idle_failed:
                 reason = "idle_publication_failed"
-            self._quarantine(state, reason)
+            self._resolve_non_effectful(state, reason)
             state.safety_finished = True
             self._poisoned = True
             return
 
         if state.idle_failed:
-            self._quarantine(state, "idle_publication_failed")
+            self._resolve_non_effectful(state, "idle_publication_failed")
             state.safety_finished = True
             self._poisoned = True
             return
@@ -1361,6 +1393,13 @@ class _FileBridgeChannel:
                             self._publish_idle(state)
                         except BaseException as idle_error:
                             _attach_secondary(primary, idle_error, "idle publication failure")
+                    if observed.state is HostRequestState.IDLE_PUBLISHED:
+                        reason = (
+                            "idle_publication_failed"
+                            if state.idle_failed
+                            else "artifact_evidence_drift"
+                        )
+                        self._resolve_non_effectful(state, reason)
                     self._poisoned = True
                     state.safety_finished = True
                     return
@@ -1372,7 +1411,7 @@ class _FileBridgeChannel:
                 quarantine_reason = (
                     "idle_publication_failed" if state.idle_failed else "artifact_evidence_drift"
                 )
-                self._quarantine(state, quarantine_reason)
+                self._resolve_non_effectful(state, quarantine_reason)
                 state.safety_finished = True
                 self._poisoned = True
                 return
@@ -1384,6 +1423,7 @@ class _FileBridgeChannel:
             if self._terminal_matches_artifact(state, request, durable_artifact):
                 self._queue_cleanup(state)
             else:
+                self._resolve_non_effectful(state, "terminal_transition_failed")
                 self._poisoned = True
             state.safety_finished = True
             return
@@ -1393,13 +1433,16 @@ class _FileBridgeChannel:
                 self._publish_idle(state)
             except BaseException as idle_error:
                 _attach_secondary(primary, idle_error, "idle publication failure")
-                self._quarantine(state, "idle_publication_failed")
+                self._resolve_non_effectful(state, "idle_publication_failed")
                 state.safety_finished = True
                 self._poisoned = True
                 return
 
         idle_record = self._ensure_idle_published(state, durable_artifact is not None)
         if idle_record is None:
+            observed = self._transport.ledger.get_request(state.validated.request_id)
+            if observed is not None and observed.state is HostRequestState.IDLE_PUBLISHED:
+                self._resolve_non_effectful(state, "artifact_evidence_drift")
             self._poisoned = True
             state.safety_finished = True
             return
@@ -1417,6 +1460,8 @@ class _FileBridgeChannel:
                     reread,
                     durable_artifact,
                 ):
+                    if reread is not None and reread.state is HostRequestState.IDLE_PUBLISHED:
+                        self._resolve_non_effectful(state, "terminal_transition_failed")
                     self._poisoned = True
                     state.safety_finished = True
                     raise terminal_error
@@ -1689,15 +1734,10 @@ class _FileBridgeChannel:
             and request.error_json == error_json
         )
 
-    def _quarantine(self, state: _ExchangeState, reason: str) -> None:
-        expected_error = _quarantine_json(reason)
+    def _resolve_non_effectful(self, state: _ExchangeState, reason: str) -> None:
         request = self._transport.ledger.get_request(state.validated.request_id)
         if request is None:
-            raise _state_conflict("quarantine target disappeared")
-        if request.state is HostRequestState.QUARANTINED:
-            if request.error_json != expected_error or request.terminal_at_ms is not None:
-                raise _state_conflict("quarantine evidence drifted")
-            return
+            raise _state_conflict("non-effectful resolution target disappeared")
         allowed = {
             "publication_outcome_unknown": {
                 HostRequestState.PREPARED,
@@ -1710,31 +1750,68 @@ class _FileBridgeChannel:
             "artifact_evidence_drift": {
                 HostRequestState.PUBLISHED,
                 HostRequestState.RESPONSE_ACCEPTED,
+                HostRequestState.IDLE_PUBLISHED,
             },
             "idle_publication_failed": {
                 HostRequestState.PREPARED,
                 HostRequestState.PUBLISHED,
                 HostRequestState.RESPONSE_ACCEPTED,
+                HostRequestState.IDLE_PUBLISHED,
+            },
+            "terminal_transition_failed": {
+                HostRequestState.IDLE_PUBLISHED,
             },
         }[reason]
-        if request.state not in allowed:
-            raise _state_conflict("request state is outside the quarantine CAS boundary")
-        updated_at_ms = state.epochs.next(minimum=request.updated_at_ms)
+        marker = state.non_effectful_resolution
+        if marker is None:
+            if request.state not in allowed:
+                raise _state_conflict(
+                    "request state is outside the non-effectful resolution CAS boundary"
+                )
+            operation_class = request.operation_class
+            if operation_class not in {OperationClass.STATUS, OperationClass.READ}:
+                raise _state_conflict(
+                    "effectful request cannot use non-effectful resolution"
+                )
+            primary = state.primary
+            failure_phase = state.primary_failure_phase
+            if primary is None or failure_phase is None:
+                raise _state_conflict(
+                    "non-effectful resolution lacks primary failure evidence"
+                )
+            resolved_at_ms = state.epochs.next(minimum=request.updated_at_ms)
+            marker = NonEffectfulHostResolutionMarker(
+                format="cmo-agent-bridge/non-effectful-host-resolution/1",
+                mode="non_effectful_outcome_irrelevant",
+                disposition="abandoned",
+                root_key=request.root_key,
+                request_id=request.request_id,
+                request_hash=request.request_hash,
+                operation=request.operation,
+                operation_class=cast(
+                    Literal[OperationClass.STATUS, OperationClass.READ],
+                    operation_class,
+                ),
+                reason=reason,
+                resolved_at_ms=resolved_at_ms,
+                failure=_failure_evidence(primary, phase=failure_phase),
+            )
+            state.non_effectful_resolution = marker
         try:
-            self._transport.ledger.transition(
+            self._transport.ledger.resolve_non_effectful(
                 state.validated.request_id,
-                expected_states=frozenset({request.state}),
-                new_state=HostRequestState.QUARANTINED,
-                updated_at_ms=updated_at_ms,
-                error_json=expected_error,
+                expected_states=frozenset(allowed),
+                marker=marker,
             )
         except BaseException:
             reread = self._transport.ledger.get_request(state.validated.request_id)
             if (
                 reread is None
-                or reread.state is not HostRequestState.QUARANTINED
-                or reread.error_json != expected_error
-                or reread.terminal_at_ms is not None
+                or reread.state is not HostRequestState.RESOLVED
+                or reread.resolution_json
+                != canonical_non_effectful_host_resolution(marker)
+                or reread.updated_at_ms != marker.resolved_at_ms
+                or reread.terminal_at_ms != marker.resolved_at_ms
             ):
                 raise
 

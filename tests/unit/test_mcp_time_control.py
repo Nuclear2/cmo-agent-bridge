@@ -22,6 +22,7 @@ from cmo_agent_bridge.application.service import BridgeApplication
 from cmo_agent_bridge.bootstrap import ApplicationRuntime
 from cmo_agent_bridge.config import BridgeConfig
 from cmo_agent_bridge.errors import BridgeError, ErrorCode
+from cmo_agent_bridge.operations.kinds import OperationClass
 from cmo_agent_bridge.mcp_runtime import (
     McpRuntimeManager,
     McpSimulationPulseResult,
@@ -30,6 +31,7 @@ from cmo_agent_bridge.mcp_runtime import (
 )
 from cmo_agent_bridge.mcp_server import McpApplicationPort, create_mcp_server
 from cmo_agent_bridge.runtime_bundle import create_runtime_snapshot
+from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.state.operation_queue import OperationQueueState
 from cmo_agent_bridge.state.session_store import SessionRecord, SessionStore
 from cmo_agent_bridge.state.sqlite import StateDatabase
@@ -198,6 +200,10 @@ class _FakeQueueService:
             ActiveQueueQuarantineBarrier(
                 request_id=status.request_id,
                 operation=status.operation,
+                operation_class=OperationClass.MUTATION,
+                host_request_state=HostRequestState.QUARANTINED,
+                queue_state=OperationQueueState.QUARANTINED,
+                source="queue_backed",
                 sequence=status.sequence,
             )
             for status in sorted(self._current.values(), key=lambda item: item.sequence)
@@ -1124,7 +1130,7 @@ async def test_request_pulse_timeout_still_pauses_and_restores_prior_rate(
             OperationQueueState.QUARANTINED,
             "unresolved",
             True,
-            "simulation pulse stopped at an unresolved quarantine barrier",
+            "simulation pulse stopped at an unresolved Host safety barrier",
         ),
     ],
 )
@@ -1231,6 +1237,10 @@ async def test_request_pulse_detects_unselected_terminal_quarantine_before_relea
         {
             "request_id": str(_REQUEST_A),
             "operation": "mission.create",
+            "operation_class": "mutation",
+            "host_request_state": "quarantined",
+            "queue_state": "quarantined",
+            "source": "queue_backed",
             "sequence": 1,
         }
     ]
@@ -1267,7 +1277,7 @@ async def test_request_pulse_detects_unselected_terminal_quarantine_before_relea
             OperationQueueState.QUARANTINED,
             "unresolved",
             True,
-            "simulation pulse stopped at an unresolved quarantine barrier",
+            "simulation pulse stopped at an unresolved Host safety barrier",
         ),
     ],
 )

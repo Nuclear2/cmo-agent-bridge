@@ -35,6 +35,10 @@ from cmo_agent_bridge.state.models import (
     _canonical_model_bytes,  # pyright: ignore[reportPrivateUsage]
     _parse_duplicate_free_json,  # pyright: ignore[reportPrivateUsage]
 )
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NonEffectfulHostResolutionMarker,
+    canonical_non_effectful_host_resolution,
+)
 from cmo_agent_bridge.state.revalidation import (
     DurableValidationError,
     RevalidatedExchange,
@@ -530,6 +534,129 @@ class RequestLedger:
             if result is None:
                 raise _state_conflict("request disappeared after transition")
             return self._request_from_row(result)
+
+    def resolve_non_effectful(
+        self,
+        request_id: UUID,
+        *,
+        expected_states: frozenset[HostRequestState],
+        marker: NonEffectfulHostResolutionMarker,
+    ) -> RequestRecord:
+        """CAS a status/read exchange to its outcome-irrelevant terminal state."""
+
+        self._require_uuid(request_id, "request ID")
+        expected = self._require_states(expected_states)
+        allowed_predecessors = frozenset(
+            {
+                HostRequestState.PREPARED,
+                HostRequestState.PUBLISHED,
+                HostRequestState.RESPONSE_ACCEPTED,
+                HostRequestState.IDLE_PUBLISHED,
+                HostRequestState.QUARANTINED,
+            }
+        )
+        if not set(expected).issubset(allowed_predecessors):
+            raise _state_conflict(
+                "non-effectful resolution predecessor state is invalid"
+            )
+        try:
+            candidate = NonEffectfulHostResolutionMarker.model_validate(
+                marker.model_dump(mode="python", round_trip=True, warnings=False)
+            )
+            resolution_json = canonical_non_effectful_host_resolution(candidate)
+        except (
+            AttributeError,
+            ValidationError,
+            TypeError,
+            ValueError,
+            OverflowError,
+            RecursionError,
+        ) as error:
+            raise _state_conflict(
+                "non-effectful Host resolution marker is invalid"
+            ) from error
+        if candidate.request_id != request_id:
+            raise _state_conflict(
+                "non-effectful Host resolution request identity differs"
+            )
+
+        placeholders = ",".join("?" for _ in expected)
+        with self._database._transaction(write=True) as connection:  # pyright: ignore[reportPrivateUsage]
+            row = connection.execute(
+                "SELECT * FROM requests WHERE request_id=?", (str(request_id),)
+            ).fetchone()
+            if row is None:
+                raise _state_conflict(
+                    "non-effectful Host resolution target does not exist"
+                )
+            current = self._request_from_row(row)
+            identity_matches = (
+                current.root_key == candidate.root_key
+                and current.request_hash == candidate.request_hash
+                and current.operation == candidate.operation
+                and current.operation_class is candidate.operation_class
+                and current.operation_class
+                in {OperationClass.STATUS, OperationClass.READ}
+            )
+            if not identity_matches:
+                raise _state_conflict(
+                    "non-effectful Host resolution identity evidence differs"
+                )
+            if current.state is HostRequestState.RESOLVED:
+                if (
+                    current.resolution_json == resolution_json
+                    and current.updated_at_ms == candidate.resolved_at_ms
+                    and current.terminal_at_ms == candidate.resolved_at_ms
+                ):
+                    return current
+                raise _state_conflict(
+                    "non-effectful Host resolution evidence already differs"
+                )
+            if current.state not in expected:
+                raise _state_conflict(
+                    "non-effectful Host resolution state changed before transition"
+                )
+            if candidate.resolved_at_ms < current.updated_at_ms:
+                raise _state_conflict(
+                    "non-effectful Host resolution time moved backwards"
+                )
+            cursor = connection.execute(
+                f"""
+                UPDATE requests SET state='resolved',updated_at_ms=?,terminal_at_ms=?,
+                    result_json=NULL,error_json=NULL,resolution_json=?
+                WHERE request_id=? AND state IN ({placeholders}) AND updated_at_ms=?
+                """,
+                (
+                    candidate.resolved_at_ms,
+                    candidate.resolved_at_ms,
+                    resolution_json,
+                    str(request_id),
+                    *(state.value for state in expected),
+                    current.updated_at_ms,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise _state_conflict(
+                    "non-effectful Host resolution state changed before conditional transition"
+                )
+            result = connection.execute(
+                "SELECT * FROM requests WHERE request_id=?", (str(request_id),)
+            ).fetchone()
+            if result is None:
+                raise _state_conflict(
+                    "non-effectful Host resolution target disappeared"
+                )
+            resolved = self._request_from_row(result)
+            if (
+                resolved.state is not HostRequestState.RESOLVED
+                or resolved.resolution_json != resolution_json
+                or resolved.updated_at_ms != candidate.resolved_at_ms
+                or resolved.terminal_at_ms != candidate.resolved_at_ms
+            ):
+                raise _state_conflict(
+                    "non-effectful Host resolution evidence failed to converge"
+                )
+            return resolved
 
     def mark_delivery_published(self, delivery_id: UUID, *, published_at_ms: int) -> DeliveryRecord:
         self._require_uuid(delivery_id, "delivery ID")

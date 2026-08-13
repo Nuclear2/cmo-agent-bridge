@@ -552,7 +552,7 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         title="Pulse a paused CMO simulation",
         description=(
             "Only from an already paused simulation, require request_ids to include every current "
-            "non-terminal durable request and require no unresolved quarantine barrier. Run at 1x "
+            "non-terminal durable request and require no unresolved Host safety barrier. Run at 1x "
             "until every selected request is completed and/or a bridge handshake completes. "
             "Rejected, cancelled, or quarantined requests are failures; a barrier present before "
             "release prevents release, and one appearing during the pulse ends the work wait "
@@ -651,7 +651,11 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
         queue_status,
         name="cmo_queue_status",
         title="Summarize CMO mutation queue",
-        description="Return durable CMO mutation queue counts by state.",
+        description=(
+            "Return durable CMO mutation queue counts by state. When barrier_active is true, "
+            "inspect active_barriers for each blocking request ID, operation, operation class, "
+            "Host request state, queue state, Host/queue source, and sequence when available."
+        ),
         annotations=_read_only_annotations(),
         structured_output=True,
     )
@@ -857,7 +861,18 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
     async def unit_overview(
         side_guid: str | None = None,
         side_name: str | None = None,
-        page_size: Annotated[int, Field(ge=1, le=50)] = 40,
+        page_size: Annotated[
+            int,
+            Field(
+                ge=1,
+                le=50,
+                title="Overview Units Per Page (1-50)",
+                description=(
+                    "Number of units in this native-text page. Use an integer from 1 through 50 "
+                    "(default 40), then follow every non-null next_cursor for more units."
+                ),
+            ),
+        ] = 40,
         cursor: str | None = None,
         unit_guids: Annotated[list[str] | None, Field(min_length=1, max_length=500)] = None,
         unit_type: UnitTypeFilter | None = None,
@@ -898,7 +913,8 @@ def create_mcp_server(application: McpApplicationPort) -> FastMCP[None]:
             "Return CMO's fast native unit text for broad Agent-readable assessment. The response "
             "is text-only to avoid duplicating a large payload in structuredContent. Use stable "
             "GUIDs from cmo_unit_catalog for exact reads and mutations, and continue any non-null "
-            "opaque next_cursor with the identical side and filters."
+            "opaque next_cursor with the identical side and filters. page_size accepts only "
+            "integers from 1 through 50 (default 40)."
         ),
         annotations=_read_only_annotations(),
         structured_output=False,

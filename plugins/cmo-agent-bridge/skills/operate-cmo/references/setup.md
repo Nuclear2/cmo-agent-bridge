@@ -4,7 +4,7 @@ Use this reference when the plugin or Skill is installed but the MCP tools are a
 `cmo_bridge_diagnose` reports incomplete setup, `cmo_bridge_status` times out, or the polling event
 must be mounted or repaired.
 
-`v0.7.2` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
+`v0.7.3` is a Preview GitHub pre-release. Start with a saved scenario copy and do not assume
 compatibility with an unverified CMO build.
 
 ## Identify the failed layer
@@ -41,19 +41,21 @@ Before upgrading the wheel/plugin, stopping the old MCP server for an upgrade, o
 `cmo_bridge_prepare` / `cmo-bridge prepare`, stop new submissions and require the target root to
 have no unfinished work:
 
-1. Call `cmo_queue_status` or CLI `queue-status`. Require both `queued=0` and `active=0`; terminal
-   history counts do not block an upgrade.
+1. Call `cmo_queue_status` or CLI `queue-status`. Require both `queued=0` and `active=0`, and inspect
+   `active_barriers` when `barrier_active=true`; terminal history counts do not block an upgrade.
 2. Wait on the original request IDs until active work is terminal. Cancel only requests that remain
    queued and are no longer wanted.
 3. Allow the current worker to finish and remove its pending journal. Never delete the journal
    manually; it is durable recovery evidence.
 
-Prepare rechecks the nonterminal queue and pending journal under the bridge lock before changing the
-Lua runtime. If it returns `STATE_CONFLICT`, use its `pending_journal` and
-`nonterminal_queue_requests` details. No runtime files were changed: restart the current/old release,
-let its worker recover, resolve any active/quarantined work, and retry only after both gates are
-clear. Apply the same rule when moving from 0.1.x to 0.2.0; never change releases during an in-flight
-mutation or quarantine resolution.
+Prepare rechecks the nonterminal queue, pending journal, and effectful Host quarantine under the
+bridge lock before changing the Lua runtime. It safely terminalizes legacy `status`/`read` publication
+orphans because those requests cannot change a scenario; they do not form a mutation barrier. If
+prepare returns `STATE_CONFLICT`, use its `pending_journal`, `nonterminal_queue_requests`, and Host
+barrier details. No runtime files were changed: restart the current/old release, let its worker
+recover, resolve any active or effectful quarantined work, and retry only after the gates are clear.
+Never delete or invent a mutation journal, and never change releases during an in-flight mutation or
+quarantine resolution.
 
 ## Recover while the MCP tools are present
 
@@ -99,7 +101,7 @@ permissions block the command.
 Get-Command uv, uvx
 uv --version
 
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge version
 ```
 

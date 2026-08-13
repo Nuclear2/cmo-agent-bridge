@@ -4,6 +4,40 @@
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-08-13 (Preview)
+
+这一版修复了只读/状态请求在主机发布边界发生异常后，可能留下无法解除的全局 mutation barrier
+的问题，并让升级准备流程能够安全收敛旧版本遗留的同类记录。
+
+### Fixed
+
+- `status`/`read` 请求即使在 inbox 原子发布、回读或 idle 恢复边界发生不确定失败，也会使用独立的
+  non-effectful resolution 记录安全终结；记录保留失败阶段、异常类型和可用的 Win32 错误码，且不会
+  伪造只属于 mutation 的 pending journal。
+- QueueService、QueueWorker 与 `prepare` 现在遵循同一套 Host barrier 策略：只有处于合法 Host-only
+  状态的 `status`/`read` 可以放行；mutation、destructive、reconcile、异常 queue 关联与动态分类
+  继续 fail-closed。worker 在持有 RootLock、完成恢复之后、领取下一个请求之前会再次核验屏障。
+  因此孤立的 `bridge.status` 不再封锁作战写入，真正可能改变想定的未决证据仍然不能绕过。
+- `prepare` 会在改写 Lua runtime 前，以 SQLite CAS 自动终结没有 queue row 或 journal 的旧版
+  `status`/`read` 孤立记录；若存在 pending journal、关联 queue row、effectful Host 非终态或异常
+  状态，则整体拒绝并返回具体 blocker，不会部分迁移或覆盖 inbox。
+- `cmo_queue_status` 增加 `active_barriers` 明细，直接报告阻断请求的 ID、operation、operation class、
+  Host request state、queue state、Host/queue 来源和可用的队列序号，避免只看到历史 quarantine
+  计数却无法定位当前屏障或误选恢复路径。
+- `cmo_unit_overview` 的 MCP Schema、工具描述和 Skill 明确标出 `page_size` 只接受 `1..50`、默认
+  `40`，并要求通过 `next_cursor` 续页，避免客户端摘要丢掉数字约束后让 Agent 猜测页大小。
+
+### Changed
+
+- 项目版本升级到 `0.7.3`。
+
+### Testing
+
+- 覆盖未来 status/read 发布歧义、失败证据持久化、专用 CAS 的身份/状态边界、旧版孤立记录迁移、
+  effectful journal-less 请求阻断，以及 QueueService/QueueWorker/DYNAMIC fail-closed 一致性。
+- 验证 MCP/CLI barrier 明细和 `cmo_unit_overview` 页大小 Schema；`2668` 项非实机测试与 `20` 项
+  发行测试通过，Ruff、严格 Pyright、协议清单/语料、Skill 与插件校验均通过。
+
 ## [0.7.2] - 2026-08-13 (Preview)
 
 这一版澄清了航空任务的编组与在位数量语义，明确自动交战 Patrol 的任务 AI 控制边界，并默认
@@ -507,6 +541,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.7.3]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.3
 [0.7.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0

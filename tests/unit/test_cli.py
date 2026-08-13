@@ -10,6 +10,7 @@ from cmo_agent_bridge import __version__
 import cmo_agent_bridge.cli as cli_module
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
+    ActiveQueueQuarantineBarrier,
     CancelQueuedOperationResult,
     QueueSummary,
     QueueWaitResult,
@@ -17,6 +18,8 @@ from cmo_agent_bridge.application.queue_models import (
     QueuedOperationStatus,
 )
 from cmo_agent_bridge.cli import app
+from cmo_agent_bridge.operations.kinds import OperationClass
+from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.state.operation_queue import OperationQueueState
 
 
@@ -88,6 +91,18 @@ class _FakeQueueService:
             quarantined=5,
             cancelled=6,
             resolved_quarantined=5,
+            barrier_active=True,
+            active_barriers=(
+                ActiveQueueQuarantineBarrier(
+                    request_id=_REQUEST_ID,
+                    operation="mission.delete",
+                    operation_class=OperationClass.DESTRUCTIVE,
+                    host_request_state=HostRequestState.QUARANTINED,
+                    queue_state=None,
+                    source="host_only",
+                    sequence=None,
+                ),
+            ),
         )
 
 
@@ -573,5 +588,16 @@ def test_queue_cli_inspection_wait_cancel_and_summary_delegate_locally(
         "cancelled": 6,
         "unresolved_quarantined": 0,
         "resolved_quarantined": 5,
-        "barrier_active": False,
+        "barrier_active": True,
+        "active_barriers": [
+            {
+                "request_id": str(_REQUEST_ID),
+                "operation": "mission.delete",
+                "operation_class": "destructive",
+                "host_request_state": "quarantined",
+                "queue_state": None,
+                "source": "host_only",
+                "sequence": None,
+            }
+        ],
     }

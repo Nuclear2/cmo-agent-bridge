@@ -11,6 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictInt, StrictS
 from typing_extensions import Self
 
 from cmo_agent_bridge.errors import ErrorCode
+from cmo_agent_bridge.operations.kinds import OperationClass
+from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.state.operation_queue import (
     OperationQueueRecord as QueuedOperationRecord,
     OperationQueueState as QueuedOperationState,
@@ -54,6 +56,10 @@ class ActiveQueueQuarantineBarrier(BaseModel):
 
     request_id: UUID
     operation: StrictStr
+    operation_class: OperationClass
+    host_request_state: HostRequestState
+    queue_state: QueuedOperationState | None
+    source: Literal["queue_backed", "host_only"]
     sequence: StrictInt | None = Field(default=None, ge=1)
 
 
@@ -156,6 +162,7 @@ class QueueSummary(BaseModel):
     unresolved_quarantined: StrictInt = Field(default=0, ge=0)
     resolved_quarantined: StrictInt = Field(default=0, ge=0)
     barrier_active: bool = False
+    active_barriers: tuple[ActiveQueueQuarantineBarrier, ...] = ()
 
     @classmethod
     def from_counts(
@@ -165,6 +172,7 @@ class QueueSummary(BaseModel):
         unresolved_quarantined: int = 0,
         resolved_quarantined: int = 0,
         barrier_active: bool = False,
+        active_barriers: tuple[ActiveQueueQuarantineBarrier, ...] = (),
     ) -> Self:
         return cls(
             queued=counts.queued,
@@ -176,6 +184,7 @@ class QueueSummary(BaseModel):
             unresolved_quarantined=unresolved_quarantined,
             resolved_quarantined=resolved_quarantined,
             barrier_active=barrier_active,
+            active_barriers=active_barriers,
         )
 
 

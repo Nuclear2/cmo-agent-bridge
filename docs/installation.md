@@ -1,6 +1,6 @@
 # 安装、升级与卸载
 
-> `v0.7.2` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
+> `v0.7.3` 是 **Preview / GitHub Pre-release**，不是稳定正式版。请先备份想定，并优先在测试副本
 > 上验证当前 CMO build、任务流程和写操作。
 
 ## 推荐方案：安装 Release wheel
@@ -31,10 +31,10 @@ uv --version
 若 `uv` 安装后当前终端仍找不到它，关闭并重新打开 PowerShell。其他官方安装方式见
 [uv installation](https://docs.astral.sh/uv/getting-started/installation/)。
 
-### 安装 v0.7.2 Preview
+### 安装 v0.7.3 Preview
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl"
 uv tool install --python 3.12 $wheel
 uv tool update-shell
 ```
@@ -147,7 +147,7 @@ binding 不一致时，旧请求会被拒绝或隔离，不会跨想定执行。
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -211,11 +211,11 @@ MCP server 提供工具，skill 提供如何评估、规划和安全使用这些
 plugin marketplace，可下载 Release 中的独立 Skill 包：
 
 ```powershell
-$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.7.2.zip"
-$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.7.2"
+$skillZip = Join-Path $env:TEMP "operate-cmo-skill-0.7.3.zip"
+$skillRoot = Join-Path $env:TEMP "operate-cmo-skill-0.7.3"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/operate-cmo-skill-0.7.2.zip" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/operate-cmo-skill-0.7.3.zip" `
   -OutFile $skillZip
 Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 ```
@@ -226,7 +226,7 @@ Expand-Archive -LiteralPath $skillZip -DestinationPath $skillRoot -Force
 如果机器上已安装 Git，也可从标签固定的源码取得：
 
 ```powershell
-git clone --depth 1 --branch v0.7.2 https://github.com/Nuclear2/cmo-agent-bridge.git
+git clone --depth 1 --branch v0.7.3 https://github.com/Nuclear2/cmo-agent-bridge.git
 cd cmo-agent-bridge
 ```
 
@@ -243,7 +243,7 @@ plugins/cmo-agent-bridge/skills/operate-cmo/
 不想持久安装 CLI 时，可让 `uvx` 从 Release wheel 启动隔离环境：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl"
 uvx --python 3.12 --from $wheel cmo-bridge --help
 uvx --python 3.12 --from $wheel cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"
@@ -252,7 +252,7 @@ uvx --python 3.12 --from $wheel cmo-bridge prepare `
 对应的 MCP 命令为：
 
 ```text
-uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl cmo-bridge serve
+uvx --python 3.12 --from https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl cmo-bridge serve
 ```
 
 `uvx` 不创建持久 tool 安装，但会使用 `uv` 的下载缓存。它适合试用和固定版本的可移植配置；长期
@@ -316,15 +316,19 @@ server，都会继续处理同一 durable request。
 之前，先停止提交新 mutation，并用当前版本把未完成工作收敛：
 
 1. 调用 `cmo_queue_status`，或运行 `cmo-bridge queue-status`；要求 `queued=0` 且 `active=0`。
-   `completed`、`rejected`、`quarantined`、`cancelled` 是历史终态计数，不妨碍升级。
+   若 `barrier_active=true`，检查 `active_barriers` 中的请求 ID、operation、operation class、
+   `host_request_state`、`queue_state` 和来源；不要仅凭“quarantine”一词选择恢复命令。
+   `completed`、`rejected`、`quarantined`、`cancelled` 的历史计数本身不妨碍升级。
 2. 用原 `request_id` 等待 active 请求完成；不再需要的 queued 请求可以取消。不要用重新提交代替
    等待，也不要在请求 active 时关闭旧版本并直接升级。
 3. 等待当前 worker 完成 pending journal 的最终收敛。pending journal 是恢复证据，不能手工删除。
 
-`prepare` 会在持有 bridge lock 时再次检查这两个条件。若返回 `STATE_CONFLICT`，查看
-`pending_journal` 和 `nonterminal_queue_requests`：它尚未改写 Lua runtime。重新启动产生这些状态的
-当前/旧版本，让 worker 恢复并完成，或取消仍为 queued 的请求；确认无 pending journal 后再升级和
-prepare。0.1.x 升级到 0.2.0 时同样不要在旧版 mutation 调用或 quarantine 处理尚未结束时切换版本。
+`prepare` 会在持有 bridge lock 时再次检查队列、pending journal 和 Host 非终态证据。v0.7.3 起，
+没有 queue row 或 journal 的旧版 `status`/`read` 孤立记录会通过专用 CAS 自动终结，因为它们不能
+改变想定；不会伪造 mutation journal。若仍返回 `STATE_CONFLICT`，查看 `pending_journal`、
+`nonterminal_queue_requests` 和 `host_quarantine_barriers`：Lua runtime 尚未改写。重新启动产生这些
+状态的当前/旧版本，让 worker 恢复并完成，或取消仍为 queued 的请求；真正 effectful 且缺失 journal
+的 Host 证据需要先调查，不能直接放行。不要手工删除或构造 journal。
 
 升级后第一次提交 mutation 前，应完全结束或重载仍在使用旧发布版的 Agent 任务，而不只是另开一个
 新任务。0.6.2 起 worker 会跳过 runtime snapshot 不属于自己的队首，但更早版本的已运行 worker
@@ -370,7 +374,7 @@ claude plugin update cmo-agent-bridge@cmo-tools --scope user
 独立安装 CLI/wheel 的用户查看目标 Release 的 wheel 文件名，然后执行：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl"
 uv tool install --force --python 3.12 $wheel
 cmo-bridge prepare `
   --game-root "D:\Program Files (x86)\Steam\steamapps\common\Command - Modern Operations"

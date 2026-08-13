@@ -93,12 +93,18 @@ def _active_quarantine_barrier_error(
         return None
     return BridgeError(
         ErrorCode.STATE_CONFLICT,
-        "simulation pulse stopped at an unresolved quarantine barrier",
+        "simulation pulse stopped at an unresolved Host safety barrier",
         {
             "barriers": [
                 {
                     "request_id": str(item.request_id),
                     "operation": item.operation,
+                    "operation_class": item.operation_class.value,
+                    "host_request_state": item.host_request_state.value,
+                    "queue_state": (
+                        None if item.queue_state is None else item.queue_state.value
+                    ),
+                    "source": item.source,
                     "sequence": item.sequence,
                 }
                 for item in barriers
@@ -107,8 +113,9 @@ def _active_quarantine_barrier_error(
             "barrier_sequences": [item.sequence for item in barriers],
             "request_states": {str(item.request_id): item.state.value for item in requests},
             "next_step": (
-                "Inspect the quarantined request, determine whether its mutation was applied, "
-                "then resolve the quarantine before advancing queued work."
+                "Inspect cmo_queue_status.active_barriers. Resolve queue-backed quarantine "
+                "through the supported recovery workflow; investigate host-only or other "
+                "nonterminal effectful evidence without deleting or inventing a journal."
             ),
         },
     )

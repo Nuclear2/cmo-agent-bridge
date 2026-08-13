@@ -12,7 +12,7 @@
 
 ![CMO Agent Bridge：在 Windows 上连接 Agent 与 Command: Modern Operations](docs/assets/cmo-agent-bridge-cover.png)
 
-[下载 v0.7.2](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2) ·
+[下载 v0.7.3](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.3) ·
 [快速上手](docs/quickstart.md) ·
 [各框架安装](docs/frameworks/README.md) ·
 [CMO Lua API](https://commandlua.github.io/)
@@ -31,7 +31,7 @@ ROE、时间限制与胜负标准，再开始态势评估和部署；其他阵�
 单位深读战备、载荷和库存。这样既能看清数百个单位的整体编成，也不会把时间和上下文浪费在无关
 单位的完整字段上。
 
-> **当前版本是 v0.7.2 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
+> **当前版本是 v0.7.3 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
 > 想定副本。
 
 ## 你可以直接这样说
@@ -79,7 +79,7 @@ uv --version
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -131,13 +131,14 @@ OpenCode、Cursor、Qoder 和通用 MCP 客户端的配置见[各框架安装](d
 插件仍固定使用同版本 wheel：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.3/cmo_agent_bridge-0.7.3-py3-none-any.whl"
 ```
 
 升级已有安装时，先用旧/当前版本确认 `cmo_queue_status` 中 `queued=0`、`active=0`，并让 worker
-完成 pending journal 收敛，再升级 plugin/wheel 和运行 `prepare`。新版 `prepare` 会在改写 Lua
-runtime 前再次检查；若返回 `STATE_CONFLICT`，不要手工删除 journal，先回到产生该状态的版本完成
-恢复。详见[升级门槛](docs/installation.md#升级与-prepare-的安全门槛)。
+完成 pending journal 收敛，再升级 plugin/wheel 和运行 `prepare`。v0.7.3 起，`prepare` 会安全终结
+旧版遗留、不会改变想定的 `status`/`read` 孤立记录；真正可能改变想定的未决证据仍会返回
+`STATE_CONFLICT`。此时查看 `active_barriers` 和错误明细，不要手工删除或伪造 journal。详见
+[升级门槛](docs/installation.md#升级与-prepare-的安全门槛)。
 
 ### 4. 在想定中保存轮询事件
 
@@ -280,7 +281,7 @@ bridge 以本地 `stdio` 进程运行。Agent、Python 进程和 CMO Lua 运行�
 
 ## 项目状态
 
-- 当前版本：[`v0.7.2 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2)
+- 当前版本：[`v0.7.3 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.3)
 - 已验证环境：Windows 10/11、CMO Build 1868
 - Python：3.12，由 `uv` 隔离管理
 - 许可证：[MIT](LICENSE)

@@ -4,7 +4,7 @@ import hashlib
 import json
 import sqlite3
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Literal, Protocol, cast
 from unittest.mock import Mock
 from uuid import UUID
 
@@ -34,6 +34,12 @@ from cmo_agent_bridge.state.models import (
     HostRequestState,
     PendingExchange,
     PendingJournal,
+)
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NonEffectfulFailureEvidence,
+    NonEffectfulHostResolutionMarker,
+    canonical_non_effectful_host_resolution,
+    parse_non_effectful_host_resolution,
 )
 from cmo_agent_bridge.state.request_ledger import (
     DeliveryRecord,
@@ -124,6 +130,153 @@ def test_database_and_store_construction_performs_zero_sqlite_io(
 
     connect.assert_not_called()
     assert not database.path.exists()
+
+
+def _non_effectful_marker(
+    record: RequestRecord,
+    *,
+    resolved_at_ms: int,
+) -> NonEffectfulHostResolutionMarker:
+    return NonEffectfulHostResolutionMarker(
+        format="cmo-agent-bridge/non-effectful-host-resolution/1",
+        mode="non_effectful_outcome_irrelevant",
+        disposition="abandoned",
+        root_key=record.root_key,
+        request_id=record.request_id,
+        request_hash=record.request_hash,
+        operation=record.operation,
+        operation_class=cast(
+            Literal[OperationClass.STATUS, OperationClass.READ],
+            record.operation_class,
+        ),
+        reason="publication_outcome_unknown",
+        resolved_at_ms=resolved_at_ms,
+        failure=NonEffectfulFailureEvidence(
+            phase="inbox_request_publication",
+            exception_type="OSError",
+            winerror=5,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    "predecessor",
+    [
+        HostRequestState.PREPARED,
+        HostRequestState.PUBLISHED,
+        HostRequestState.RESPONSE_ACCEPTED,
+        HostRequestState.IDLE_PUBLISHED,
+        HostRequestState.QUARANTINED,
+    ],
+)
+def test_resolve_non_effectful_is_identity_bound_cas_for_read_states(
+    request_ledger: RequestLedger,
+    runtime_snapshot: RuntimeSnapshot,
+    valid_journal: PendingJournal,
+    predecessor: HostRequestState,
+) -> None:
+    exchange = valid_journal.original
+    invocation = OPERATION_REGISTRY.resolve_wire_invocation("scenario.get", {})
+    body = RequestBody(
+        protocol=runtime_snapshot.protocol,
+        release_id=runtime_snapshot.release_id,
+        runtime_version=runtime_snapshot.runtime_version,
+        runtime_tag=runtime_snapshot.runtime_tag,
+        runtime_asset_sha256=runtime_snapshot.runtime_asset_sha256,
+        expected_lineage_id=exchange.expected_lineage_id,
+        expected_activation_id=exchange.expected_activation_id,
+        operation_manifest_sha256=runtime_snapshot.operation_manifest_sha256,
+        operation="scenario.get",
+        arguments={},
+    )
+    body_bytes = canonical_body_bytes(body)
+    prepared = RequestRecord(
+        request_id=exchange.request_id,
+        root_key=valid_journal.header.root_key,
+        request_hash=hashlib.sha256(body_bytes).hexdigest(),
+        operation="scenario.get",
+        operation_class=invocation.effective_class,
+        state=HostRequestState.PREPARED,
+        runtime_snapshot=runtime_snapshot,
+        result_schema_id=invocation.result_schema.schema_id,
+        recovery_schema_id=None,
+        body_json=body_bytes,
+        lineage_id=exchange.expected_lineage_id,
+        activation_id=exchange.expected_activation_id,
+        result_json=None,
+        error_json=None,
+        resolution_json=None,
+        created_at_ms=100,
+        updated_at_ms=100,
+        terminal_at_ms=None,
+    )
+    request_ledger.insert_prepared(prepared)
+    current = prepared
+    if predecessor is not HostRequestState.PREPARED:
+        current = request_ledger.transition(
+            prepared.request_id,
+            expected_states=frozenset({HostRequestState.PREPARED}),
+            new_state=predecessor,
+            updated_at_ms=101,
+            error_json=(
+                '{"reason":"legacy_read_quarantine"}'
+                if predecessor is HostRequestState.QUARANTINED
+                else None
+            ),
+        )
+    marker = _non_effectful_marker(current, resolved_at_ms=102)
+
+    resolved = request_ledger.resolve_non_effectful(
+        current.request_id,
+        expected_states=frozenset({predecessor}),
+        marker=marker,
+    )
+
+    assert resolved.state is HostRequestState.RESOLVED
+    assert resolved.resolution_json == canonical_non_effectful_host_resolution(marker)
+    assert resolved.resolution_json is not None
+    assert parse_non_effectful_host_resolution(resolved.resolution_json) == marker
+    assert resolved.error_json is None
+    assert resolved.updated_at_ms == resolved.terminal_at_ms == 102
+    assert request_ledger.resolve_non_effectful(
+        current.request_id,
+        expected_states=frozenset({predecessor}),
+        marker=marker,
+    ) == resolved
+
+
+def test_resolve_non_effectful_rejects_cancel_and_effectful_requests(
+    request_ledger: RequestLedger,
+    prepared_record: RequestRecord,
+) -> None:
+    request_ledger.insert_prepared(prepared_record)
+    marker_data = {
+        "format": "cmo-agent-bridge/non-effectful-host-resolution/1",
+        "mode": "non_effectful_outcome_irrelevant",
+        "disposition": "abandoned",
+        "root_key": prepared_record.root_key,
+        "request_id": prepared_record.request_id,
+        "request_hash": prepared_record.request_hash,
+        "operation": prepared_record.operation,
+        "operation_class": OperationClass.READ,
+        "reason": "legacy_orphan",
+        "resolved_at_ms": 101,
+        "failure": None,
+    }
+    marker = NonEffectfulHostResolutionMarker.model_validate(marker_data)
+
+    with pytest.raises(BridgeError):
+        request_ledger.resolve_non_effectful(
+            prepared_record.request_id,
+            expected_states=frozenset({HostRequestState.CANCEL_PUBLISHED}),
+            marker=marker,
+        )
+    with pytest.raises(BridgeError):
+        request_ledger.resolve_non_effectful(
+            prepared_record.request_id,
+            expected_states=frozenset({HostRequestState.PREPARED}),
+            marker=marker,
+        )
 
 
 def test_migration_three_has_exact_tables_columns_indexes_and_history(

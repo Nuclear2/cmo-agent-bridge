@@ -23,6 +23,10 @@ from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.state.request_ledger import RequestLedger
 from cmo_agent_bridge.state.session_store import SessionRecord
 
+from .host_barrier_policy import (
+    NONTERMINAL_HOST_REQUEST_STATES,
+    host_request_blocks_mutations,
+)
 from .queue_models import (
     ActiveQueueQuarantineBarrier,
     CancelQueuedOperationResult,
@@ -122,21 +126,30 @@ class QueueService:
             raise _invalid("operation arguments must be an object", {"operation": operation})
         invocation = self._registry.resolve_invocation(operation, arguments)
         self._require_queueable(invocation)
-        quarantined_request_ids = self._unresolved_quarantine_request_ids()
-        if quarantined_request_ids:
+        active_barriers = self.active_quarantine_barriers()
+        if active_barriers:
+            barrier_request_ids = tuple(item.request_id for item in active_barriers)
             raise BridgeError(
                 ErrorCode.MUTATION_QUARANTINED,
-                "mutation submission is blocked while an earlier outcome is quarantined",
+                "mutation submission is blocked by unresolved effectful Host evidence",
                 {
                     "operation": invocation.contract.name,
                     "quarantined_request_ids": [
-                        str(request_id) for request_id in quarantined_request_ids
+                        str(request_id) for request_id in barrier_request_ids
+                    ],
+                    "barrier_request_ids": [
+                        str(request_id) for request_id in barrier_request_ids
+                    ],
+                    "active_barriers": [
+                        item.model_dump(mode="json", warnings="error")
+                        for item in active_barriers
                     ],
                     "next_step": (
-                        "Inspect any queue-backed request with cmo_request_get, independently "
-                        "verify the Host-quarantined operation's outcome in CMO, then resolve "
-                        "the current Host quarantine with "
-                        "cmo-bridge resolve-quarantine, then retry this submission."
+                        "Inspect cmo_queue_status.active_barriers. For a queue-backed "
+                        "quarantined mutation, independently verify its CMO outcome and use "
+                        "the supported resolve-quarantine workflow. For host-only or other "
+                        "nonterminal effectful evidence, recover or investigate the producing "
+                        "release; never delete or invent a mutation journal."
                     ),
                 },
             )
@@ -249,50 +262,46 @@ class QueueService:
         counts, quarantined = self._queue_store.summary_snapshot(root_key=self._root_key)
         resolutions = tuple(self._quarantine_resolution(record) for record in quarantined)
         resolved = sum(item.state == "resolved" for item in resolutions)
-        host_barriers = self._ledger.list_requests(
-            root_key=self._root_key,
-            states=frozenset({HostRequestState.QUARANTINED}),
-        )
+        active_barriers = self.active_quarantine_barriers()
         return QueueSummary.from_counts(
             counts,
             unresolved_quarantined=max(counts.quarantined - resolved, 0),
             resolved_quarantined=resolved,
-            barrier_active=bool(host_barriers)
-            or any(item.barrier_active for item in resolutions),
+            barrier_active=bool(active_barriers),
+            active_barriers=active_barriers,
         )
 
     def active_quarantine_barriers(self) -> tuple[ActiveQueueQuarantineBarrier, ...]:
         """Return active barriers without materialising terminal queue history."""
 
-        terminal_host_states = frozenset(
-            {
-                HostRequestState.COMPLETED,
-                HostRequestState.REJECTED,
-                HostRequestState.CANCELLED,
-                HostRequestState.RESOLVED,
-            }
-        )
         candidates = self._ledger.list_requests(
             root_key=self._root_key,
-            states=frozenset(HostRequestState) - terminal_host_states,
+            states=NONTERMINAL_HOST_REQUEST_STATES,
         )
         barriers: list[ActiveQueueQuarantineBarrier] = []
         for ledger_record in candidates:
             queued = self._queue_store.get(ledger_record.request_id)
-            queue_barrier = (
-                queued is not None
-                and queued.root_key == self._root_key
-                and queued.state is QueuedOperationState.QUARANTINED
+            queue_state = (
+                queued.state
+                if queued is not None and queued.root_key == self._root_key
+                else None
             )
-            if ledger_record.state is not HostRequestState.QUARANTINED and not queue_barrier:
+            if not host_request_blocks_mutations(
+                ledger_record,
+                queue_state=queue_state,
+            ):
                 continue
             barriers.append(
                 ActiveQueueQuarantineBarrier(
                     request_id=ledger_record.request_id,
                     operation=ledger_record.operation,
+                    operation_class=ledger_record.operation_class,
+                    host_request_state=ledger_record.state,
+                    queue_state=queue_state,
+                    source="queue_backed" if queue_state is not None else "host_only",
                     sequence=(
                         queued.queue_sequence
-                        if queued is not None and queued.root_key == self._root_key
+                        if queue_state is not None and queued is not None
                         else None
                     ),
                 )
@@ -361,13 +370,10 @@ class QueueService:
                 barrier_active=False,
             )
 
-        non_barrier_states = {
-            HostRequestState.COMPLETED,
-            HostRequestState.REJECTED,
-            HostRequestState.CANCELLED,
-            HostRequestState.RESOLVED,
-        }
-        barrier_active = ledger_record is not None and ledger_record.state not in non_barrier_states
+        barrier_active = ledger_record is not None and host_request_blocks_mutations(
+            ledger_record,
+            queue_state=QueuedOperationState.QUARANTINED,
+        )
         return QueueQuarantineResolution(
             state="unresolved",
             barrier_active=barrier_active,

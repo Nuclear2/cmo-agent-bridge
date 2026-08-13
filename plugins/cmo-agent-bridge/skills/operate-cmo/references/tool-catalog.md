@@ -69,7 +69,7 @@ session binding has been established.
 | `cmo_request_wait` | request UUID, non-negative timeout seconds | Wait locally for a terminal state; `timed_out=true` never cancels the request |
 | `cmo_request_list` | optional positive limit | List durable requests in FIFO submission order |
 | `cmo_request_cancel` | request UUID | Cancel only a request still in `queued`; an `active` or terminal request remains unchanged |
-| `cmo_queue_status` | none | Return historical counts plus `unresolved_quarantined`, `resolved_quarantined`, and the current global `barrier_active` flag |
+| `cmo_queue_status` | none | Return historical counts plus `unresolved_quarantined`, `resolved_quarantined`, the current global `barrier_active` flag, and `active_barriers` with operation/class, Host state, queue state, source, and sequence evidence |
 
 A queue row remains `state="quarantined"` as durable audit history after Host resolution. Read its
 `quarantine_resolution`: `state` is `unresolved` or `resolved`, `disposition` is `applied`,
@@ -77,11 +77,14 @@ A queue row remains `state="quarantined"` as durable audit history after Host re
 `barrier_active` says whether that row is currently blocking. In `cmo_queue_status`, `quarantined`
 is the historical total; only `unresolved_quarantined` and `barrier_active` describe current
 attention. A prior `rejected` row is likewise historical unless it belongs to the batch currently
-being evaluated.
+being evaluated. For each current blocker, use `active_barriers[].host_request_state` and
+`queue_state` rather than guessing a recovery path from the word “quarantine.” A normal mutation
+owned by an `active` queue row is recovered by the worker and is not itself listed as a barrier;
+host-only evidence, an unexpected queue association, or another incompatible state fails closed.
 
-There is deliberately no MCP tool that guesses an indeterminate outcome. After independently
-verifying in CMO whether the quarantined operation was applied, use the local CLI with the exact
-release runtime:
+There is deliberately no MCP tool that guesses an indeterminate outcome. Only for a queue-backed,
+quarantined mutation whose original mutation journal is available, independently verify in CMO
+whether it was applied and use the local CLI with the exact release runtime:
 
 1. Preview only: `cmo-bridge resolve-quarantine --disposition applied` or use `not_applied`.
 2. Check the returned identity, disposition, impact, and confirmation token against the request
@@ -93,7 +96,8 @@ This Host-only action records the disposition and attestation that it was based 
 manual verification, then removes the execution barrier. It does not store the evidence itself,
 replay, undo, or otherwise mutate the CMO operation. Never choose a disposition from the queue error
 alone; if the outcome cannot be independently established, leave the barrier unresolved and ask the
-user.
+user. A host-only or non-quarantined effectful barrier does not qualify for this resolver: recover or
+investigate the release that produced it, and never delete or invent a mutation journal.
 
 The queue executes one active mutation at a time. Submit independent work in the intended FIFO
 order. If a later tool needs a GUID or other value from an earlier result, wait for the earlier
@@ -118,7 +122,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_bridge_status` | optional accepted lineage | Read build, runtime identity, bridge health, polling state, and scenario lineage; success establishes the session binding required for queued mutations |
 | `cmo_time_get_state` | none | Host-only read of the uniquely matched CMO window's paused/running state and selected compression; does not require Lua polling or an established session binding |
 | `cmo_time_set` | `state=paused|running`; optional `rate_code=0..5` | Idempotently set UI run state and optionally compression, then verify readback; use only the configured unique CMO process and fail closed on ambiguous or unverifiable UI state |
-| `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require no current quarantine barrier and every current non-terminal durable request UUID; force 1x, stop early if a barrier appears, then attempt to re-pause and restore prior compression while reporting both verification results |
+| `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require no current Host safety barrier and every current non-terminal durable request UUID; force 1x, stop early if a barrier appears, then attempt to re-pause and restore prior compression while reporting both verification results |
 | `cmo_message_log_status` | none | Host-only inspection of native message logging, the timestamp file bound to the exact `Command.exe` process, and the persisted scenario session; does not contact Lua or change CMO configuration |
 | `cmo_message_log_read` | exact side name; optional cursor; `start=now|recent`; page size; unscoped/raw flags | Read exact-side-prefixed messages plus all player-visible unprefixed records by default, including terminal, jammer, decoy, and system messages, while running or paused; unprefixed records remain unattributed; establish a forward cursor with `start=now` and use `has_more` for forward paging; `recent` returns one latest-N recovery tail |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, CMO's reported compression value, and projected score state; coarse values are labels, not guaranteed effective multipliers |
@@ -129,7 +133,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_side_posture_get` | observer side, target side | Read one directed side relationship; does not mutate diplomacy |
 | `cmo_reference_point_list` | one side selector, paging | Resolve side-owned reference points and GUIDs |
 | `cmo_unit_catalog` | exactly one side selector; optional type/name filter, page size, opaque cursor | Fast friendly-force index for stable GUID/name/type selection; use first for a large-side assessment |
-| `cmo_unit_overview` | exactly one side selector; optional GUID subset, type/name filter, page size, opaque cursor | Return paged native CMO unit text for Agent assessment; treat it as a content plane, not a stable mutation schema |
+| `cmo_unit_overview` | exactly one side selector; optional GUID subset, type/name filter, `page_size` 1..50 (default 40), opaque cursor | Return paged native CMO unit text for Agent assessment; follow `next_cursor`, and treat the text as a content plane rather than a stable mutation schema |
 | `cmo_unit_list` | one side selector, filters, paging | Legacy full structured browse; expensive on large sides, so use only when that projection is explicitly required; adversary use is author or umpire only |
 | `cmo_unit_get` | GUID, or side plus name | Read full projected unit detail |
 | `cmo_unit_operational_status_batch` | 1..20 unique unit GUIDs | Read narrow operational status for selected catalog candidates in one bounded batch |
@@ -220,7 +224,7 @@ verification plus final pause/rate-restoration cleanup can extend total tool dur
 guarantees an exact amount of simulated time. The UI action itself is host-side, but handshake and
 queue completion still require the mounted Regular Time polling event. On timeout or work failure,
 the tool attempts to pause and restore the prior rate, reports whether both were verified, and never
-cancels or resubmits a durable request. A current unresolved quarantine barrier is rejected before
+cancels or resubmits a durable request. A current unresolved Host safety barrier is rejected before
 release; one that appears during the pulse ends the work wait immediately with `timed_out=false`
 and a structured barrier error. Only `completed` tracked requests count as success. `rejected`,
 `cancelled`, and resolved or unresolved `quarantined` rows are explicit failures, not successful

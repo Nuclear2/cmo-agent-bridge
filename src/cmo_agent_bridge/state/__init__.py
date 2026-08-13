@@ -8,10 +8,16 @@ from cmo_agent_bridge.state.models import (
     PendingJournalHeader,
     PendingPhase,
 )
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NonEffectfulFailureEvidence,
+    NonEffectfulHostResolutionMarker,
+)
 
 __all__ = [
     "DeliveryIntent",
     "HostRequestState",
+    "NonEffectfulFailureEvidence",
+    "NonEffectfulHostResolutionMarker",
     "PendingExchange",
     "PendingJournal",
     "PendingJournalHeader",

@@ -216,7 +216,7 @@ Use this sequence for every multi-unit or multi-mission write:
 3. At the checkpoint, call `cmo_request_list`. If it fails or returns malformed data, stop all new
    writes. Otherwise retain every receipt and inspect all terminal results before the next batch.
 4. Do not continue fan-out when a request tracked in the current batch becomes `rejected`, when a
-   quarantine is explicitly unresolved, or while status reports a current quarantine barrier.
+   quarantine is explicitly unresolved, or while status reports a current Host safety barrier.
    Resolve the current condition first. Prior rejected requests and resolved quarantines are audit
    history. Treat the aggregate `quarantined` value as historical unless the explicit current
    barrier/unresolved fields say otherwise; never use historical terminal rows alone as a go/no-go

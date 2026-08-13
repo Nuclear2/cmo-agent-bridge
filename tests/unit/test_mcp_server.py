@@ -12,6 +12,7 @@ from pydantic import ConfigDict, JsonValue, TypeAdapter
 
 from cmo_agent_bridge.application.models import InvocationOutcome
 from cmo_agent_bridge.application.queue_models import (
+    ActiveQueueQuarantineBarrier,
     CancelQueuedOperationResult,
     QueueSummary,
     QueueWaitResult,
@@ -20,6 +21,7 @@ from cmo_agent_bridge.application.queue_models import (
     QueuedOperationState,
     QueuedOperationStatus,
 )
+from cmo_agent_bridge.operations.kinds import OperationClass
 from cmo_agent_bridge.mcp_runtime import (
     McpBridgeDiagnostic,
     McpBridgePrepareResult,
@@ -30,6 +32,7 @@ from cmo_agent_bridge.mcp_runtime import (
 from cmo_agent_bridge.mcp_server import create_mcp_server
 from cmo_agent_bridge.message_log import MessageLogReadResult, MessageLogStatusResult
 from cmo_agent_bridge.operations.models import ScenarioContextResult
+from cmo_agent_bridge.state.models import HostRequestState
 from cmo_agent_bridge.ui_time import SimulationRunState
 
 
@@ -130,6 +133,18 @@ class _FakeApplication:
             rejected=0,
             quarantined=0,
             cancelled=0,
+            barrier_active=True,
+            active_barriers=(
+                ActiveQueueQuarantineBarrier(
+                    request_id=UUID("00000000-0000-0000-0000-000000000999"),
+                    operation="doctrine.set",
+                    operation_class=OperationClass.MUTATION,
+                    host_request_state=HostRequestState.QUARANTINED,
+                    queue_state=None,
+                    source="host_only",
+                    sequence=None,
+                ),
+            ),
         )
 
     async def diagnose(self) -> McpBridgeDiagnostic:
@@ -1326,6 +1341,16 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     assert unscoped_property["default"] is True
     assert "no side attribution" in str(unscoped_property["description"])
     assert "side_name" in cast(list[JsonValue], message_schema["required"])
+    overview_tool = tools_by_name["cmo_unit_overview"]
+    assert overview_tool.description is not None
+    assert "1 through 50" in overview_tool.description
+    overview_schema = cast(dict[str, JsonValue], overview_tool.inputSchema)
+    overview_properties = cast(dict[str, JsonValue], overview_schema["properties"])
+    overview_page_size = cast(dict[str, JsonValue], overview_properties["page_size"])
+    assert overview_page_size["minimum"] == 1
+    assert overview_page_size["maximum"] == 50
+    assert overview_page_size["default"] == 40
+    assert "1 through 50" in str(overview_page_size["description"])
 
 
 @pytest.mark.asyncio
@@ -1932,7 +1957,20 @@ async def test_mutations_submit_and_request_tools_observe_without_cancelling() -
     assert cast(dict[str, JsonValue], wait["operation"])["state"] == "queued"
     assert len(cast(list[JsonValue], _structured_result(list_response)["items"])) == 1
     assert _structured_result(cancel_response)["cancelled"] is False
-    assert _structured_result(summary_response)["queued"] == 1
+    summary = _structured_result(summary_response)
+    assert summary["queued"] == 1
+    assert summary["barrier_active"] is True
+    assert summary["active_barriers"] == [
+        {
+            "request_id": "00000000-0000-0000-0000-000000000999",
+            "operation": "doctrine.set",
+            "operation_class": "mutation",
+            "host_request_state": "quarantined",
+            "queue_state": None,
+            "source": "host_only",
+            "sequence": None,
+        }
+    ]
     assert application.calls == [_Call("unit.launch", {"unit_guid": "UNIT-1"}, None)]
     assert application.submissions == application.calls
 

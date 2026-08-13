@@ -155,8 +155,9 @@ the next decision:
 
 1. Use `cmo_unit_catalog` to establish friendly GUIDs, names, broad types, and a filterable force
    index.
-2. Read `cmo_unit_overview` only for the relevant type, name slice, or selected GUIDs. Treat its
-   native CMO text as Agent-readable context, not a stable wire schema for mutations.
+2. Read `cmo_unit_overview` only for the relevant type, name slice, or selected GUIDs. Its
+   `page_size` is 1..50 (default 40); follow `next_cursor` rather than guessing a larger page.
+   Treat its native CMO text as Agent-readable context, not a stable wire schema for mutations.
 3. Call narrow exact tools, including `cmo_unit_operational_status_batch`, unit detail, combat
    status, loadout, inventory, and doctrine, only for candidates that could affect the decision.
 
@@ -328,6 +329,9 @@ Fail closed on every tool result and receipt:
 3. If a request tracked in the current batch becomes `rejected`, or a quarantine reports
    `quarantine_resolution.state="unresolved"` or `barrier_active=true`, stop new mutation submission
    and fan-out. Also stop on a failed queue/list call or a queue summary with a current barrier.
+   Read each `active_barriers` entry, including `host_request_state`, `queue_state`, and `source`,
+   before choosing a recovery path. Only a queue-backed quarantined mutation with its real journal
+   belongs to `resolve-quarantine`; never manufacture a journal for host-only evidence.
    Inspect and resolve that condition first. Prior rejected requests and resolved quarantines remain
    as audit history; do not treat them as a current barrier or reinterpret their original outcome.
    Never infer a barrier from the historical `quarantined` total alone, or infer its absence without

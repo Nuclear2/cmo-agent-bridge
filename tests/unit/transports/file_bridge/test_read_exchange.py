@@ -43,6 +43,10 @@ from cmo_agent_bridge.state.models import (
     PendingJournalHeader,
     PendingPhase,
 )
+from cmo_agent_bridge.state.non_effectful_resolution import (
+    NonEffectfulHostResolutionMarker,
+    parse_non_effectful_host_resolution,
+)
 from cmo_agent_bridge.state.request_ledger import RequestLedger, RequestRecord
 from cmo_agent_bridge.state.sqlite import StateDatabase
 from cmo_agent_bridge.transports.file_bridge.inbox import InboxPublisher
@@ -3510,14 +3514,34 @@ class FatalExchangeSignal(BaseException):
     pass
 
 
-def _expected_quarantine_json(reason: str) -> str:
-    return _canonical_json(
-        {
-            "code": ErrorCode.STATE_CONFLICT.value,
-            "details": {"reason": reason},
-            "message": "file-bridge read exchange requires recovery",
-        }
-    ).decode("utf-8")
+def _assert_non_effectful_resolution(
+    record: RequestRecord,
+    *,
+    reason: str,
+    failure_type: str | None = None,
+    failure_phase: str | None = None,
+) -> NonEffectfulHostResolutionMarker:
+    assert record.state is HostRequestState.RESOLVED
+    assert record.result_json is None
+    assert record.error_json is None
+    assert record.resolution_json is not None
+    assert record.terminal_at_ms == record.updated_at_ms
+    marker = parse_non_effectful_host_resolution(record.resolution_json)
+    assert marker.mode == "non_effectful_outcome_irrelevant"
+    assert marker.disposition == "abandoned"
+    assert marker.root_key == record.root_key
+    assert marker.request_id == record.request_id
+    assert marker.request_hash == record.request_hash
+    assert marker.operation == record.operation
+    assert marker.operation_class is record.operation_class
+    assert marker.reason == reason
+    assert marker.resolved_at_ms == record.updated_at_ms
+    assert marker.failure is not None
+    if failure_type is not None:
+        assert marker.failure.exception_type == failure_type
+    if failure_phase is not None:
+        assert marker.failure.phase == failure_phase
+    return marker
 
 
 @pytest.mark.asyncio
@@ -3747,10 +3771,10 @@ async def test_failed_safety_finalizer_poisons_without_overwriting_old_state(
     command = _scenario_command(harness)
     harness.paths.inbox.parent.mkdir(parents=True, exist_ok=True)
     original_publish = InboxPublisher.publish_delivery
-    original_transition = transport.ledger.transition
+    original_resolve = transport.ledger.resolve_non_effectful
     publication_failure = RuntimeError("ambiguous primary")
-    safety_failure = OSError("quarantine CAS unavailable")
-    quarantine_calls = 0
+    safety_failure = OSError("non-effectful resolution CAS unavailable")
+    resolution_calls = 0
 
     def ambiguous_publish(
         publisher: InboxPublisher,
@@ -3765,34 +3789,19 @@ async def test_failed_safety_finalizer_poisons_without_overwriting_old_state(
         )
         raise publication_failure
 
-    def fail_quarantine(
+    def fail_resolution(
         request_id: UUID,
         *,
         expected_states: frozenset[HostRequestState],
-        new_state: HostRequestState,
-        updated_at_ms: int,
-        terminal_at_ms: int | None = None,
-        result_json: str | None = None,
-        error_json: str | None = None,
-        resolution_json: str | None = None,
+        marker: NonEffectfulHostResolutionMarker,
     ) -> RequestRecord:
-        nonlocal quarantine_calls
-        if new_state is HostRequestState.QUARANTINED:
-            quarantine_calls += 1
-            raise safety_failure
-        return original_transition(
-            request_id,
-            expected_states=expected_states,
-            new_state=new_state,
-            updated_at_ms=updated_at_ms,
-            terminal_at_ms=terminal_at_ms,
-            result_json=result_json,
-            error_json=error_json,
-            resolution_json=resolution_json,
-        )
+        del request_id, expected_states, marker
+        nonlocal resolution_calls
+        resolution_calls += 1
+        raise safety_failure
 
     monkeypatch.setattr(InboxPublisher, "publish_delivery", ambiguous_publish)
-    monkeypatch.setattr(transport.ledger, "transition", fail_quarantine)
+    monkeypatch.setattr(transport.ledger, "resolve_non_effectful", fail_resolution)
 
     with pytest.raises(OSError) as exit_failure:
         async with transport.session() as channel:
@@ -3812,12 +3821,22 @@ async def test_failed_safety_finalizer_poisons_without_overwriting_old_state(
                 )
             assert poisoned.value.code is ErrorCode.STATE_CONFLICT
             assert concrete._exchange_state is old_state  # pyright: ignore[reportPrivateUsage]
-            monkeypatch.setattr(transport.ledger, "transition", original_transition)
+            monkeypatch.setattr(
+                transport.ledger,
+                "resolve_non_effectful",
+                original_resolve,
+            )
 
     assert exit_failure.value is safety_failure
-    assert quarantine_calls == 1
+    assert resolution_calls == 1
     request = transport.ledger.get_request(command.request_id)
-    assert request is not None and request.state is HostRequestState.QUARANTINED
+    assert request is not None
+    _assert_non_effectful_resolution(
+        request,
+        reason="publication_outcome_unknown",
+        failure_type="RuntimeError",
+        failure_phase="inbox_request_publication",
+    )
 
 
 @pytest.mark.asyncio
@@ -3884,8 +3903,12 @@ async def test_idle_transition_convergence_never_skips_an_inexact_target(
     assert request is not None
     if mode == "drift":
         assert idle_calls == 1
-        assert request.state is HostRequestState.IDLE_PUBLISHED
-        assert request.terminal_at_ms is None
+        _assert_non_effectful_resolution(
+            request,
+            reason="artifact_evidence_drift",
+            failure_type="RuntimeError",
+            failure_phase="idle_publication_transition",
+        )
         assert response_path.exists()
     else:
         assert idle_calls == (2 if mode == "precommit" else 1)
@@ -4129,7 +4152,7 @@ async def test_prepublication_rejection_convergence_rejects_epoch_drift(
 
 
 @pytest.mark.asyncio
-async def test_partial_durable_response_group_is_artifact_drift_quarantine(
+async def test_partial_durable_response_group_is_non_effectfully_resolved(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4162,9 +4185,13 @@ async def test_partial_durable_response_group_is_artifact_drift_quarantine(
     assert caught is not None
     assert caught.value.__cause__ is failure
     request = transport.ledger.get_request(command.request_id)
-    assert request is not None and request.state is HostRequestState.QUARANTINED
-    assert request.error_json == _expected_quarantine_json("artifact_evidence_drift")
-    assert request.terminal_at_ms is None
+    assert request is not None
+    _assert_non_effectful_resolution(
+        request,
+        reason="artifact_evidence_drift",
+        failure_type="RuntimeError",
+        failure_phase="response_record",
+    )
     assert response_path.exists()
 
 
@@ -4252,9 +4279,13 @@ async def test_nonresponder_retry_row_drift_cannot_hide_behind_durable_responder
     assert observed_artifact is not None
     assert observed_artifact.accepted_response.envelope.delivery_id == intents[0].delivery_id
     request = transport.ledger.get_request(command.request_id)
-    assert request is not None and request.state is HostRequestState.QUARANTINED
-    assert request.error_json == _expected_quarantine_json("publication_evidence_drift")
-    assert request.terminal_at_ms is None
+    assert request is not None
+    _assert_non_effectful_resolution(
+        request,
+        reason="publication_evidence_drift",
+        failure_type="RuntimeError",
+        failure_phase="response_record",
+    )
     assert response_path.exists()
 
 
@@ -4332,8 +4363,13 @@ async def test_later_state_drift_still_attempts_idle_before_poisoning(
     assert idle_calls == 1
     assert harness.paths.inbox.read_bytes() == render_idle_lua()
     request = transport.ledger.get_request(command.request_id)
-    assert request is not None and request.state is HostRequestState.IDLE_PUBLISHED
-    assert request.terminal_at_ms is None
+    assert request is not None
+    _assert_non_effectful_resolution(
+        request,
+        reason="artifact_evidence_drift",
+        failure_type="RuntimeError",
+        failure_phase="response_acceptance_transition",
+    )
     assert response_path.exists()
 
 
@@ -4390,7 +4426,7 @@ async def test_failure_proven_before_first_publisher_entry_rejects_without_idle(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure_kind", ["ordinary", "bridge", "fatal"])
-async def test_first_publisher_replace_then_raise_is_ambiguous_quarantine_and_poison(
+async def test_first_publisher_ambiguity_resolves_non_effectfully_and_poisons(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
     failure_kind: str,
@@ -4400,7 +4436,12 @@ async def test_first_publisher_replace_then_raise_is_ambiguous_quarantine_and_po
     response_path = harness.paths.response_path(command.request_id)
     harness.paths.inbox.parent.mkdir(parents=True, exist_ok=True)
     if failure_kind == "ordinary":
-        failure: BaseException = RuntimeError("publisher returned no commit token")
+        failure: BaseException = OSError(
+            0,
+            "publisher returned no commit token",
+            None,
+            5,
+        )
     elif failure_kind == "bridge":
         failure = BridgeError(ErrorCode.STATE_CONFLICT, "publisher bridge sentinel")
     else:
@@ -4456,9 +4497,14 @@ async def test_first_publisher_replace_then_raise_is_ambiguous_quarantine_and_po
     assert idle_calls >= 1
     request = transport.ledger.get_request(command.request_id)
     assert request is not None
-    assert request.state is HostRequestState.QUARANTINED
-    assert request.terminal_at_ms is None
-    assert request.error_json == _expected_quarantine_json("publication_outcome_unknown")
+    marker = _assert_non_effectful_resolution(
+        request,
+        reason="publication_outcome_unknown",
+        failure_type=type(failure).__name__,
+        failure_phase="inbox_request_publication",
+    )
+    assert marker.failure is not None
+    assert marker.failure.winerror == (5 if failure_kind == "ordinary" else None)
     delivery = transport.ledger.get_delivery(DELIVERY_ID)
     if delivery is None:
         rows = (
@@ -4543,8 +4589,13 @@ async def test_retry_replace_then_raise_uses_fresh_ambiguity_state_and_retains_s
     assert first is not None and first.published_at_ms is not None
     assert retry is not None and retry.published_at_ms is None
     request = transport.ledger.get_request(command.request_id)
-    assert request is not None and request.state is HostRequestState.QUARANTINED
-    assert request.error_json == _expected_quarantine_json("publication_outcome_unknown")
+    assert request is not None
+    _assert_non_effectful_resolution(
+        request,
+        reason="publication_outcome_unknown",
+        failure_type=type(failure).__name__,
+        failure_phase="inbox_request_publication",
+    )
     assert response_path.read_bytes() == b"retry ambiguity material"
 
 
@@ -4611,7 +4662,7 @@ async def test_cancellation_after_durable_artifact_is_artifact_authoritative(
 
 
 @pytest.mark.asyncio
-async def test_idle_failure_quarantines_retains_and_poisons_without_masking_shape(
+async def test_idle_failure_resolves_retains_and_poisons_without_masking_shape(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4639,9 +4690,12 @@ async def test_idle_failure_quarantines_retains_and_poisons_without_masking_shap
             assert caught.value.__cause__ is failure
             request = transport.ledger.get_request(command.request_id)
             assert request is not None
-            assert request.state is HostRequestState.QUARANTINED
-            assert request.terminal_at_ms is None
-            assert request.error_json == _expected_quarantine_json("idle_publication_failed")
+            _assert_non_effectful_resolution(
+                request,
+                reason="idle_publication_failed",
+                failure_type="OSError",
+                failure_phase="inbox_idle_publication",
+            )
             assert response_path.exists()
             original_sqlite_connect = sqlite3.connect
             for method_name in (
@@ -4675,7 +4729,7 @@ async def test_idle_failure_quarantines_retains_and_poisons_without_masking_shap
 
 
 @pytest.mark.asyncio
-async def test_terminal_transition_failure_stays_idle_published_and_retains_response(
+async def test_terminal_transition_failure_resolves_and_retains_response(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -4723,9 +4777,12 @@ async def test_terminal_transition_failure_stays_idle_published_and_retains_resp
     assert caught.value is failure
     request = transport.ledger.get_request(command.request_id)
     assert request is not None
-    assert request.state is HostRequestState.IDLE_PUBLISHED
-    assert request.terminal_at_ms is None
-    assert request.error_json is None
+    _assert_non_effectful_resolution(
+        request,
+        reason="terminal_transition_failed",
+        failure_type="BridgeError",
+        failure_phase="terminal_transition",
+    )
     assert response_path.exists()
 
 
@@ -4775,9 +4832,12 @@ async def test_publication_marker_convergence_is_safety_only(
     if mode == "drift":
         assert calls == 1
         assert delivery.published_at_ms == observed_epoch + 1
-        assert request.state is HostRequestState.QUARANTINED
-        assert request.error_json == _expected_quarantine_json("publication_evidence_drift")
-        assert request.terminal_at_ms is None
+        _assert_non_effectful_resolution(
+            request,
+            reason="publication_evidence_drift",
+            failure_type="RuntimeError",
+            failure_phase="delivery_publication_marker",
+        )
     else:
         assert calls == (2 if mode == "precommit" else 1)
         assert delivery.published_at_ms == observed_epoch
@@ -4849,8 +4909,12 @@ async def test_publication_request_transition_convergence_requires_exact_target(
     assert request is not None
     if mode == "drift":
         assert publication_calls == 1
-        assert request.state is HostRequestState.QUARANTINED
-        assert request.error_json == _expected_quarantine_json("publication_evidence_drift")
+        _assert_non_effectful_resolution(
+            request,
+            reason="publication_evidence_drift",
+            failure_type="RuntimeError",
+            failure_phase="request_publication_transition",
+        )
     else:
         assert publication_calls == (2 if mode == "precommit" else 1)
         assert request.state is HostRequestState.REJECTED
@@ -4904,9 +4968,12 @@ async def test_record_response_convergence_is_safety_only_and_exact(
     assert request is not None
     if mode == "drift":
         assert calls == 1
-        assert request.state is HostRequestState.QUARANTINED
-        assert request.error_json == _expected_quarantine_json("artifact_evidence_drift")
-        assert request.terminal_at_ms is None
+        _assert_non_effectful_resolution(
+            request,
+            reason="artifact_evidence_drift",
+            failure_type="RuntimeError",
+            failure_phase="response_record",
+        )
         assert response_path.exists()
     else:
         assert calls == (2 if mode == "precommit" else 1)
@@ -4982,8 +5049,12 @@ async def test_response_accepted_transition_convergence_requires_exact_target(
     assert request is not None
     if mode == "drift":
         assert response_calls == 1
-        assert request.state is HostRequestState.QUARANTINED
-        assert request.error_json == _expected_quarantine_json("artifact_evidence_drift")
+        _assert_non_effectful_resolution(
+            request,
+            reason="artifact_evidence_drift",
+            failure_type="RuntimeError",
+            failure_phase="response_acceptance_transition",
+        )
         assert response_path.exists()
     else:
         assert response_calls == (2 if mode == "precommit" else 1)
@@ -4993,7 +5064,7 @@ async def test_response_accepted_transition_convergence_requires_exact_target(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("earlier_reason", ["ambiguous", "publication_drift"])
-async def test_idle_failure_wins_compound_quarantine_with_one_singleton_cas(
+async def test_idle_failure_wins_compound_resolution_with_one_cas(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
     earlier_reason: str,
@@ -5005,8 +5076,8 @@ async def test_idle_failure_wins_compound_quarantine_with_one_singleton_cas(
     idle_failure = OSError("compound idle failure")
     original_publish = InboxPublisher.publish_delivery
     original_mark = transport.ledger.mark_delivery_published
-    original_transition = transport.ledger.transition
-    quarantine_calls: list[frozenset[HostRequestState]] = []
+    original_resolve = transport.ledger.resolve_non_effectful
+    resolution_calls: list[NonEffectfulHostResolutionMarker] = []
 
     def faulted_publish(
         publisher: InboxPublisher,
@@ -5031,34 +5102,27 @@ async def test_idle_failure_wins_compound_quarantine_with_one_singleton_cas(
     def fail_idle(_publisher: InboxPublisher) -> None:
         raise idle_failure
 
-    def capture_transition(
+    def capture_resolution(
         request_id: UUID,
         *,
         expected_states: frozenset[HostRequestState],
-        new_state: HostRequestState,
-        updated_at_ms: int,
-        terminal_at_ms: int | None = None,
-        result_json: str | None = None,
-        error_json: str | None = None,
-        resolution_json: str | None = None,
+        marker: NonEffectfulHostResolutionMarker,
     ) -> RequestRecord:
-        if new_state is HostRequestState.QUARANTINED:
-            quarantine_calls.append(expected_states)
-        return original_transition(
+        resolution_calls.append(marker)
+        return original_resolve(
             request_id,
             expected_states=expected_states,
-            new_state=new_state,
-            updated_at_ms=updated_at_ms,
-            terminal_at_ms=terminal_at_ms,
-            result_json=result_json,
-            error_json=error_json,
-            resolution_json=resolution_json,
+            marker=marker,
         )
 
     monkeypatch.setattr(InboxPublisher, "publish_delivery", faulted_publish)
     monkeypatch.setattr(transport.ledger, "mark_delivery_published", faulted_mark)
     monkeypatch.setattr(InboxPublisher, "publish_idle", fail_idle)
-    monkeypatch.setattr(transport.ledger, "transition", capture_transition)
+    monkeypatch.setattr(
+        transport.ledger,
+        "resolve_non_effectful",
+        capture_resolution,
+    )
 
     async with transport.session() as channel:
         with pytest.raises(BridgeError) as caught:
@@ -5066,19 +5130,24 @@ async def test_idle_failure_wins_compound_quarantine_with_one_singleton_cas(
 
     assert caught.value.__cause__ is publication_failure
     assert any("idle publication failure" in note for note in caught.value.__notes__)
-    assert len(quarantine_calls) == 1
-    assert quarantine_calls[0] == frozenset({HostRequestState.PREPARED})
+    assert len(resolution_calls) == 1
+    assert resolution_calls[0].reason == "idle_publication_failed"
     request = transport.ledger.get_request(command.request_id)
     assert request is not None
-    assert request.state is HostRequestState.QUARANTINED
-    assert request.error_json == _expected_quarantine_json("idle_publication_failed")
-    assert request.terminal_at_ms is None
-    assert request.result_json is None
-    assert request.resolution_json is None
+    _assert_non_effectful_resolution(
+        request,
+        reason="idle_publication_failed",
+        failure_type="RuntimeError",
+        failure_phase=(
+            "inbox_request_publication"
+            if earlier_reason == "ambiguous"
+            else "delivery_publication_marker"
+        ),
+    )
 
 
 @pytest.mark.asyncio
-async def test_artifact_drift_plus_idle_failure_uses_one_idle_reason_quarantine_cas(
+async def test_artifact_drift_plus_idle_failure_uses_one_resolution_cas(
     harness: Harness,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -5089,8 +5158,8 @@ async def test_artifact_drift_plus_idle_failure_uses_one_idle_reason_quarantine_
     artifact_failure = RuntimeError("different artifact committed")
     idle_failure = OSError("idle failed after artifact drift")
     original_record = transport.ledger.record_response
-    original_transition = transport.ledger.transition
-    quarantine_calls: list[frozenset[HostRequestState]] = []
+    original_resolve = transport.ledger.resolve_non_effectful
+    resolution_calls: list[NonEffectfulHostResolutionMarker] = []
 
     def commit_different_artifact(artifact: ResponseArtifact) -> object:
         original_record(artifact.model_copy(update={"accepted_at_ms": artifact.accepted_at_ms + 1}))
@@ -5099,33 +5168,26 @@ async def test_artifact_drift_plus_idle_failure_uses_one_idle_reason_quarantine_
     def fail_idle(_publisher: InboxPublisher) -> None:
         raise idle_failure
 
-    def capture_transition(
+    def capture_resolution(
         request_id: UUID,
         *,
         expected_states: frozenset[HostRequestState],
-        new_state: HostRequestState,
-        updated_at_ms: int,
-        terminal_at_ms: int | None = None,
-        result_json: str | None = None,
-        error_json: str | None = None,
-        resolution_json: str | None = None,
+        marker: NonEffectfulHostResolutionMarker,
     ) -> RequestRecord:
-        if new_state is HostRequestState.QUARANTINED:
-            quarantine_calls.append(expected_states)
-        return original_transition(
+        resolution_calls.append(marker)
+        return original_resolve(
             request_id,
             expected_states=expected_states,
-            new_state=new_state,
-            updated_at_ms=updated_at_ms,
-            terminal_at_ms=terminal_at_ms,
-            result_json=result_json,
-            error_json=error_json,
-            resolution_json=resolution_json,
+            marker=marker,
         )
 
     monkeypatch.setattr(transport.ledger, "record_response", commit_different_artifact)
     monkeypatch.setattr(InboxPublisher, "publish_idle", fail_idle)
-    monkeypatch.setattr(transport.ledger, "transition", capture_transition)
+    monkeypatch.setattr(
+        transport.ledger,
+        "resolve_non_effectful",
+        capture_resolution,
+    )
     response_path = harness.paths.response_path(command.request_id)
     caught: pytest.ExceptionInfo[BridgeError] | None = None
 
@@ -5137,14 +5199,16 @@ async def test_artifact_drift_plus_idle_failure_uses_one_idle_reason_quarantine_
     assert caught is not None
     assert caught.value.__cause__ is artifact_failure
     assert any("idle publication failure" in note for note in caught.value.__notes__)
-    assert len(quarantine_calls) == 1 and len(quarantine_calls[0]) == 1
+    assert len(resolution_calls) == 1
+    assert resolution_calls[0].reason == "idle_publication_failed"
     request = transport.ledger.get_request(command.request_id)
     assert request is not None
-    assert request.state is HostRequestState.QUARANTINED
-    assert request.error_json == _expected_quarantine_json("idle_publication_failed")
-    assert request.terminal_at_ms is None
-    assert request.result_json is None
-    assert request.resolution_json is None
+    _assert_non_effectful_resolution(
+        request,
+        reason="idle_publication_failed",
+        failure_type="RuntimeError",
+        failure_phase="response_record",
+    )
     assert response_path.exists()
 
 
