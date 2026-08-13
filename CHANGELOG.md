@@ -4,6 +4,35 @@
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-08-13 (Preview)
+
+这一版澄清了航空任务的编组与在位数量语义，明确自动交战 Patrol 的任务 AI 控制边界，并默认
+保留全部玩家可见的无阵营前缀消息，减少兵力误算、过度微操和日志漏判。
+
+### Fixed
+
+- 澄清 `cmo_mission_update` 的航空兵力字段：`flight_size` 表示每个飞行编队的飞机架数，历史字段
+  `minimum_aircraft_required` 实际表示 `Flight_xN` 最低完整编队数量，`on_station` 表示在位的单个
+  单位数量；MCP 输入、任务回读 Schema 和 Skill 均加入单位、联动关系及四机编队算例。
+- 原生消息日志现在默认返回 CMO 对玩家可见但没有阵营前缀的全部记录，包括武器终端、干扰、诱饵和
+  系统信息；沿用现有 JSON 条目及 `text` 纯文本投影并以 `side_name=null` 标识，不增加分类字段。
+  旧版关闭无前缀消息的游标可从原字节位置继续使用新的默认读取策略。
+- `operate-cmo` Skill 明确已配置并获准自动查证或交战的活动 Patrol 对责任区内接触目标拥有查证、
+  目标选择和武器运用控制权。Agent
+  应通过任务区、条令/WRA、EMCON 和兵力配置指挥巡逻任务，而不是把单机攻击当作常规催促手段；
+  Strike 任务目标表仍属于正常任务级控制。
+
+### Changed
+
+- 项目版本升级到 `0.7.2`。
+
+### Testing
+
+- 验证任务输入与回读 Schema 中的 flight 数量、单个单位数量、`use_flight_size` 联动算例和 CMO
+  原生 `All` 回读值；验证无前缀消息默认读取、显式关闭及旧游标兼容。
+- 两个无开发上下文的 Agent 分别完成任务数量换算与 Patrol/日志边界前向验证。
+- `2622` 项非实机测试和 `20` 项发行测试通过；Ruff、Pyright、协议清单/语料及 Skill 校验通过。
+
 ## [0.7.1] - 2026-08-08 (Preview)
 
 这一版为无计分想定补充了 CMO 原生战损与武器消耗表，并把它纳入推演结束后的复盘流程；README
@@ -478,6 +507,7 @@ CMO Build 1868 下 Mission Size、响应导出锚点和 WeaponAllocation 返回�
 - 自动多任务分配队列、生成后航路点编辑、operation planner 全字段和完整 zone object 编辑尚未覆盖。
 - 已验证 CMO Build 1868；其他 build 需要重新进行兼容性验证。
 
+[0.7.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2
 [0.7.1]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1
 [0.7.0]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.0
 [0.6.2]: https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.6.2

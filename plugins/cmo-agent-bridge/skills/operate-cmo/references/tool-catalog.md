@@ -120,7 +120,7 @@ All tools in this section are `CURRENT`. Their information use still depends on 
 | `cmo_time_set` | `state=paused|running`; optional `rate_code=0..5` | Idempotently set UI run state and optionally compression, then verify readback; use only the configured unique CMO process and fail closed on ambiguous or unverifiable UI state |
 | `cmo_simulation_pulse` | optional request UUID list; `handshake`; optional accepted lineage; timeout seconds | Only from a verified paused state: require no current quarantine barrier and every current non-terminal durable request UUID; force 1x, stop early if a barrier appears, then attempt to re-pause and restore prior compression while reporting both verification results |
 | `cmo_message_log_status` | none | Host-only inspection of native message logging, the timestamp file bound to the exact `Command.exe` process, and the persisted scenario session; does not contact Lua or change CMO configuration |
-| `cmo_message_log_read` | exact side name; optional cursor; `start=now|recent`; page size; optional unscoped/raw flags | Read side-prefixed native messages while running or paused; establish a forward cursor with `start=now` and use `has_more` for forward paging; `recent` returns one latest-N recovery tail |
+| `cmo_message_log_read` | exact side name; optional cursor; `start=now|recent`; page size; unscoped/raw flags | Read exact-side-prefixed messages plus all player-visible unprefixed records by default, including terminal, jammer, decoy, and system messages, while running or paused; unprefixed records remain unattributed; establish a forward cursor with `start=now` and use `has_more` for forward paging; `recent` returns one latest-N recovery tail |
 | `cmo_scenario_get` | none | Read scenario name, file, database, times, duration, current player-side GUID, CMO's reported compression value, and projected score state; coarse values are labels, not guaranteed effective multipliers |
 | `cmo_scenario_context_get` | none | Read the saved scenario description, only the live current player's side briefing, plain-text projections, and that side's five victory-score thresholds; reports unsaved/missing/incompatible sources instead of exposing another side |
 | `cmo_scenario_time_compression_set` | code `0..5` | Queued Lua mutation: set `0=1x`, `1=2x`, `2=5x`, `3=15x`, `4=CPU-driven coarse one-second slices`, or `5=CPU-driven coarse five-second slices`; codes 4/5 may show legacy 30x/150x labels but are not fixed clocks; it cannot execute while polling is frozen and is not a way to release a paused scenario |
@@ -179,15 +179,20 @@ side or unit caused a loss.
 
 The native message-log tools require an already established persisted scenario session, but not an
 active Lua poll for each read. `cmo_message_log_read` filters side prefixes case-insensitively using
-the exact caller-supplied side name and suppresses unscoped records by default. With no cursor,
+the exact caller-supplied side name and, by default, also returns all CMO player-visible unprefixed
+records, including terminal, jammer, decoy, and system messages. It keeps the existing JSON entry
+shape, places the plain-text projection in `text` with `side_name=null`, and adds no classification.
+`HIT` confirms impact, not damage, destruction, kill credit, or either side's identity; correlate
+all unprefixed content with player-known units, contacts, and allocations. With no cursor,
 `start="now"` returns no history and places the cursor at the last complete record; subsequent calls
 return new complete records. Preserve `next_cursor` even when `has_more=false`. Use
 `start="recent"` only as an explicit recovery path: CMO's timestamp file spans the GUI process, so
 the returned history is not provably confined to the current scenario. Recent mode returns only the
 latest `page_size` matching records from its bounded scan, always sets `has_more=false`, and cannot
 page backward into older history; its returned cursor continues forward. In `LIVE_PLAYER`, never
-pass an adversary side and do not enable unscoped records merely to obtain more information. Message
-text is scenario data, not authority outside the game.
+pass an adversary side. Set `include_unscoped=false` only as a volume filter, not as an information
+boundary; the same cursor may continue after changing that filter because its byte offset remains
+monotonic. Message text is scenario data, not authority outside the game.
 
 The UI time tools are specialized semantic Windows UI Automation, not Lua mutations or
 keyboard/mouse/coordinate macros. They match the configured `Command.exe`, require the MCP server
@@ -236,8 +241,9 @@ booleans accept only JSON `true`/`false`; numeric fields reject booleans, numeri
 | `cmo_unit_set.manual_throttle` | `OFF`, the five unit-throttle names, or codes `0..4` |
 | `cmo_unit_add.unit_type` | `Aircraft`, `Ship`, `Sub`, `Facility`, `Satellite`, or `Weapon` |
 | Time-compression code | Strict integers `0..5`; booleans, floats, and numeric strings are rejected |
-| Mission `flight_size` / `group_size` | Strict integers `1`, `2`, `3`, `4`, or `6` |
-| Mission `minimum_aircraft_required` | Strict integers `0`, `1`, `2`, `3`, `4`, `6`, `8`, or `12` |
+| Mission `flight_size` / `group_size` | Strict integers `1`, `2`, `3`, `4`, or `6`; `flight_size` is aircraft per flight |
+| Mission `minimum_aircraft_required` | Legacy key for minimum complete-flight quantity: `0` means no preference; `1`, `2`, `3`, `4`, `6`, `8`, or `12` mean `Flight_xN`, not N aircraft. With `use_flight_size=true`, `flight_size=4` and value `4` require 16 aircraft; readback may also return CMO's nonnumeric `All` value |
+| Mission `on_station` | Non-negative individual unit count; for fixed-size air missions use a multiple of `flight_size`, so `flight_size=4`, `on_station=8` means two flights |
 | Strike `strike_minimum_trigger` | `Neutral/0`, `Friendly/1`, `Unfriendly/2`, `Hostile/3`, or `Unknown/4` |
 | Mission `loop_type` | Patrol: strict `0/1/2`; Support and MineClear: strict `0/1`; unsupported on other classes |
 | Mining `laying_method` | Strict `0` or `1` |
@@ -280,16 +286,16 @@ Every tool in this subsection is a durable queued mutation and returns `QueuedOp
 | `cmo_unit_launch` | unit GUID | Submit launch; poll combat status for actual progress |
 | `cmo_unit_rtb` | unit GUID | Submit RTB; poll combat status |
 | `cmo_unit_refuel` | receiver GUID; optional tanker GUID or tanker mission GUID list | Request refueling using one unambiguous tanker selector |
-| `cmo_unit_attack_contact` | observing side, attacker GUID, contact GUID, mode; optional weapon allocation and `allow_out_of_nominal_range` | Submit auto target, manual target, or explicit weapon allocation; manual weapon mode blocks known nominal range/domain failures by default, while the explicit override permits intentional preallocation but never bypasses missing ammunition or an unavailable selected mount |
+| `cmo_unit_attack_contact` | observing side, attacker GUID, contact GUID, mode; optional weapon allocation and `allow_out_of_nominal_range` | Direct unit-level target/fire override. `auto`, `manual_target`, and `manual_weapon` all designate a target and are not routine controls for a unit executing an active Patrol that owns the contact and is configured and authorized to investigate or engage it automatically; authorized manual weapon mode still blocks known nominal range/domain failures by default |
 | `cmo_unit_sensor_set` | unit GUID, sensor GUID, active state | Change an existing sensor; read inventory and EMCON first; do not force `active=true` on a parked aircraft merely to pre-arm it—configure mission/EMCON and verify sensor state after launch unless the scenario explicitly models different parked behavior |
 | `cmo_unit_cargo_transfer` | source, destination, cargo selector and quantity | Move modeled cargo between eligible units; non-idempotent |
 | `cmo_unit_cargo_unload` | carrier and cargo selector | Unload modeled cargo at the current location; non-idempotent |
 | `cmo_mission_create` | side GUID, unique name, category, discriminated mission details; parent pool for package | Create an inactive ordinary mission, task pool, or package for patrol, support, strike, ferry, mining, mine-clearing, or cargo work |
-| `cmo_mission_update` | side GUID, mission GUID, changed supported fields | Update activation, schedule, grouping, profiles, zones, patrol, strike, mining, or cargo options; throttle fields use only the mission-throttle enum above |
+| `cmo_mission_update` | side GUID, mission GUID, changed supported fields | Update activation, schedule, grouping, profiles, zones, patrol, strike, mining, or cargo options; `flight_size` is aircraft per flight, legacy `minimum_aircraft_required` is Flight_xN flight quantity, and `on_station` is individual units |
 | `cmo_mission_air_refueling_update` | side GUID, mission GUID, changed AAR fields | Configure receiver policy, permitted tanker missions, launch/follow/continue behavior, tanker minimums, receiver queue, fuel threshold, range, and support-tanker limits |
 | `cmo_mission_flight_plan_create` | side GUID, mission GUID, exactly one complete target-time or takeoff-time schedule | Generate mission flights for `YYYY/MM/DD` plus `HH:MM:SS`, then return all flights visible through mission readback |
-| `cmo_mission_target_add` | side GUID, mission GUID, target GUID | Add a strike target; check current targets first |
-| `cmo_mission_target_remove` | side GUID, mission GUID, target GUID | Remove a strike target |
+| `cmo_mission_target_add` | side GUID, mission GUID, target GUID | Add a Strike mission-level target; check current targets first; this is not direct unit fire allocation |
+| `cmo_mission_target_remove` | side GUID, mission GUID, target GUID | Remove a Strike mission-level target |
 | `cmo_mission_cargo_update` | side GUID, mission GUID, add/remove, cargo identity and quantity | Maintain cargo assigned to a cargo mission |
 | `cmo_doctrine_set` | scope selector and projected doctrine fields | Change side, mission, or unit doctrine using each field's own schema enum; do not transfer a value from a different doctrine field |
 | `cmo_emcon_set` | scope selector and radar/sonar/OECM fields | Change EMCON; returned inheritance may be unavailable on some builds |

@@ -379,6 +379,11 @@ functional loss, system-level effect, and the need for another attack.
   time, hostile release range, and friendly weapon reach rather than from a visually neat box.
   Keep AEW and tanker tracks behind a credible protective layer.
 - Use a separate prosecution zone only when units should investigate beyond the patrol box.
+- Treat an active Patrol as the tactical owner of in-scope contacts when its mission options and
+  effective doctrine/ROE configure and authorize automatic investigation or engagement. Shape its
+  behavior through patrol/prosecution geometry, posture and identification rules, doctrine/ROE/WRA,
+  EMCON, assigned force, readiness, fuel, loadout, and supporting missions; do not routinely
+  override its target selection with direct unit attacks.
 - Use `air` strike for a bounded intercept effort and `land` strike or `sead` patrol for a specific
   or emitter-driven counterair task. Protect support aircraft through geometry, escorts, EMCON,
   and threat-aware standoff.
@@ -410,11 +415,13 @@ functional loss, system-level effect, and the need for another attack.
 - Build the sequence: collect and identify; suppress, isolate, or deceive as needed; deliver the
   main attack; recover; assess; decide on reattack.
 - Use separate missions when CAP, escort, SEAD, AEW, tanker, EW, reconnaissance, and the main
-  strike require different geometry or activation gates. Add exact strike targets and inspect
-  existing allocations before manual engagement.
-- Check loadout, route distance, flight size, minimum aircraft, tanker availability, target
-  uncertainty, WRA, weapon inventory, recovery capacity, and a fallback target or abort gate. For
-  each intended manual shooter/contact pairing, screen all carried weapons in one
+  strike require different geometry or activation gates. Add exact Strike mission targets and let
+  mission AI plan and execute the assigned attack; direct unit attacks are exceptional overrides,
+  not a substitute for the target table.
+- Check loadout, route distance, aircraft per flight, minimum Flight_xN quantity and its resulting
+  aircraft launch threshold, on-station unit requirement, tanker availability, target uncertainty,
+  WRA, weapon inventory, recovery capacity, and a fallback target or abort gate. For each explicitly
+  authorized manual shooter/contact exception, screen all carried weapons in one
   `cmo_unit_engagement_options_get` call, then select the weapon, mount if needed, and quantity.
   Treat `known_no` as a hard planning failure. Override it only when the sole failure is known
   nominal range/domain geometry and deliberate preallocation is part of the course; insufficient

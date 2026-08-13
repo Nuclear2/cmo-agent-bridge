@@ -1082,6 +1082,20 @@ def test_mission_update_rejects_noncanonical_finite_values(
         )
 
 
+def test_minimum_flight_quantity_error_does_not_call_the_value_aircraft() -> None:
+    with pytest.raises(
+        ValidationError,
+        match=r"minimum complete-flight quantity \(minimum_aircraft_required\)",
+    ):
+        MissionUpdateArgs.model_validate(
+            {
+                "side_guid": "SIDE-1",
+                "mission_guid": "MISSION-1",
+                "minimum_aircraft_required": 5,
+            }
+        )
+
+
 @pytest.mark.parametrize(
     ("field_name", "invalid_value"),
     [

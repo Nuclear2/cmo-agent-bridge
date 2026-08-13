@@ -25,7 +25,7 @@ CMO Agent Bridge 的执行层是标准本地 `stdio` MCP server。不同框架�
 Codex 或 Claude Code 用户可以用 marketplace plugin 同时取得 MCP 配置与 skill。不要再手工注册同名
 server，否则同一会话可能加载两套相同工具。
 
-所有框架看到的 [v0.7.1](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1)
+所有框架看到的 [v0.7.2](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2)
 工具契约一致：普通 mutation 返回 `QueuedOperationReceipt`，Agent 再用
 `cmo_request_get` 或 `cmo_request_wait` 获取最终结果。CMO 暂停不会丢失 durable request；等待超时
 也不会取消它。时间控制也采用相同的 `cmo_time_get_state`、`cmo_time_set` 和

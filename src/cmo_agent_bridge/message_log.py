@@ -124,7 +124,7 @@ class MessageLogServicePort(Protocol):
         cursor: str | None = None,
         start: MessageLogStart = "now",
         page_size: int = 50,
-        include_unscoped: bool = False,
+        include_unscoped: bool = True,
         include_raw: bool = False,
     ) -> MessageLogReadResult: ...
 
@@ -142,7 +142,7 @@ class _CursorPayload(BaseModel):
     file_created_ns: int = Field(ge=0)
     offset: int = Field(ge=0)
     side_key: str = Field(min_length=1)
-    include_unscoped: bool
+    include_unscoped: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,7 +480,7 @@ class NativeMessageLogService:
         cursor: str | None = None,
         start: MessageLogStart = "now",
         page_size: int = 50,
-        include_unscoped: bool = False,
+        include_unscoped: bool = True,
         include_raw: bool = False,
     ) -> MessageLogReadResult:
         side = self._validate_read_arguments(
@@ -502,7 +502,6 @@ class NativeMessageLogService:
                 session=session,
                 log_file=log_file,
                 side_key=side_key,
-                include_unscoped=include_unscoped,
             )
             scan_start = payload.offset
             mode: MessageLogStart = "now"
@@ -781,7 +780,6 @@ class NativeMessageLogService:
         session: SessionRecord,
         log_file: _LogFile,
         side_key: str,
-        include_unscoped: bool,
     ) -> None:
         if payload.process_pid != process.pid or payload.process_create_time != process.create_time:
             raise _state_conflict(
@@ -804,7 +802,7 @@ class NativeMessageLogService:
                 "message-log cursor is stale because the native log was replaced",
                 {"requires_lua_poll": False},
             )
-        if payload.side_key != side_key or payload.include_unscoped != include_unscoped:
+        if payload.side_key != side_key:
             raise _invalid_argument(
                 "message-log cursor cannot be reused with a different side filter"
             )

@@ -190,7 +190,7 @@ class _MessageLogService:
         cursor: str | None = None,
         start: Literal["now", "recent"] = "now",
         page_size: int = 50,
-        include_unscoped: bool = False,
+        include_unscoped: bool = True,
         include_raw: bool = False,
     ) -> MessageLogReadResult:
         self.read_calls.append(
@@ -503,7 +503,7 @@ async def test_native_message_log_methods_do_not_call_lua_or_ui(
             "cursor": None,
             "start": "now",
             "page_size": 50,
-            "include_unscoped": False,
+            "include_unscoped": True,
             "include_raw": False,
         }
     ]

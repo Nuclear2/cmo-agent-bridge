@@ -95,7 +95,7 @@ _validate_group_size_code = _allowed_int_validator(
     allowed=frozenset({1, 2, 3, 4, 6}),
 )
 _validate_minimum_aircraft_code = _allowed_int_validator(
-    label="minimum aircraft required",
+    label="minimum complete-flight quantity (minimum_aircraft_required)",
     allowed=frozenset({0, 1, 2, 3, 4, 6, 8, 12}),
 )
 _validate_weapon_state_planned_code = _allowed_int_validator(
@@ -1184,6 +1184,88 @@ PatrolType = Literal["asw", "naval", "aaw", "land", "mixed", "sead", "sea"]
 StrikeType = Literal["air", "land", "sea", "sub"]
 FlightSize: TypeAlias = StrictGroupSizeCode
 MinimumAircraftRequired: TypeAlias = StrictMinimumAircraftCode
+MissionFlightSizeUpdateValue: TypeAlias = Annotated[
+    FlightSize | None,
+    Field(
+        title="Aircraft Per Flight",
+        description=(
+            "Number of aircraft in each flight. For example, 4 means four aircraft per flight; "
+            "it is not a flight count."
+        ),
+    ),
+]
+MissionUseFlightSizeUpdateValue: TypeAlias = Annotated[
+    bool | None,
+    Field(
+        title="Require Complete Flight Size",
+        description=(
+            "Require CMO to form complete flights using flight_size. For fixed-size air "
+            "operations, plan on_station as a multiple of flight_size."
+        ),
+    ),
+]
+MissionMinimumFlightQuantityUpdateValue: TypeAlias = Annotated[
+    MinimumAircraftRequired | None,
+    Field(
+        title="Minimum Flight Quantity",
+        description=(
+            "CMO Flight_xN launch threshold exposed under the legacy "
+            "minimum_aircraft_required key. N counts complete flights, not aircraft; 0 means no "
+            "minimum preference. When use_flight_size=true, multiply N by flight_size for the "
+            "effective aircraft threshold: flight_size=4 and value 4 mean Flight_x4 and a "
+            "16-aircraft launch threshold."
+        ),
+    ),
+]
+MissionOnStationUpdateValue: TypeAlias = Annotated[
+    int | None,
+    Field(
+        ge=0,
+        title="Individual Units On Station",
+        description=(
+            "Requested number of individual units on station, not flights. For fixed-size air "
+            "operations use a multiple of flight_size; flight_size=4 and on_station=8 means two "
+            "flights on station."
+        ),
+    ),
+]
+MissionFlightSizeResultValue: TypeAlias = Annotated[
+    int | None,
+    Field(
+        title="Aircraft Per Flight",
+        description="CMO readback of the number of aircraft in each flight, not a flight count.",
+    ),
+]
+MissionUseFlightSizeResultValue: TypeAlias = Annotated[
+    bool | None,
+    Field(
+        title="Require Complete Flight Size",
+        description="Whether CMO requires complete flights using the returned flight_size.",
+    ),
+]
+MissionMinimumFlightQuantityResultValue: TypeAlias = Annotated[
+    int | Literal["all"] | None,
+    Field(
+        title="Minimum Flight Quantity",
+        description=(
+            "CMO launch-threshold readback under the legacy minimum_aircraft_required key. An "
+            "integer N counts complete flights (Flight_xN), not aircraft; 0 means no minimum "
+            "preference. Multiply N by flight_size for the effective aircraft threshold when "
+            "complete flight sizing is enabled. The string 'all' is CMO's native nonnumeric All "
+            "flight-quantity value; the bridge does not derive an aircraft count for it."
+        ),
+    ),
+]
+MissionOnStationResultValue: TypeAlias = Annotated[
+    int | None,
+    Field(
+        title="Individual Units On Station",
+        description=(
+            "CMO readback of requested individual units on station, not flights. Fixed-size air "
+            "missions satisfy this with complete flights."
+        ),
+    ),
+]
 
 
 class PatrolMissionDetails(StrictModel):
@@ -1276,10 +1358,10 @@ class MissionUpdateArgs(StrictModel):
     active: bool | None = None
     start_time: str | None = None
     end_time: str | None = None
-    flight_size: FlightSize | None = None
-    use_flight_size: bool | None = None
-    minimum_aircraft_required: MinimumAircraftRequired | None = None
-    on_station: int | None = Field(default=None, ge=0)
+    flight_size: MissionFlightSizeUpdateValue = None
+    use_flight_size: MissionUseFlightSizeUpdateValue = None
+    minimum_aircraft_required: MissionMinimumFlightQuantityUpdateValue = None
+    on_station: MissionOnStationUpdateValue = None
     one_time_only: bool | None = None
     preplanned_only: bool | None = None
     one_third_rule: bool | None = None
@@ -2232,10 +2314,10 @@ class MissionResult(StrictModel):
     reference_point_guids: list[str] | None
     prosecution_zone_reference_point_guids: list[str] | None = None
     destination_guid: str | None
-    flight_size: int | None
-    use_flight_size: bool | None = None
-    minimum_aircraft_required: int | Literal["all"] | None = None
-    on_station: int | None = None
+    flight_size: MissionFlightSizeResultValue
+    use_flight_size: MissionUseFlightSizeResultValue = None
+    minimum_aircraft_required: MissionMinimumFlightQuantityResultValue = None
+    on_station: MissionOnStationResultValue = None
     one_time_only: bool | None = None
     preplanned_only: bool | None = None
     one_third_rule: bool | None
@@ -2493,10 +2575,10 @@ class MissionUpdateResult(StrictModel):
     active: bool | None
     start_time: str | None
     end_time: str | None
-    flight_size: int | None
-    use_flight_size: bool | None = None
-    minimum_aircraft_required: int | Literal["all"] | None = None
-    on_station: int | None = None
+    flight_size: MissionFlightSizeResultValue
+    use_flight_size: MissionUseFlightSizeResultValue = None
+    minimum_aircraft_required: MissionMinimumFlightQuantityResultValue = None
+    on_station: MissionOnStationResultValue = None
     one_time_only: bool | None = None
     preplanned_only: bool | None = None
     one_third_rule: bool | None

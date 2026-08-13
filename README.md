@@ -12,7 +12,7 @@
 
 ![CMO Agent Bridge：在 Windows 上连接 Agent 与 Command: Modern Operations](docs/assets/cmo-agent-bridge-cover.png)
 
-[下载 v0.7.1](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1) ·
+[下载 v0.7.2](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2) ·
 [快速上手](docs/quickstart.md) ·
 [各框架安装](docs/frameworks/README.md) ·
 [CMO Lua API](https://commandlua.github.io/)
@@ -31,7 +31,7 @@ ROE、时间限制与胜负标准，再开始态势评估和部署；其他阵�
 单位深读战备、载荷和库存。这样既能看清数百个单位的整体编成，也不会把时间和上下文浪费在无关
 单位的完整字段上。
 
-> **当前版本是 v0.7.1 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
+> **当前版本是 v0.7.2 预览版。** 已在 Windows、CMO Build 1868 上验证；第一次接入建议使用
 > 想定副本。
 
 ## 你可以直接这样说
@@ -79,7 +79,7 @@ uv --version
 $installer = Join-Path $env:TEMP "install-codex-desktop.ps1"
 Invoke-WebRequest `
   -UseBasicParsing `
-  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.1/install-codex-desktop.ps1" `
+  -Uri "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/install-codex-desktop.ps1" `
   -OutFile $installer
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
 ```
@@ -131,7 +131,7 @@ OpenCode、Cursor、Qoder 和通用 MCP 客户端的配置见[各框架安装](d
 插件仍固定使用同版本 wheel：
 
 ```powershell
-$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.1/cmo_agent_bridge-0.7.1-py3-none-any.whl"
+$wheel = "https://github.com/Nuclear2/cmo-agent-bridge/releases/download/v0.7.2/cmo_agent_bridge-0.7.2-py3-none-any.whl"
 ```
 
 升级已有安装时，先用旧/当前版本确认 `cmo_queue_status` 中 `queued=0`、`active=0`，并让 worker
@@ -208,7 +208,10 @@ pulse 才会返回成功。
 原生消息日志是另一条完全只读的主机侧路径。建立想定 session 和玩家阵营后，Agent 会先调用
 `cmo_message_log_status`，再用
 `cmo_message_log_read(side_name=<己方精确名称>, start="now")` 从当前文件尾建立游标，以后只读取新增的
-己方消息；这在 CMO 暂停时也有效。只有丢失游标或首次接手时需要追溯已发生消息的显式恢复才使用
+己方消息，以及 CMO 对玩家可见但未附阵营前缀的全部信息，包括武器终端、干扰、诱饵和系统记录；这在
+CMO 暂停时也有效。无前缀信息沿用现有 JSON 条目结构，在 `text` 中返回原有纯文本投影并以
+`side_name=null` 标识，不增加额外分类字段；需结合己方单位、接触目标和武器分配再判断双方身份。
+`HIT` 只能证明命中，不能单独证明毁伤、击毁或战果归属。只有丢失游标或首次接手时需要追溯已发生消息的显式恢复才使用
 `start="recent"`，因为同一个 CMO 进程的日志文件可能包含之前加载过的想定内容。bridge 不会调用
 `SetScenarioMessageLogPath`，也不会接管或搬走游戏自己的日志。
 
@@ -277,7 +280,7 @@ bridge 以本地 `stdio` 进程运行。Agent、Python 进程和 CMO Lua 运行�
 
 ## 项目状态
 
-- 当前版本：[`v0.7.1 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.1)
+- 当前版本：[`v0.7.2 Preview`](https://github.com/Nuclear2/cmo-agent-bridge/releases/tag/v0.7.2)
 - 已验证环境：Windows 10/11、CMO Build 1868
 - Python：3.12，由 `uv` 隔离管理
 - 许可证：[MIT](LICENSE)

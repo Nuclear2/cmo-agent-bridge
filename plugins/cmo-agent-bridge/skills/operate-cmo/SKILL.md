@@ -187,9 +187,12 @@ expenditure totals. The native log remains useful for timing and narrative cause
 `Contact ... has been lost` means lost track, not confirmed destruction; component-damage messages
 and repeated sinking/BDA messages also cannot be summed as platform losses.
 
-In `LIVE_PLAYER`, pass only the exact resolved commanded-side name and keep
-`include_unscoped=false`. Do not read another side's prefixed messages. Use `start="recent"` only for
-explicit recovery when no forward cursor exists. This includes a first handoff that is already
+In `LIVE_PLAYER`, pass only the exact resolved commanded-side name and keep the default `include_unscoped=true`. CMO exposes all player-visible unprefixed records, including weapon
+terminal, jammer, decoy, and system messages. The bridge keeps the existing JSON entry shape,
+places its plain-text projection in `text` with `side_name=null`, and adds no classification fields.
+Correlate these records with player-known units, contacts, and allocations before assigning either
+side. `HIT` confirms impact, not damage, destruction, or kill credit. Never read another side's prefixed messages.
+Use `start="recent"` only for explicit recovery when no forward cursor exists. This includes a first handoff that is already
 paused because a just-written scenario message may need to be recovered; do not establish a `now`
 baseline first in that case. Recent mode returns one latest-`page_size` tail sample and is not
 backward-pageable. The native file belongs to the CMO process and can contain records from an
@@ -419,10 +422,14 @@ and never resubmit a durable request because a pulse or local wait timed out.
 3. Build new missions inactive. Wait for creation to complete and retain the returned GUID before
    submitting dependent geometry, targets, doctrine, support, or assignments. Read the assembled
    mission back; activate only after the gate is met.
-4. Read actual combat status, loadout, inventory, fuel, damage, readiness, sensor state, and
-   existing weapon allocations before committing a force. Before a manual weapon allocation, call
-   `cmo_unit_engagement_options_get` for the exact observer-side contact and attacker. Treat
-   `appears_possible` as a nominal screening result, never as a complete firing solution.
+4. Read actual combat status, loadout, inventory, fuel, damage, readiness, sensor state, current
+   mission, and existing weapon allocations before committing a force. If the unit is executing an
+   active Patrol whose role and responsibility area cover the contact and whose mission options
+   and effective doctrine/ROE authorize automatic investigation or engagement, keep target
+   selection and weapon employment under Patrol AI control; adjust mission geometry,
+   doctrine/WRA, EMCON, and force levels instead of calling `cmo_unit_attack_contact`. For an
+   authorized direct attack, call `cmo_unit_engagement_options_get` first and treat `appears_possible` only as nominal
+   screening. Strike mission target assignment remains mission-level control, not this override.
 5. Treat launch, RTB, refuel, attack, special-action execution, cargo movement, and other
    asynchronous results as accepted orders, not completed effects. Advance or observe time and
    read the resulting state.

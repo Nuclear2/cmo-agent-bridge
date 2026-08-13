@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -150,7 +152,7 @@ def test_forward_cursor_reads_only_selected_side_and_plain_html(tmp_path: Path) 
     log = logs / "2026-07-18_23.09.25.txt"
     _write_log(log, ["2025/10/3 20:00:00 - [PRC] Existing"])
 
-    opened = service.read(side_name="PRC", start="now")
+    opened = service.read(side_name="PRC", start="now", include_unscoped=False)
     assert opened.items == ()
     assert opened.read_through_offset == log.stat().st_size
 
@@ -164,7 +166,11 @@ def test_forward_cursor_reads_only_selected_side_and_plain_html(tmp_path: Path) 
             ).encode("utf-8")
         )
 
-    result = service.read(side_name="PRC", cursor=opened.next_cursor)
+    result = service.read(
+        side_name="PRC",
+        cursor=opened.next_cursor,
+        include_unscoped=False,
+    )
 
     assert len(result.items) == 1
     assert result.items[0].side_name == "PRC"
@@ -175,8 +181,81 @@ def test_forward_cursor_reads_only_selected_side_and_plain_html(tmp_path: Path) 
     assert result.suppressed_unscoped == 1
     assert result.has_more is False
 
-    empty = service.read(side_name="PRC", cursor=result.next_cursor)
+    empty = service.read(
+        side_name="PRC",
+        cursor=result.next_cursor,
+        include_unscoped=False,
+    )
     assert empty.items == ()
+
+
+def test_forward_cursor_returns_all_unscoped_records_in_existing_text_projection(
+    tmp_path: Path,
+) -> None:
+    service, _sessions, logs, _process = _environment(tmp_path)
+    log = logs / "2026-07-18_23.09.25.txt"
+    _write_log(log, ["2025/10/3 20:00:00 - [PRC] Existing"])
+    opened = service.read(side_name="PRC", start="now")
+
+    with log.open("ab") as stream:
+        stream.write(
+            (
+                "2025/10/3 20:01:00 - [PRC] Contact has been lost.\r\n\r\n"
+                "2025/10/3 20:01:00 - PL-21 #332 HIT: Weapon terminal result.\r\n\r\n"
+                "2025/10/3 20:01:01 - AIM-120C-7 #352 MISS: Self-destructing.\r\n\r\n"
+                "2025/10/3 20:01:02 - [Taiwan] Enemy-only damage.\r\n\r\n"
+                "2025/10/3 20:01:03 - Defensive jammer on Unit #1.\r\n\r\n"
+                "2025/10/3 20:01:04 - Decoy from Unit #1.\r\n\r\n"
+                "2025/10/3 20:01:05 - Switched side to: Taiwan\r\n\r\n"
+                "2025/10/3 20:01:06 - Status: PL-21 #333 HIT: embedded text.\r\n\r\n"
+                "2025/10/3 20:01:07 - PL-21 #334 hit: lowercase text.\r\n\r\n"
+                "2025/10/3 20:01:08 - <P>PL-21 #335 HIT: HTML text.</P>\r\n\r\n"
+            ).encode("utf-8")
+        )
+
+    result = service.read(side_name="PRC", cursor=opened.next_cursor)
+
+    assert len(result.items) == 9
+    assert result.items[0].side_name == "PRC"
+    for item in result.items[1:]:
+        assert item.side_name is None
+    assert result.items[1].text == "PL-21 #332 HIT: Weapon terminal result."
+    assert result.items[2].text == "AIM-120C-7 #352 MISS: Self-destructing."
+    assert result.suppressed_other_side == 1
+    assert result.suppressed_unscoped == 0
+    assert any(item.text.startswith("Defensive jammer") for item in result.items)
+    assert any(item.text.startswith("Decoy") for item in result.items)
+    assert result.items[-1].text == "PL-21 #335 HIT: HTML text."
+    assert result.items[-1].is_html is True
+
+
+def test_unscoped_messages_can_be_suppressed_as_a_volume_filter(
+    tmp_path: Path,
+) -> None:
+    service, _sessions, logs, _process = _environment(tmp_path)
+    log = logs / "2026-07-18_23.09.25.txt"
+    _write_log(log, ["2025/10/3 20:00:00 - [PRC] Existing"])
+    opened = service.read(
+        side_name="PRC",
+        start="now",
+        include_unscoped=False,
+    )
+    with log.open("ab") as stream:
+        stream.write(
+            (
+                "2025/10/3 20:01:00 - PL-21 #332 HIT: Weapon terminal result.\r\n\r\n"
+                "2025/10/3 20:01:01 - Other unscoped detail.\r\n\r\n"
+            ).encode("utf-8")
+        )
+
+    result = service.read(
+        side_name="PRC",
+        cursor=opened.next_cursor,
+        include_unscoped=False,
+    )
+
+    assert result.items == ()
+    assert result.suppressed_unscoped == 2
 
 
 def test_incomplete_tail_is_replayed_after_record_finishes(tmp_path: Path) -> None:
@@ -268,7 +347,7 @@ def test_recent_tail_is_explicit_and_old_cursor_rejects_new_lineage(tmp_path: Pa
     assert caught.value.code is ErrorCode.SCENARIO_CHANGED
 
 
-def test_cursor_cannot_change_side_or_unscoped_filter(tmp_path: Path) -> None:
+def test_cursor_cannot_change_side_but_can_change_unscoped_volume_filter(tmp_path: Path) -> None:
     service, _sessions, logs, _process = _environment(tmp_path)
     _write_log(logs / "2026-07-18_23.09.25.txt", ["2025/10/3 20:00:00 - [PRC] Ready"])
     opened = service.read(side_name="PRC", start="now")
@@ -277,10 +356,42 @@ def test_cursor_cannot_change_side_or_unscoped_filter(tmp_path: Path) -> None:
         service.read(side_name="Taiwan", cursor=opened.next_cursor)
     assert side_error.value.code is ErrorCode.INVALID_ARGUMENT
 
-    with pytest.raises(BridgeError) as scope_error:
-        service.read(
-            side_name="PRC",
-            cursor=opened.next_cursor,
-            include_unscoped=True,
+    filtered = service.read(
+        side_name="PRC",
+        cursor=opened.next_cursor,
+        include_unscoped=False,
+    )
+    assert filtered.items == ()
+
+
+def test_legacy_closed_cursor_can_continue_with_new_unscoped_default(tmp_path: Path) -> None:
+    service, _sessions, logs, _process = _environment(tmp_path)
+    log = logs / "2026-07-18_23.09.25.txt"
+    _write_log(log, ["2025/10/3 20:00:00 - [PRC] Ready"])
+    opened = service.read(side_name="PRC", start="now")
+
+    encoded = opened.next_cursor.removeprefix("ml1.")
+    payload = json.loads(
+        base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("ascii")
+    )
+    payload["include_unscoped"] = False
+    legacy_raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    legacy_cursor = "ml1." + base64.urlsafe_b64encode(legacy_raw).rstrip(b"=").decode("ascii")
+
+    with log.open("ab") as stream:
+        stream.write(
+            (
+                b"2025/10/3 20:01:00 - PL-21 #332 HIT: Weapon terminal result.\r\n\r\n"
+                b"2025/10/3 20:01:01 - Defensive jammer result.\r\n\r\n"
+            )
         )
-    assert scope_error.value.code is ErrorCode.INVALID_ARGUMENT
+    result = service.read(side_name="PRC", cursor=legacy_cursor)
+
+    assert len(result.items) == 2
+    assert result.items[0].text.startswith("PL-21 #332 HIT:")
+    assert result.items[1].text == "Defensive jammer result."
+    renewed = result.next_cursor.removeprefix("ml1.")
+    renewed_payload = json.loads(
+        base64.urlsafe_b64decode(renewed + "=" * (-len(renewed) % 4)).decode("ascii")
+    )
+    assert renewed_payload["include_unscoped"] is True

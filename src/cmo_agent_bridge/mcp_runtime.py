@@ -787,7 +787,7 @@ class McpRuntimeManager:
         cursor: str | None = None,
         start: MessageLogStart = "now",
         page_size: int = 50,
-        include_unscoped: bool = False,
+        include_unscoped: bool = True,
         include_raw: bool = False,
     ) -> MessageLogReadResult:
         runtime = await self._ensure_runtime()

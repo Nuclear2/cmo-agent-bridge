@@ -195,7 +195,7 @@ class _FakeApplication:
         cursor: str | None = None,
         start: Literal["now", "recent"] = "now",
         page_size: int = 50,
-        include_unscoped: bool = False,
+        include_unscoped: bool = True,
         include_raw: bool = False,
     ) -> MessageLogReadResult:
         self.message_log_reads.append(
@@ -1294,6 +1294,11 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
         assert description is not None
         assert "accepted, not completed" in description
 
+    attack_description = tools_by_name["cmo_unit_attack_contact"].description
+    assert attack_description is not None
+    assert "active Patrol" in attack_description
+    assert "mission and doctrine" in attack_description
+
     compression_description = tools_by_name["cmo_scenario_time_compression_set"].description
     assert compression_description is not None
     assert "0=1x" in compression_description
@@ -1317,6 +1322,9 @@ async def test_server_exposes_local_tools_with_operation_annotations() -> None:
     message_schema = cast(dict[str, JsonValue], message_tool.inputSchema)
     message_properties = cast(dict[str, JsonValue], message_schema["properties"])
     assert cast(dict[str, JsonValue], message_properties["page_size"])["maximum"] == 100
+    unscoped_property = cast(dict[str, JsonValue], message_properties["include_unscoped"])
+    assert unscoped_property["default"] is True
+    assert "no side attribution" in str(unscoped_property["description"])
     assert "side_name" in cast(list[JsonValue], message_schema["required"])
 
 
@@ -1478,6 +1486,39 @@ async def test_final_campaign_contract_is_reflected_in_mcp_input_schemas() -> No
         8,
         12,
     }
+    flight_size_schema = property_schema("cmo_mission_update", "flight_size")
+    minimum_flights_schema = property_schema("cmo_mission_update", "minimum_aircraft_required")
+    on_station_schema = property_schema("cmo_mission_update", "on_station")
+    assert flight_size_schema["title"] == "Aircraft Per Flight"
+    assert "not a flight count" in str(flight_size_schema["description"])
+    assert minimum_flights_schema["title"] == "Minimum Flight Quantity"
+    assert "Flight_x4" in str(minimum_flights_schema["description"])
+    assert "use_flight_size=true" in str(minimum_flights_schema["description"])
+    assert "16-aircraft" in str(minimum_flights_schema["description"])
+    assert on_station_schema["title"] == "Individual Units On Station"
+    assert "on_station=8 means two flights" in str(on_station_schema["description"])
+
+    mission_get_schema = cast(dict[str, JsonValue], tools_by_name["cmo_mission_get"].outputSchema)
+    mission_get_properties = cast(dict[str, JsonValue], mission_get_schema["properties"])
+    assert (
+        cast(dict[str, JsonValue], mission_get_properties["minimum_aircraft_required"])["title"]
+        == "Minimum Flight Quantity"
+    )
+    assert "nonnumeric All" in str(
+        cast(dict[str, JsonValue], mission_get_properties["minimum_aircraft_required"])[
+            "description"
+        ]
+    )
+    mission_list_schema = cast(dict[str, JsonValue], tools_by_name["cmo_mission_list"].outputSchema)
+    mission_result_schema = cast(
+        dict[str, JsonValue],
+        cast(dict[str, JsonValue], mission_list_schema["$defs"])["MissionResult"],
+    )
+    mission_result_properties = cast(dict[str, JsonValue], mission_result_schema["properties"])
+    assert (
+        cast(dict[str, JsonValue], mission_result_properties["on_station"])["title"]
+        == "Individual Units On Station"
+    )
     assert enum_values(property_schema("cmo_mission_update", "loop_type")) == {0, 1, 2}
     assert enum_values(property_schema("cmo_mission_update", "laying_method")) == {0, 1}
     assert enum_values(property_schema("cmo_mission_cargo_update", "object_type")) == {
@@ -1861,7 +1902,7 @@ async def test_native_message_log_tools_map_to_host_application_methods() -> Non
             "cursor": None,
             "start": "recent",
             "page_size": 25,
-            "include_unscoped": False,
+            "include_unscoped": True,
             "include_raw": True,
         }
     ]

@@ -184,8 +184,15 @@ multi-step work that needs the exact runtime identity.
   mount, and quantity filter when testing the intended salvo.
 - Before mission activation or launch, read damage, actual fuel, ready/airborne time, loadout,
   sensors, and weapons. Coarse fuel and weapon state strings are not sufficient.
-- Prefer mission and doctrine control for sustained behavior. Use direct movement, sensor, launch,
-  RTB, refuel, or attack orders for bounded tactical corrections.
+- Prefer mission and doctrine control for sustained behavior. An active Patrol that is responsible
+  for a contact and is configured and authorized by its mission options and effective doctrine/ROE
+  to investigate or engage automatically owns investigation, target selection, and weapon
+  employment; do not use any
+  `cmo_unit_attack_contact` mode merely because it has not fired yet. Correct patrol/prosecution
+  geometry, posture/identification, OPA/WWR checks, doctrine/ROE/WRA, EMCON, sensors, force levels,
+  readiness, fuel, or loadout, then let CMO's mission AI execute. Direct attack is an exception for
+  explicit user control or a time-critical threat outside that Patrol responsibility, not routine
+  supervision. RTB, refuel, and other safety or sustainment actions remain available as required.
 - A mutation call returns a queue receipt. Use `cmo_request_get` or `cmo_request_wait` to obtain its
   eventual CMO result; a wait timeout never cancels it, and only a still-`queued` request can be
   cancelled.
@@ -240,7 +247,13 @@ termination.
    request to complete, validate the result, and retain its returned GUID. A newly created bridge
    mission is inactive.
 6. While inactive, configure schedules, ordered zones, force grouping, minimum forces,
-   on-station requirements, route profiles, patrol or strike behavior, and targets.
+   on-station requirements, route profiles, and class-specific behavior. `flight_size` is aircraft
+   per flight; the legacy `minimum_aircraft_required=N` field means `Flight_xN` complete flights.
+   With `use_flight_size=true`, four-aircraft flights and value 4 require 16 available aircraft.
+   `on_station` counts
+   individual units; for fixed-size air operations use a multiple of `flight_size` (for example,
+   8 means two four-aircraft flights). Configure Patrol subtype, patrol/prosecution zones, and
+   engagement rules; configure exact target lists only for Strike.
 7. Read effective doctrine and WRA. Apply deliberate mission-level overrides and EMCON only where
    the role requires them.
 8. Read every candidate's readiness, fuel, damage, loadout, sensors, and weapons. Assign main,
@@ -261,11 +274,18 @@ contact into adversary ground truth merely to simplify target assignment.
    needed to tell them apart.
 4. Read side posture and effective doctrine. Change contact posture only when identification,
    authority, and requested ROE justify it.
-5. Before manual allocation, inspect weapons already assigned to the contact, then call
+5. Read the proposed attacker's current mission and effective doctrine. If it is executing an
+   active Patrol whose subtype and responsibility area cover this contact and whose mission
+   options and effective doctrine/ROE authorize automatic investigation or engagement, stop the
+   direct-attack branch. Patrol AI should
+   investigate and engage through the mission's geometry, posture, doctrine/ROE/WRA, EMCON, and
+   assigned force. Do not use `auto`, `manual_target`, or `manual_weapon` to hurry it; absence of an
+   immediate shot may be a valid identification, geometry, weapon, fuel, or readiness decision.
+6. Only for an explicit direct-control exception, inspect weapons already assigned, then call
    `cmo_unit_engagement_options_get` for the exact attacker/contact pair. Use its observer-side
    horizontal/slant geometry, target domain, immediate loadout/mount quantities, and nominal
    database envelope to choose a weapon and quantity.
-6. Interpret the screening result conservatively:
+7. Interpret the screening result conservatively:
 
    - `known_no` means the requested inventory is unavailable or a known nominal boundary fails; do
      not submit the ordinary manual allocation.
@@ -274,13 +294,13 @@ contact into adversary ground truth merely to simplify target assignment.
    - `indeterminate` or `range_status="unknown"` is an information gap, not proof of feasibility or
      infeasibility. Consider track uncertainty, altitude/aspect/speed, launch limits, mount
      arc/damage, directors or illumination, sensors, doctrine, WRA/ROE, weather, and target quality.
-7. Issue one bounded attack order. The default manual-weapon preflight rejects known too-close,
+8. Issue one bounded attack order. The default manual-weapon preflight rejects known too-close,
    too-far, or no-domain choices before mutation. Use
    `allow_out_of_nominal_range=true` only for an explicitly intended preallocation while geometry
    is expected to close; it never bypasses missing ammunition or an unavailable selected mount.
-8. Treat a completed attack result as assignment acceptance, not weapon release. Do not loop on
+9. Treat a completed attack result as assignment acceptance, not weapon release. Do not loop on
    `firing_at_contact_guids` or add another salvo merely because firing is not immediate.
-9. Advance or observe time, then reread allocations, firing state, contact state, BDA, and friendly
+10. Advance or observe time, then reread allocations, firing state, contact state, BDA, and friendly
    fuel and weapons.
 
 ## Operate naval and submarine forces
@@ -309,6 +329,10 @@ age, uncertainty, own noise, sensor geometry, and the datum created by weapons o
   response time and weapon reach, not from a visually neat box.
 - Keep AEW and tanker tracks behind credible protection and retain a real reserve.
 - Use a separate prosecution zone only when units should investigate beyond the patrol area.
+- Once an active AAW/ASW/naval/land/SEAD/mixed Patrol is configured and authorized to investigate
+  or engage automatically and owns an in-scope contact, command through its area, posture rules,
+  doctrine/WRA, EMCON, staffing, and support. Do not pair its individual units to contacts or
+  weapons as a normal battle rhythm; allow mission AI to investigate and engage.
 - Parked aircraft normally keep onboard sensors off. Do not treat an inactive parked-sensor
   readback as a reason to force it on, and do not submit `cmo_unit_sensor_set(active=true)` merely
   to pre-arm a parked aircraft. Configure the intended mission/EMCON state and expect sensor
